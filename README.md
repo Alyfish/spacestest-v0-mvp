@@ -20,6 +20,7 @@ This repository serves as a testing ground for an agentic backend architecture f
 - **Framework**: Next.js
 - **Package Manager**: pnpm
 - **UI Components**: shadcn/ui
+- **Data Fetching**: React Query (TanStack Query)
 - **Purpose**: Basic interface to visualize and interact with AI recommendations
 - **Location**: `/frontend/`
 
@@ -49,6 +50,13 @@ spaces_mvp/
 - **Step-by-Step Process**: Development follows a methodical, step-by-step approach
 - **Testing Focus**: The repository prioritizes testing agentic backend patterns over production-ready features
 
+## Frontend Guidelines
+
+- **Data Fetching**: Use React Query (TanStack Query) exclusively for all API calls
+- **UI Components**: Use Shadcn/ui components for consistent design and functionality
+- **No Raw Fetch**: Avoid using raw fetch requests in components - always use React Query hooks
+- **Type Safety**: Maintain full TypeScript support for all API interactions
+
 ## Getting Started
 
 ### Backend Setup
@@ -70,6 +78,13 @@ pnpm dev
 ## Current Status
 
 This is an active development repository for testing agentic AI backend architectures. The project is in early stages and will be updated incrementally as new features and architectural patterns are implemented.
+
+## Features Implemented
+
+- ✅ FastAPI backend with `/api` prefix for all routes
+- ✅ React Query integration for data fetching
+- ✅ Basic home screen with API endpoint testing
+- ✅ CORS configuration for frontend-backend communication
 
 ## Contributing
 
