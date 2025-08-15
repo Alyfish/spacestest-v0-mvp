@@ -17,3 +17,10 @@ class ProjectResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     message: str
+
+
+class ImageUploadResponse(BaseModel):
+    project_id: str
+    image_path: str
+    status: str
+    message: str = "Image uploaded successfully"

@@ -1,7 +1,10 @@
+from pathlib import Path
+
 from data_manager import data_manager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from models import ProjectCreateResponse, ProjectResponse
+from fastapi.responses import FileResponse
+from models import ImageUploadResponse, ProjectCreateResponse, ProjectResponse
 
 app = FastAPI(title="AI Interior Design Agent", version="1.0.0", root_path="/api")
 
@@ -50,6 +53,47 @@ async def get_project(project_id: str):
         created_at=project["created_at"],
         context=project["context"],
     )
+
+
+@app.post("/projects/{project_id}/upload-image", response_model=ImageUploadResponse)
+async def upload_project_image(project_id: str, image: UploadFile = File(...)):
+    """Upload an image for a project"""
+    # Validate file type
+    if not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    try:
+        image_path = data_manager.upload_image(project_id, image, image.filename)
+        project = data_manager.get_project(project_id)
+
+        return ImageUploadResponse(
+            project_id=project_id, image_path=image_path, status=project["status"]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
+
+
+@app.get("/projects/{project_id}/base-image")
+async def get_project_base_image(project_id: str):
+    """Get the base image for a project"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if "base_image" not in project["context"]:
+        raise HTTPException(
+            status_code=404, detail="No base image found for this project"
+        )
+
+    image_path = project["context"]["base_image"]
+
+    if not Path(image_path).exists():
+        raise HTTPException(status_code=404, detail="Image file not found")
+
+    return FileResponse(image_path)
 
 
 if __name__ == "__main__":

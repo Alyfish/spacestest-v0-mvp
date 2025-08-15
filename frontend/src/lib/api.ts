@@ -2,6 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const API_BASE_URL = "http://localhost:8000/api";
 
+// Helper function to get image URL
+export const getProjectImageUrl = (projectId: string) =>
+  `${API_BASE_URL}/projects/${projectId}/base-image`;
+
 // API client functions
 const apiClient = {
   async get<T>(endpoint: string): Promise<T> {
@@ -19,6 +23,20 @@ const apiClient = {
         "Content-Type": "application/json",
       },
       body: data ? JSON.stringify(data) : undefined,
+    });
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  async uploadFile<T>(endpoint: string, file: File): Promise<T> {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: "POST",
+      body: formData,
     });
     if (!response.ok) {
       throw new Error(`API request failed: ${response.statusText}`);
@@ -48,6 +66,13 @@ export interface ProjectResponse {
   status: string;
   created_at: string;
   context: Record<string, any>;
+}
+
+export interface ImageUploadResponse {
+  project_id: string;
+  image_path: string;
+  status: string;
+  message: string;
 }
 
 // React Query hooks
@@ -85,5 +110,21 @@ export const useGetProject = (projectId: string) => {
     queryFn: () => apiClient.get<ProjectResponse>(`/projects/${projectId}`),
     enabled: !!projectId,
     staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+};
+
+export const useUploadProjectImage = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ projectId, file }: { projectId: string; file: File }) =>
+      apiClient.uploadFile<ImageUploadResponse>(
+        `/projects/${projectId}/upload-image`,
+        file
+      ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
   });
 };

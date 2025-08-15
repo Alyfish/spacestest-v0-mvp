@@ -112,6 +112,10 @@ This is an active development repository for testing agentic AI backend architec
 - ✅ Project creation and retrieval endpoints
 - ✅ Dynamic project pages with URL-based routing
 - ✅ Error handling for non-existent projects
+- ✅ Image upload functionality with file storage
+- ✅ Project status management (NEW → BASE_IMAGE_UPLOADED)
+- ✅ Base image retrieval endpoint
+- ✅ Image display on project pages
 
 ## Contributing
 
