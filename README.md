@@ -80,6 +80,12 @@ spaces_mvp/
 - **No Raw Fetch**: Avoid using raw fetch requests in components - always use React Query hooks
 - **Type Safety**: Maintain full TypeScript support for all API interactions
 
+## Backend Guidelines
+
+- **Structured Output**: Use Pydantic models with `responses.parse` for type-safe AI responses
+- **Model Selection**: Use GPT-5 constants (GPT_5, GPT_5_MINI, GPT_5_NANO) for consistency
+- **Testing**: Use the CLI test script (`cli.py`) to validate structured output functionality
+
 ## Getting Started
 
 ### Backend Setup
@@ -88,6 +94,17 @@ spaces_mvp/
 cd backend
 uv sync
 uv run fastapi dev
+```
+
+### Testing Structured Output
+
+```bash
+cd backend
+# Set your OpenAI API key
+export OPENAI_API_KEY='your-api-key-here'
+
+# Run the CLI test
+uv run python cli.py
 ```
 
 ### Frontend Setup
@@ -116,6 +133,10 @@ This is an active development repository for testing agentic AI backend architec
 - ✅ Project status management (NEW → BASE_IMAGE_UPLOADED)
 - ✅ Base image retrieval endpoint
 - ✅ Image display on project pages
+- ✅ OpenAI client with Pydantic-based structured responses (responses.parse)
+- ✅ Returns validated Pydantic model instances
+- ✅ GPT-5 model constants (GPT_5, GPT_5_MINI, GPT_5_NANO)
+- ✅ CLI test script for structured output functionality
 
 ## Contributing
 

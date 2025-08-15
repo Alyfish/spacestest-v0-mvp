@@ -1,10 +1,13 @@
 from pathlib import Path
 
 from data_manager import data_manager
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from models import ImageUploadResponse, ProjectCreateResponse, ProjectResponse
+
+load_dotenv()
 
 app = FastAPI(title="AI Interior Design Agent", version="1.0.0", root_path="/api")
 
