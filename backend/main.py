@@ -9,6 +9,7 @@ from models import (
     ImageUploadResponse,
     ImprovementMarkersRequest,
     ImprovementMarkersResponse,
+    MarkerRecommendationsResponse,
     ProjectCreateResponse,
     ProjectResponse,
     ProjectsListResponse,
@@ -184,6 +185,35 @@ async def save_improvement_markers(
         raise HTTPException(
             status_code=500, detail=f"Failed to save improvement markers: {str(e)}"
         )
+
+
+@app.get(
+    "/projects/{project_id}/marker-recommendations",
+    response_model=MarkerRecommendationsResponse,
+)
+async def get_marker_recommendations(project_id: str):
+    """Get AI-generated recommendations for improvement markers"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project["status"] != "MARKER_RECOMMENDATIONS_READY":
+        raise HTTPException(
+            status_code=400, detail="Project is not ready for recommendations"
+        )
+
+    if "marker_recommendations" not in project["context"]:
+        raise HTTPException(
+            status_code=404, detail="No marker recommendations found for this project"
+        )
+
+    return MarkerRecommendationsResponse(
+        project_id=project_id,
+        space_type=project["context"]["space_type"],
+        recommendations=project["context"]["marker_recommendations"],
+        status=project["status"],
+    )
 
 
 if __name__ == "__main__":

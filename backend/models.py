@@ -60,3 +60,11 @@ class ImprovementMarkersResponse(BaseModel):
     labelled_image_path: str
     status: str
     message: str = "Improvement markers saved successfully"
+
+
+class MarkerRecommendationsResponse(BaseModel):
+    project_id: str
+    space_type: str
+    recommendations: List[str]
+    status: str
+    message: str = "Marker recommendations generated successfully"

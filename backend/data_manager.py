@@ -74,6 +74,76 @@ class DataManager:
             # Default to False (not empty) if analysis fails
             return False
 
+    def _generate_marker_recommendations(
+        self,
+        space_type: str,
+        markers: List[dict],
+        labelled_image_path: str,
+    ) -> List[str]:
+        """
+        Generate AI recommendations based on improvement markers
+
+        Args:
+            space_type: Type of space (living room, bedroom, etc.)
+            markers: List of improvement markers with descriptions
+            labelled_image_path: Path to the labelled image with markers
+
+        Returns:
+            List of recommendation strings
+        """
+        try:
+            # Create a Pydantic model for the AI response
+            from typing import List
+
+            from pydantic import BaseModel
+
+            class AIRecommendationResponse(BaseModel):
+                recommendations: List[str]
+
+            # Build the prompt with marker information
+            marker_info = "\n".join(
+                [
+                    f"Marker {i + 1} ({marker['color']}): {marker['description']}"
+                    for i, marker in enumerate(markers)
+                ]
+            )
+
+            prompt = f"""
+            Analyze this {space_type} and provide specific interior design recommendations based on the user's improvement markers.
+
+            Space Type: {space_type}
+            
+            User's Improvement Requests:
+            {marker_info}
+
+            Provide specific, actionable recommendations as bullet points. Each recommendation should:
+            - Be specific about what to change and where
+            - Reference the marker locations in the image
+            - Include practical suggestions for furniture, decor, or layout changes
+            - Be written in a clear, actionable format
+
+            Format each recommendation as a simple string that clearly states what to do and where.
+            """
+
+            # Analyze the labelled image with markers using vision API
+            result = self.openai_client.analyze_image_with_vision(
+                prompt=prompt,
+                pydantic_model=AIRecommendationResponse,
+                image_path=labelled_image_path,
+                system_message="You are an expert interior designer. Provide specific, actionable recommendations for improving spaces based on user feedback. Focus on practical changes that can be easily implemented.",
+            )
+
+            return result.recommendations
+
+        except Exception as e:
+            print(f"Error generating marker recommendations: {e}")
+            # Return default recommendations if AI analysis fails
+            return [
+                "Add a statement piece at marker 1 to create a focal point",
+                "Improve lighting in the area marked with marker 2",
+                "Add texture and visual interest at marker 3",
+            ]
+
     def _create_labelled_image(
         self, base_image_path: str, markers: List[ImprovementMarker]
     ) -> str:
@@ -243,16 +313,21 @@ class DataManager:
     def save_improvement_markers(
         self, project_id: str, markers: List[ImprovementMarker]
     ) -> str:
-        """Save improvement markers and create labelled image"""
+        """Save improvement markers, create labelled image, and generate AI recommendations"""
         projects = self._load_projects()
 
         if project_id not in projects:
             raise ValueError(f"Project {project_id} not found")
 
-        # Get the base image path
+        # Get the base image path and space type
         base_image_path = projects[project_id]["context"].get("base_image")
+        space_type = projects[project_id]["context"].get("space_type")
+
         if not base_image_path:
             raise ValueError("No base image found for this project")
+
+        if not space_type:
+            raise ValueError("No space type selected for this project")
 
         # Create labelled image with markers
         labelled_image_path = self._create_labelled_image(base_image_path, markers)
@@ -265,10 +340,16 @@ class DataManager:
             marker_data["color"] = color_names[i % len(color_names)]
             markers_with_colors.append(marker_data)
 
-        # Update project with markers, labelled image, and status
+        # Generate AI recommendations based on markers
+        recommendations = self._generate_marker_recommendations(
+            space_type, markers_with_colors, labelled_image_path
+        )
+
+        # Update project with markers, labelled image, recommendations, and status
         projects[project_id]["context"]["improvement_markers"] = markers_with_colors
         projects[project_id]["context"]["labelled_base_image"] = labelled_image_path
-        projects[project_id]["status"] = "IMPROVEMENT_MARKERS_ADDED"
+        projects[project_id]["context"]["marker_recommendations"] = recommendations
+        projects[project_id]["status"] = "MARKER_RECOMMENDATIONS_READY"
 
         self._save_projects(projects)
         return labelled_image_path

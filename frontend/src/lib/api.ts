@@ -121,6 +121,14 @@ export interface ImprovementMarkersResponse {
   message: string;
 }
 
+export interface MarkerRecommendationsResponse {
+  project_id: string;
+  space_type: string;
+  recommendations: string[];
+  status: string;
+  message: string;
+}
+
 // React Query hooks
 export const useHealthCheck = () => {
   return useQuery({
@@ -223,5 +231,17 @@ export const useSaveImprovementMarkers = () => {
       // Invalidate the project query to refresh the data
       queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
     },
+  });
+};
+
+export const useGetMarkerRecommendations = (projectId: string) => {
+  return useQuery({
+    queryKey: ["marker-recommendations", projectId],
+    queryFn: () =>
+      apiClient.get<MarkerRecommendationsResponse>(
+        `/projects/${projectId}/marker-recommendations`
+      ),
+    enabled: !!projectId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 };

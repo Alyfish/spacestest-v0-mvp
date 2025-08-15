@@ -159,6 +159,12 @@ This is an active development repository for testing agentic AI backend architec
   - ✅ Proportional marker sizing based on image dimensions
   - ✅ Visual preview of labelled image with markers
   - ✅ Color-coded marker data structure for AI context
+- ✅ **AI-powered marker recommendations**
+  - ✅ Automatic recommendation generation after markers are saved
+  - ✅ Simple list of actionable design suggestions
+  - ✅ AI analysis using both base and labelled images
+  - ✅ Clean, numbered list UI for recommendations
+  - ✅ Project status progression to MARKER_RECOMMENDATIONS_READY
 
 ## User Flow
 
@@ -169,13 +175,14 @@ This is an active development repository for testing agentic AI backend architec
    - **Empty Room**: Show completion message, ready for AI recommendations
    - **Non-empty Room**: Show interactive marker interface
 5. **Place Markers** → Click to place up to 5 improvement markers with descriptions
-6. **Save Markers** → Generate labelled image and complete project setup
+6. **Save Markers** → Generate labelled image and AI recommendations
+7. **View Recommendations** → See simple, actionable design suggestions as a numbered list
 
 ## Data Structure
 
 ```json
 {
-  "status": "IMPROVEMENT_MARKERS_ADDED",
+  "status": "MARKER_RECOMMENDATIONS_READY",
   "context": {
     "base_image": "/path/to/original.jpg",
     "labelled_base_image": "/path/to/marked.jpg",
@@ -188,6 +195,11 @@ This is an active development repository for testing agentic AI backend architec
         "description": "Add coffee table here",
         "color": "red"
       }
+    ],
+    "marker_recommendations": [
+      "Add a round coffee table at marker 1 for better flow and functionality",
+      "Install ambient lighting at marker 2 to create a warm atmosphere",
+      "Place a decorative tray and plants at marker 3 for visual interest"
     ]
   }
 }
