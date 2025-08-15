@@ -6,6 +6,29 @@ An AI-powered interior design agent that helps users upgrade their living spaces
 
 This repository serves as a testing ground for an agentic backend architecture for an AI Interior Design Agent. The project consists of a FastAPI backend for the AI agent logic and a basic Next.js frontend for visualizing results.
 
+## General Approach
+
+### **Agentic Architecture Philosophy**
+
+- **Project-Based Workflow**: Each user interaction starts a new project with a unique UUID
+- **Context Accumulation**: Projects accumulate context through user inputs and AI responses
+- **Iterative Development**: Features are built incrementally, testing agentic patterns as we go
+- **Data-Driven Decisions**: Project context structure evolves based on actual usage patterns
+
+### **Development Methodology**
+
+- **Step-by-Step Implementation**: Each feature is built completely before moving to the next
+- **Documentation-First**: All functionality is documented as it's implemented
+- **Testing Focus**: Prioritize testing architectural patterns over production-ready features
+- **Incremental Refinement**: Context structure and project flow are refined through iteration
+
+### **Technical Approach**
+
+- **JSON File Storage**: Simple, file-based storage for rapid prototyping and testing
+- **React Query Integration**: Consistent data fetching patterns throughout the frontend
+- **Type Safety**: Full TypeScript support for API contracts and data structures
+- **URL-Based State**: Project state is managed through URL parameters for shareability
+
 ## Architecture
 
 ### Backend
@@ -85,6 +108,10 @@ This is an active development repository for testing agentic AI backend architec
 - ✅ React Query integration for data fetching
 - ✅ Basic home screen with API endpoint testing
 - ✅ CORS configuration for frontend-backend communication
+- ✅ Project management system with JSON file storage
+- ✅ Project creation and retrieval endpoints
+- ✅ Dynamic project pages with URL-based routing
+- ✅ Error handling for non-existent projects
 
 ## Contributing
 

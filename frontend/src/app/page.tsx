@@ -1,10 +1,13 @@
 "use client";
 
-import { useHealthCheck, useRootEndpoint } from "@/lib/api";
+import { useCreateProject, useHealthCheck, useRootEndpoint } from "@/lib/api";
+import { useRouter } from "next/navigation";
 
 export default function Home() {
   const healthQuery = useHealthCheck();
   const rootQuery = useRootEndpoint();
+  const createProjectMutation = useCreateProject();
+  const router = useRouter();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
@@ -124,6 +127,55 @@ export default function Home() {
                 <code className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-xs">
                   http://localhost:3000
                 </code>
+              </div>
+            </div>
+          </div>
+
+          {/* Project Management */}
+          <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+              Project Management
+            </h2>
+
+            <div className="space-y-4">
+              {/* Create Project */}
+              <div className="flex items-center space-x-4">
+                <button
+                  onClick={() => {
+                    createProjectMutation.mutate(undefined, {
+                      onSuccess: (data) => {
+                        router.push(`/projects/${data.project_id}`);
+                      },
+                    });
+                  }}
+                  disabled={createProjectMutation.isPending}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {createProjectMutation.isPending
+                    ? "Creating..."
+                    : "Create New Project"}
+                </button>
+
+                {createProjectMutation.isSuccess && (
+                  <span className="text-green-600 dark:text-green-400 text-sm">
+                    Project created: {createProjectMutation.data?.project_id}
+                  </span>
+                )}
+
+                {createProjectMutation.isError && (
+                  <span className="text-red-600 dark:text-red-400 text-sm">
+                    Error: {createProjectMutation.error?.message}
+                  </span>
+                )}
+              </div>
+
+              {/* Project Creation Info */}
+              <div className="border-t pt-4">
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Click "Create New Project" to start a new AI Interior Design
+                  project. You'll be redirected to the project page where you
+                  can interact with the AI agent.
+                </p>
               </div>
             </div>
           </div>
