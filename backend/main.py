@@ -5,7 +5,13 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from models import ImageUploadResponse, ProjectCreateResponse, ProjectResponse
+from models import (
+    ImageUploadResponse,
+    ProjectCreateResponse,
+    ProjectResponse,
+    SpaceTypeRequest,
+    SpaceTypeResponse,
+)
 
 load_dotenv()
 
@@ -97,6 +103,28 @@ async def get_project_base_image(project_id: str):
         raise HTTPException(status_code=404, detail="Image file not found")
 
     return FileResponse(image_path)
+
+
+@app.post("/projects/{project_id}/space-type", response_model=SpaceTypeResponse)
+async def select_project_space_type(
+    project_id: str, space_type_request: SpaceTypeRequest
+):
+    """Select space type for a project"""
+    try:
+        space_type = data_manager.select_space_type(
+            project_id, space_type_request.space_type
+        )
+        project = data_manager.get_project(project_id)
+
+        return SpaceTypeResponse(
+            project_id=project_id, space_type=space_type, status=project["status"]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to select space type: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

@@ -120,6 +120,20 @@ class DataManager:
         self._save_projects(projects)
         return str(image_path)
 
+    def select_space_type(self, project_id: str, space_type: str) -> str:
+        """Select space type for a project and update status"""
+        projects = self._load_projects()
+
+        if project_id not in projects:
+            raise ValueError(f"Project {project_id} not found")
+
+        # Update project with space type and status
+        projects[project_id]["context"]["space_type"] = space_type
+        projects[project_id]["status"] = "SPACE_TYPE_SELECTED"
+
+        self._save_projects(projects)
+        return space_type
+
 
 # Global instance
 data_manager = DataManager()

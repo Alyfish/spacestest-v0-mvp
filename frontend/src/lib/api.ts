@@ -75,6 +75,17 @@ export interface ImageUploadResponse {
   message: string;
 }
 
+export interface SpaceTypeRequest {
+  space_type: string;
+}
+
+export interface SpaceTypeResponse {
+  project_id: string;
+  space_type: string;
+  status: string;
+  message: string;
+}
+
 // React Query hooks
 export const useHealthCheck = () => {
   return useQuery({
@@ -122,6 +133,27 @@ export const useUploadProjectImage = () => {
         `/projects/${projectId}/upload-image`,
         file
       ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSelectSpaceType = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      spaceType,
+    }: {
+      projectId: string;
+      spaceType: string;
+    }) =>
+      apiClient.post<SpaceTypeResponse>(`/projects/${projectId}/space-type`, {
+        space_type: spaceType,
+      }),
     onSuccess: (data) => {
       // Invalidate the project query to refresh the data
       queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });

@@ -24,3 +24,14 @@ class ImageUploadResponse(BaseModel):
     image_path: str
     status: str
     message: str = "Image uploaded successfully"
+
+
+class SpaceTypeRequest(BaseModel):
+    space_type: str
+
+
+class SpaceTypeResponse(BaseModel):
+    project_id: str
+    space_type: str
+    status: str
+    message: str = "Space type selected successfully"

@@ -59,6 +59,7 @@ spaces_mvp/
 ├── frontend/
 │   ├── src/
 │   │   ├── app/        # Next.js app directory
+│   │   ├── components/ # Reusable React components
 │   │   └── lib/        # Utility functions
 │   ├── package.json    # Node.js dependencies
 │   ├── pnpm-lock.yaml  # pnpm lock file
@@ -77,12 +78,15 @@ spaces_mvp/
 
 - **Data Fetching**: Use React Query (TanStack Query) exclusively for all API calls
 - **UI Components**: Use Shadcn/ui components for consistent design and functionality
+- **Component Architecture**: Break down large pages into smaller, reusable components
+- **Direct Imports**: Use direct imports for components (no barrel exports)
 - **No Raw Fetch**: Avoid using raw fetch requests in components - always use React Query hooks
 - **Type Safety**: Maintain full TypeScript support for all API interactions
 
 ## Backend Guidelines
 
 - **Structured Output**: Use Pydantic models with `responses.parse` for type-safe AI responses
+- **Vision API**: Use `analyze_image_with_vision()` for image analysis with structured output
 - **Model Selection**: Use GPT-5 constants (GPT_5, GPT_5_MINI, GPT_5_NANO) for consistency
 - **Testing**: Use the CLI test script (`cli.py`) to validate structured output functionality
 
@@ -130,13 +134,19 @@ This is an active development repository for testing agentic AI backend architec
 - ✅ Dynamic project pages with URL-based routing
 - ✅ Error handling for non-existent projects
 - ✅ Image upload functionality with file storage
-- ✅ Project status management (NEW → BASE_IMAGE_UPLOADED)
+- ✅ Project status management (NEW → BASE_IMAGE_UPLOADED → SPACE_TYPE_SELECTED)
 - ✅ Base image retrieval endpoint
 - ✅ Image display on project pages
 - ✅ OpenAI client with Pydantic-based structured responses (responses.parse)
 - ✅ Returns validated Pydantic model instances
 - ✅ GPT-5 model constants (GPT_5, GPT_5_MINI, GPT_5_NANO)
 - ✅ CLI test script for structured output functionality
+- ✅ Vision API integration for image analysis
+- ✅ Automatic room emptiness detection on image upload
+- ✅ Enhanced project context with AI analysis results
+- ✅ Space type selection (living room, bedroom, office, custom)
+- ✅ Component-based architecture with reusable components
+- ✅ Modular frontend structure with direct imports
 
 ## Contributing
 
