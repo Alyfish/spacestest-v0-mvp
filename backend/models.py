@@ -1,3 +1,5 @@
+from typing import Dict, List
+
 from pydantic import BaseModel
 
 
@@ -12,6 +14,11 @@ class ProjectResponse(BaseModel):
     status: str
     created_at: str
     context: dict
+
+
+class ProjectsListResponse(BaseModel):
+    projects: Dict[str, dict]
+    total_count: int
 
 
 class ErrorResponse(BaseModel):
@@ -35,3 +42,21 @@ class SpaceTypeResponse(BaseModel):
     space_type: str
     status: str
     message: str = "Space type selected successfully"
+
+
+class ImprovementMarker(BaseModel):
+    id: str
+    position: Dict[str, float]  # {"x": 0.3, "y": 0.4}
+    description: str
+
+
+class ImprovementMarkersRequest(BaseModel):
+    markers: List[ImprovementMarker]
+
+
+class ImprovementMarkersResponse(BaseModel):
+    project_id: str
+    markers: List[ImprovementMarker]
+    labelled_image_path: str
+    status: str
+    message: str = "Improvement markers saved successfully"

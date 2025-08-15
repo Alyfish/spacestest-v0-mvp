@@ -3,8 +3,10 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import List
 
 from fastapi import UploadFile
+from models import ImprovementMarker
 from openai_client import OpenAIClient
 
 DATA_FILE = Path("data/projects.json")
@@ -72,6 +74,106 @@ class DataManager:
             # Default to False (not empty) if analysis fails
             return False
 
+    def _create_labelled_image(
+        self, base_image_path: str, markers: List[ImprovementMarker]
+    ) -> str:
+        """
+        Create a version of the image with visual markers
+
+        Args:
+            base_image_path: Path to the original image
+            markers: List of improvement markers to draw
+
+        Returns:
+            str: Path to the created labelled image
+        """
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+
+            # Load original image and create a copy
+            original_img = Image.open(base_image_path)
+            img = original_img.copy()  # Create a copy to avoid modifying the original
+            draw = ImageDraw.Draw(img)
+
+            # 5 distinct colors for the 5 markers
+            marker_colors = [
+                (239, 68, 68),  # Red
+                (34, 197, 94),  # Green
+                (59, 130, 246),  # Blue
+                (168, 85, 247),  # Purple
+                (245, 158, 11),  # Orange
+            ]
+
+            # Calculate proportional marker size based on image dimensions
+            # Base size on the smaller dimension to ensure visibility
+            min_dimension = min(img.width, img.height)
+            marker_size = max(
+                40, min_dimension // 25
+            )  # Increased size for better visibility
+            font_size = max(16, marker_size // 2)
+
+            # Try to load a font, fall back to default if not available
+            try:
+                font = ImageFont.truetype("arial.ttf", font_size)
+            except Exception:
+                font = ImageFont.load_default()
+
+            # Draw markers for each improvement request (max 5)
+            for i, marker in enumerate(markers[:5]):
+                # Convert relative coordinates to pixel coordinates
+                x = int(marker.position["x"] * img.width)
+                y = int(marker.position["y"] * img.height)
+
+                # Get marker color (cycle through the 5 colors)
+                color = marker_colors[i % len(marker_colors)]
+
+                # Draw marker circle
+                draw.ellipse(
+                    [
+                        x - marker_size // 2,
+                        y - marker_size // 2,
+                        x + marker_size // 2,
+                        y + marker_size // 2,
+                    ],
+                    fill=color,
+                    outline=(255, 255, 255),
+                    width=max(3, marker_size // 15),
+                )
+
+                # Draw marker number
+                draw.text(
+                    (x, y), str(i + 1), fill=(255, 255, 255), font=font, anchor="mm"
+                )
+
+                # Draw description text (truncated for visibility)
+                desc = (
+                    marker.description[:40] + "..."
+                    if len(marker.description) > 40
+                    else marker.description
+                )
+                draw.text(
+                    (x, y + marker_size // 2 + 15),
+                    desc,
+                    fill=color,
+                    font=font,
+                    anchor="mm",
+                )
+
+            # Save marked image with a different filename
+            base_path = Path(base_image_path)
+            labelled_path = str(
+                base_path.parent / f"{base_path.stem}_labelled{base_path.suffix}"
+            )
+            print(f"Creating labelled image: {labelled_path}")
+            img.save(labelled_path)
+            print(f"Labelled image saved successfully: {labelled_path}")
+            return labelled_path
+
+        except Exception as e:
+            print(f"Error creating labelled image: {e}")
+            # Return original image path if processing fails
+            return base_image_path
+
     def create_project(self) -> str:
         """Create a new project and return its ID"""
         projects = self._load_projects()
@@ -90,6 +192,10 @@ class DataManager:
         """Get a project by ID"""
         projects = self._load_projects()
         return projects.get(project_id)
+
+    def get_all_projects(self) -> dict:
+        """Get all projects"""
+        return self._load_projects()
 
     def upload_image(
         self, project_id: str, image_file: UploadFile, filename: str
@@ -133,6 +239,39 @@ class DataManager:
 
         self._save_projects(projects)
         return space_type
+
+    def save_improvement_markers(
+        self, project_id: str, markers: List[ImprovementMarker]
+    ) -> str:
+        """Save improvement markers and create labelled image"""
+        projects = self._load_projects()
+
+        if project_id not in projects:
+            raise ValueError(f"Project {project_id} not found")
+
+        # Get the base image path
+        base_image_path = projects[project_id]["context"].get("base_image")
+        if not base_image_path:
+            raise ValueError("No base image found for this project")
+
+        # Create labelled image with markers
+        labelled_image_path = self._create_labelled_image(base_image_path, markers)
+
+        # Add color information to markers
+        color_names = ["red", "green", "blue", "purple", "orange"]
+        markers_with_colors = []
+        for i, marker in enumerate(markers[:5]):
+            marker_data = marker.model_dump()
+            marker_data["color"] = color_names[i % len(color_names)]
+            markers_with_colors.append(marker_data)
+
+        # Update project with markers, labelled image, and status
+        projects[project_id]["context"]["improvement_markers"] = markers_with_colors
+        projects[project_id]["context"]["labelled_base_image"] = labelled_image_path
+        projects[project_id]["status"] = "IMPROVEMENT_MARKERS_ADDED"
+
+        self._save_projects(projects)
+        return labelled_image_path
 
 
 # Global instance

@@ -1,6 +1,8 @@
 "use client";
 
+import { ImageMarkerInterface } from "@/components/ImageMarkerInterface";
 import { ImageUploadSection } from "@/components/ImageUploadSection";
+import { LabelledImageDisplay } from "@/components/LabelledImageDisplay";
 import { ProjectContext } from "@/components/ProjectContext";
 import { ProjectDetails } from "@/components/ProjectDetails";
 import { ProjectHeader } from "@/components/ProjectHeader";
@@ -72,6 +74,7 @@ export default function ProjectPage() {
   }
 
   const project = projectQuery.data;
+  const isRoomEmpty = project.context.is_base_image_empty_room === true;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
@@ -102,6 +105,89 @@ export default function ProjectPage() {
             project.context.space_type && (
               <SpaceTypeDisplay spaceType={project.context.space_type} />
             )}
+
+          {project.status === "SPACE_TYPE_SELECTED" && isRoomEmpty && (
+            <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+              <div className="text-center">
+                <div className="w-16 h-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg
+                    className="w-8 h-8 text-green-600 dark:text-green-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                  Project Setup Complete!
+                </h2>
+                <p className="text-gray-600 dark:text-gray-300 mb-4">
+                  Your {project.context.space_type} space is ready for AI
+                  recommendations.
+                </p>
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                  <p className="text-blue-800 dark:text-blue-200 text-sm">
+                    Since your room is empty, the AI can provide comprehensive
+                    design recommendations for furnishing and decorating your{" "}
+                    {project.context.space_type}.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {project.status === "SPACE_TYPE_SELECTED" && !isRoomEmpty && (
+            <ImageMarkerInterface projectId={project.project_id} />
+          )}
+
+          {project.status === "IMPROVEMENT_MARKERS_ADDED" && (
+            <>
+              <LabelledImageDisplay
+                projectId={project.project_id}
+                markers={project.context.improvement_markers || []}
+              />
+              <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+                <div className="text-center">
+                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg
+                      className="w-8 h-8 text-green-600 dark:text-green-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  </div>
+                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                    Project Setup Complete!
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-300 mb-4">
+                    Your {project.context.space_type} space with improvement
+                    markers is ready for AI recommendations.
+                  </p>
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                    <p className="text-blue-800 dark:text-blue-200 text-sm">
+                      The AI now has detailed information about your space and
+                      specific areas you want to improve. Future AI
+                      recommendation features will use this rich context to
+                      provide personalized design suggestions.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </main>
       </div>
     </div>

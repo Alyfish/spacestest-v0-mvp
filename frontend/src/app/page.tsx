@@ -1,5 +1,6 @@
 "use client";
 
+import ProjectsList from "@/components/ProjectsList";
 import { useCreateProject, useHealthCheck, useRootEndpoint } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
@@ -134,7 +135,7 @@ export default function Home() {
           {/* Project Management */}
           <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-              Project Management
+              Create New Project
             </h2>
 
             <div className="space-y-4">
@@ -178,6 +179,11 @@ export default function Home() {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Projects List */}
+          <div className="mt-8">
+            <ProjectsList />
           </div>
         </main>
       </div>

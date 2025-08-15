@@ -7,8 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from models import (
     ImageUploadResponse,
+    ImprovementMarkersRequest,
+    ImprovementMarkersResponse,
     ProjectCreateResponse,
     ProjectResponse,
+    ProjectsListResponse,
     SpaceTypeRequest,
     SpaceTypeResponse,
 )
@@ -46,6 +49,13 @@ async def create_project():
     project = data_manager.get_project(project_id)
 
     return ProjectCreateResponse(project_id=project_id, status=project["status"])
+
+
+@app.get("/projects", response_model=ProjectsListResponse)
+async def get_all_projects():
+    """Get all projects"""
+    projects = data_manager.get_all_projects()
+    return ProjectsListResponse(projects=projects, total_count=len(projects))
 
 
 @app.get("/projects/{project_id}", response_model=ProjectResponse)
@@ -105,6 +115,27 @@ async def get_project_base_image(project_id: str):
     return FileResponse(image_path)
 
 
+@app.get("/projects/{project_id}/labelled-image")
+async def get_project_labelled_image(project_id: str):
+    """Get the labelled image for a project"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if "labelled_base_image" not in project["context"]:
+        raise HTTPException(
+            status_code=404, detail="No labelled image found for this project"
+        )
+
+    image_path = project["context"]["labelled_base_image"]
+
+    if not Path(image_path).exists():
+        raise HTTPException(status_code=404, detail="Labelled image file not found")
+
+    return FileResponse(image_path)
+
+
 @app.post("/projects/{project_id}/space-type", response_model=SpaceTypeResponse)
 async def select_project_space_type(
     project_id: str, space_type_request: SpaceTypeRequest
@@ -124,6 +155,34 @@ async def select_project_space_type(
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to select space type: {str(e)}"
+        )
+
+
+@app.post(
+    "/projects/{project_id}/improvement-markers",
+    response_model=ImprovementMarkersResponse,
+)
+async def save_improvement_markers(
+    project_id: str, markers_request: ImprovementMarkersRequest
+):
+    """Save improvement markers for a project"""
+    try:
+        labelled_image_path = data_manager.save_improvement_markers(
+            project_id, markers_request.markers
+        )
+        project = data_manager.get_project(project_id)
+
+        return ImprovementMarkersResponse(
+            project_id=project_id,
+            markers=markers_request.markers,
+            labelled_image_path=labelled_image_path,
+            status=project["status"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to save improvement markers: {str(e)}"
         )
 
 

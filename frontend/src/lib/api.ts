@@ -6,6 +6,10 @@ const API_BASE_URL = "http://localhost:8000/api";
 export const getProjectImageUrl = (projectId: string) =>
   `${API_BASE_URL}/projects/${projectId}/base-image`;
 
+// Helper function to get labelled image URL
+export const getProjectLabelledImageUrl = (projectId: string) =>
+  `${API_BASE_URL}/projects/${projectId}/labelled-image`;
+
 // API client functions
 const apiClient = {
   async get<T>(endpoint: string): Promise<T> {
@@ -68,6 +72,18 @@ export interface ProjectResponse {
   context: Record<string, any>;
 }
 
+export interface ProjectsListResponse {
+  projects: Record<
+    string,
+    {
+      status: string;
+      created_at: string;
+      context: Record<string, any>;
+    }
+  >;
+  total_count: number;
+}
+
 export interface ImageUploadResponse {
   project_id: string;
   image_path: string;
@@ -82,6 +98,25 @@ export interface SpaceTypeRequest {
 export interface SpaceTypeResponse {
   project_id: string;
   space_type: string;
+  status: string;
+  message: string;
+}
+
+export interface ImprovementMarker {
+  id: string;
+  position: { x: number; y: number };
+  description: string;
+  color: string; // Required since it's always added by backend
+}
+
+export interface ImprovementMarkersRequest {
+  markers: ImprovementMarker[];
+}
+
+export interface ImprovementMarkersResponse {
+  project_id: string;
+  markers: ImprovementMarker[];
+  labelled_image_path: string;
   status: string;
   message: string;
 }
@@ -124,6 +159,14 @@ export const useGetProject = (projectId: string) => {
   });
 };
 
+export const useGetAllProjects = () => {
+  return useQuery({
+    queryKey: ["projects"],
+    queryFn: () => apiClient.get<ProjectsListResponse>("/projects"),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+};
+
 export const useUploadProjectImage = () => {
   const queryClient = useQueryClient();
 
@@ -154,6 +197,28 @@ export const useSelectSpaceType = () => {
       apiClient.post<SpaceTypeResponse>(`/projects/${projectId}/space-type`, {
         space_type: spaceType,
       }),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSaveImprovementMarkers = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      markers,
+    }: {
+      projectId: string;
+      markers: ImprovementMarker[];
+    }) =>
+      apiClient.post<ImprovementMarkersResponse>(
+        `/projects/${projectId}/improvement-markers`,
+        { markers }
+      ),
     onSuccess: (data) => {
       // Invalidate the project query to refresh the data
       queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });

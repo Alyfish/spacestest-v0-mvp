@@ -131,10 +131,11 @@ This is an active development repository for testing agentic AI backend architec
 - ✅ CORS configuration for frontend-backend communication
 - ✅ Project management system with JSON file storage
 - ✅ Project creation and retrieval endpoints
+- ✅ Projects list endpoint (`GET /api/projects`)
 - ✅ Dynamic project pages with URL-based routing
 - ✅ Error handling for non-existent projects
 - ✅ Image upload functionality with file storage
-- ✅ Project status management (NEW → BASE_IMAGE_UPLOADED → SPACE_TYPE_SELECTED)
+- ✅ Project status management (NEW → BASE_IMAGE_UPLOADED → SPACE_TYPE_SELECTED → IMPROVEMENT_MARKERS_ADDED)
 - ✅ Base image retrieval endpoint
 - ✅ Image display on project pages
 - ✅ OpenAI client with Pydantic-based structured responses (responses.parse)
@@ -147,6 +148,50 @@ This is an active development repository for testing agentic AI backend architec
 - ✅ Space type selection (living room, bedroom, office, custom)
 - ✅ Component-based architecture with reusable components
 - ✅ Modular frontend structure with direct imports
+- ✅ Projects list on home page with navigation to existing projects
+- ✅ Project status display with visual indicators
+- ✅ Time-based project sorting and display
+- ✅ **Interactive improvement markers system**
+  - ✅ Click-to-place marker interface for non-empty rooms
+  - ✅ Maximum 5 markers with distinct colors (red, green, blue, purple, orange)
+  - ✅ Marker description input and management
+  - ✅ Dual image storage (original + labelled with markers)
+  - ✅ Proportional marker sizing based on image dimensions
+  - ✅ Visual preview of labelled image with markers
+  - ✅ Color-coded marker data structure for AI context
+
+## User Flow
+
+1. **Create Project** → Get unique project ID
+2. **Upload Image** → AI analyzes room emptiness
+3. **Select Space Type** → Choose room type (living room, bedroom, office, custom)
+4. **Conditional Flow**:
+   - **Empty Room**: Show completion message, ready for AI recommendations
+   - **Non-empty Room**: Show interactive marker interface
+5. **Place Markers** → Click to place up to 5 improvement markers with descriptions
+6. **Save Markers** → Generate labelled image and complete project setup
+
+## Data Structure
+
+```json
+{
+  "status": "IMPROVEMENT_MARKERS_ADDED",
+  "context": {
+    "base_image": "/path/to/original.jpg",
+    "labelled_base_image": "/path/to/marked.jpg",
+    "space_type": "bedroom",
+    "is_base_image_empty_room": false,
+    "improvement_markers": [
+      {
+        "id": "marker_1",
+        "position": { "x": 0.3, "y": 0.4 },
+        "description": "Add coffee table here",
+        "color": "red"
+      }
+    ]
+  }
+}
+```
 
 ## Contributing
 
