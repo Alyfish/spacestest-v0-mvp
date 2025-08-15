@@ -1,0 +1,76 @@
+# AI Interior Design Agent
+
+An AI-powered interior design agent that helps users upgrade their living spaces through intelligent design recommendations and space optimization.
+
+## Project Overview
+
+This repository serves as a testing ground for an agentic backend architecture for an AI Interior Design Agent. The project consists of a FastAPI backend for the AI agent logic and a basic Next.js frontend for visualizing results.
+
+## Architecture
+
+### Backend
+
+- **Framework**: FastAPI
+- **Package Manager**: uv
+- **Purpose**: AI agent logic, design recommendations, space analysis
+- **Location**: `/backend/`
+
+### Frontend
+
+- **Framework**: Next.js
+- **Package Manager**: pnpm
+- **UI Components**: shadcn/ui
+- **Purpose**: Basic interface to visualize and interact with AI recommendations
+- **Location**: `/frontend/`
+
+## Project Structure
+
+```
+spaces_mvp/
+├── backend/
+│   ├── main.py          # FastAPI application entry point
+│   ├── pyproject.toml   # Python project configuration
+│   ├── uv.lock         # uv lock file
+│   └── README.md       # Backend-specific documentation
+├── frontend/
+│   ├── src/
+│   │   ├── app/        # Next.js app directory
+│   │   └── lib/        # Utility functions
+│   ├── package.json    # Node.js dependencies
+│   ├── pnpm-lock.yaml  # pnpm lock file
+│   └── components.json # shadcn/ui configuration
+└── README.md           # This file
+```
+
+## Development Approach
+
+- **Incremental Development**: Features will be added incrementally to test and refine the agentic architecture
+- **Documentation**: All functionality will be documented as it's implemented
+- **Step-by-Step Process**: Development follows a methodical, step-by-step approach
+- **Testing Focus**: The repository prioritizes testing agentic backend patterns over production-ready features
+
+## Getting Started
+
+### Backend Setup
+
+```bash
+cd backend
+uv sync
+uv run fastapi dev
+```
+
+### Frontend Setup
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+## Current Status
+
+This is an active development repository for testing agentic AI backend architectures. The project is in early stages and will be updated incrementally as new features and architectural patterns are implemented.
+
+## Contributing
+
+This is a personal project for testing and development purposes. All changes should be documented and follow the incremental development approach outlined above.
