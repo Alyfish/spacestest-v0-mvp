@@ -1,9 +1,11 @@
 import json
 import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import UploadFile
+from openai_client import OpenAIClient
 
 DATA_FILE = Path("data/projects.json")
 IMAGES_DIR = Path("data/images")
@@ -13,6 +15,7 @@ class DataManager:
     def __init__(self):
         self._ensure_data_file_exists()
         self._ensure_images_dir_exists()
+        self.openai_client = OpenAIClient()
 
     def _ensure_data_file_exists(self):
         """Create the data file if it doesn't exist"""
@@ -35,6 +38,40 @@ class DataManager:
         """Save projects to the JSON file"""
         DATA_FILE.write_text(json.dumps(projects, indent=2))
 
+    def _check_room_emptiness(self, image_path: str) -> bool:
+        """
+        Check if the uploaded image shows an empty room using AI analysis
+
+        Args:
+            image_path: Path to the image file
+
+        Returns:
+            bool: True if the room appears empty, False otherwise
+        """
+        try:
+            # Create a simple Pydantic model for the response
+            from pydantic import BaseModel
+
+            class RoomEmptinessCheck(BaseModel):
+                is_empty: bool
+                confidence: float
+                reasoning: str
+
+            # Analyze the image using vision API
+            result = self.openai_client.analyze_image_with_vision(
+                prompt="Analyze this room image and determine if it's empty. Consider furniture, decorations, and general room contents.",
+                pydantic_model=RoomEmptinessCheck,
+                image_path=image_path,
+                system_message="You are an expert at analyzing room images. Determine if a room is empty based on the presence of furniture, decorations, or other items. Be conservative - if there's any significant furniture or decoration, consider it not empty.",
+            )
+
+            return result.is_empty
+
+        except Exception as e:
+            print(f"Error checking room emptiness: {e}")
+            # Default to False (not empty) if analysis fails
+            return False
+
     def create_project(self) -> str:
         """Create a new project and return its ID"""
         projects = self._load_projects()
@@ -42,7 +79,7 @@ class DataManager:
 
         projects[project_id] = {
             "status": "NEW",
-            "created_at": str(uuid.uuid1().time),  # Simple timestamp for now
+            "created_at": datetime.now().isoformat(),  # Proper ISO timestamp
             "context": {},
         }
 
@@ -57,7 +94,7 @@ class DataManager:
     def upload_image(
         self, project_id: str, image_file: UploadFile, filename: str
     ) -> str:
-        """Upload an image for a project and return the file path"""
+        """Upload an image for a project, analyze it, and return the file path"""
         projects = self._load_projects()
 
         if project_id not in projects:
@@ -72,8 +109,12 @@ class DataManager:
         with open(image_path, "wb") as buffer:
             shutil.copyfileobj(image_file.file, buffer)
 
-        # Update project with image path and status
+        # Check if the room is empty using AI analysis
+        is_empty_room = self._check_room_emptiness(str(image_path))
+
+        # Update project with image path, emptiness check, and status
         projects[project_id]["context"]["base_image"] = str(image_path)
+        projects[project_id]["context"]["is_base_image_empty_room"] = is_empty_room
         projects[project_id]["status"] = "BASE_IMAGE_UPLOADED"
 
         self._save_projects(projects)

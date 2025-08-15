@@ -1,6 +1,7 @@
 import os
 from typing import Any, Dict, Optional, TypeVar, Union
 
+from dotenv import load_dotenv
 from openai import OpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 from pydantic import BaseModel
@@ -12,6 +13,8 @@ GPT_5 = "gpt-5"
 GPT_5_MINI = "gpt-5-mini"
 GPT_5_NANO = "gpt-5-nano"
 DEFAULT_MODEL = GPT_5_NANO
+
+load_dotenv()
 
 
 class OpenAIResponse(BaseModel):
@@ -106,6 +109,74 @@ class OpenAIClient:
                 input_messages.append({"role": "system", "content": system_message})
 
             input_messages.append({"role": "user", "content": prompt})
+
+            # Prepare parameters
+            params = {
+                "model": model,
+                "input": input_messages,
+                "text_format": pydantic_model,
+            }
+
+            if max_tokens:
+                params["max_tokens"] = max_tokens
+
+            # Make the API call using the new responses.parse method
+            response = self.client.responses.parse(**params)
+
+            # Return the parsed Pydantic model
+            return response.output_parsed
+
+        except Exception as e:
+            raise Exception(f"OpenAI API error: {str(e)}")
+
+    def analyze_image_with_vision(
+        self,
+        prompt: str,
+        pydantic_model: type[T],
+        image_path: str,
+        model: str = DEFAULT_MODEL,
+        max_tokens: Optional[int] = None,
+        system_message: Optional[str] = None,
+    ) -> T:
+        """
+        Analyze an image using vision API with structured output
+
+        Args:
+            prompt: The prompt describing what to analyze in the image
+            pydantic_model: Pydantic model class for structured output
+            image_path: Path to the image file
+            model: The vision model to use (default: gpt-4o-mini)
+            max_tokens: Maximum tokens in response
+            system_message: Optional system message to guide the model
+
+        Returns:
+            Parsed Pydantic model instance
+        """
+        try:
+            import base64
+
+            # Read and encode the image
+            with open(image_path, "rb") as image_file:
+                image_data = base64.b64encode(image_file.read()).decode("utf-8")
+
+            # Prepare input messages with image
+            input_messages = []
+
+            if system_message:
+                input_messages.append({"role": "system", "content": system_message})
+
+            input_messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{image_data}",
+                        },
+                    ],
+                }
+            )
 
             # Prepare parameters
             params = {
