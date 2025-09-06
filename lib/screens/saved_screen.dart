@@ -1,0 +1,70 @@
+import 'package:flutter/material.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
+import '../theme.dart';
+
+class SavedScreen extends StatelessWidget {
+  const SavedScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.backgroundColor,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Title
+              Text(
+                'Saved.',
+                style: const TextStyle(
+                  fontFamily: AppTheme.primaryFont,
+                  fontSize: 32,
+                  fontWeight: FontWeight.normal,
+                  color: AppTheme.primaryColor,
+                ),
+              ),
+              const SizedBox(height: 24),
+              
+              // Content placeholder
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        IconsaxPlusLinear.heart,
+                        size: 80,
+                        color: AppTheme.grayColor,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No saved items',
+                        style: TextStyle(
+                          fontFamily: AppTheme.primaryFont,
+                          fontSize: 24,
+                          color: AppTheme.grayColor,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Save your favorite designs here',
+                        style: TextStyle(
+                          fontFamily: AppTheme.secondaryFont,
+                          fontSize: 16,
+                          color: AppTheme.grayColor,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
