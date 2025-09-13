@@ -47,6 +47,22 @@ const apiClient = {
     }
     return response.json();
   },
+
+  async uploadFiles<T>(endpoint: string, files: File[]): Promise<T> {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append("images", file);
+    });
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.statusText}`);
+    }
+    return response.json();
+  },
 };
 
 // API response types
@@ -122,6 +138,29 @@ export interface ImprovementMarkersResponse {
 }
 
 export interface MarkerRecommendationsResponse {
+  project_id: string;
+  space_type: string;
+  recommendations: string[];
+  status: string;
+  message: string;
+}
+
+export interface InspirationImageUploadResponse {
+  project_id: string;
+  image_path: string;
+  status: string;
+  message: string;
+}
+
+export interface InspirationImagesBatchUploadResponse {
+  project_id: string;
+  image_paths: string[];
+  uploaded_count: number;
+  status: string;
+  message: string;
+}
+
+export interface InspirationRecommendationsResponse {
   project_id: string;
   space_type: string;
   recommendations: string[];
@@ -245,3 +284,54 @@ export const useGetMarkerRecommendations = (projectId: string) => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 };
+
+export const useUploadInspirationImage = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ projectId, file }: { projectId: string; file: File }) =>
+      apiClient.uploadFile<InspirationImageUploadResponse>(
+        `/projects/${projectId}/inspiration-image`,
+        file
+      ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useUploadInspirationImagesBatch = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ projectId, files }: { projectId: string; files: File[] }) =>
+      apiClient.uploadFiles<InspirationImagesBatchUploadResponse>(
+        `/projects/${projectId}/inspiration-images-batch`,
+        files
+      ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useGenerateInspirationRecommendations = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<InspirationRecommendationsResponse>(
+        `/projects/${projectId}/inspiration-recommendations`
+      ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+// Helper function to get inspiration image URL
+export const getInspirationImageUrl = (projectId: string, imageIndex: number) =>
+  `${API_BASE_URL}/projects/${projectId}/inspiration-image/${imageIndex}`;

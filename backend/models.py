@@ -1,6 +1,6 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProjectCreateResponse(BaseModel):
@@ -26,13 +26,28 @@ class ProjectResponse(BaseModel):
         project_id (str): Unique identifier for the project
         status (str): Current status of the project
         created_at (str): Timestamp when the project was created
-        context (dict): Project context and metadata
+        context (ProjectContext): Project context and metadata
     """
 
     project_id: str
     status: str
     created_at: str
-    context: dict
+    context: "ProjectContext"
+
+
+class ProjectSummary(BaseModel):
+    """
+    Summary model for projects in the list view.
+
+    Attributes:
+        status (str): Current status of the project
+        created_at (str): Timestamp when the project was created
+        context (ProjectContext): Project context and metadata
+    """
+
+    status: str
+    created_at: str
+    context: "ProjectContext"
 
 
 class ProjectsListResponse(BaseModel):
@@ -40,11 +55,11 @@ class ProjectsListResponse(BaseModel):
     Response model for retrieving a list of all projects.
 
     Attributes:
-        projects (Dict[str, dict]): Dictionary mapping project IDs to project data
+        projects (Dict[str, ProjectSummary]): Dictionary mapping project IDs to project summaries
         total_count (int): Total number of projects in the system
     """
 
-    projects: Dict[str, dict]
+    projects: Dict[str, ProjectSummary]
     total_count: int
 
 
@@ -67,13 +82,11 @@ class ImageUploadResponse(BaseModel):
 
     Attributes:
         project_id (str): ID of the project the image was uploaded to
-        image_path (str): File path where the uploaded image is stored
         status (str): Status of the upload operation
         message (str): Human-readable message describing the upload result
     """
 
     project_id: str
-    image_path: str
     status: str
     message: str = "Image uploaded successfully"
 
@@ -106,6 +119,21 @@ class SpaceTypeResponse(BaseModel):
     message: str = "Space type selected successfully"
 
 
+class MarkerPosition(BaseModel):
+    """
+    Model representing the position of a marker on an image.
+
+    Coordinates are normalized to the image dimensions (0-1 range).
+
+    Attributes:
+        x (float): X coordinate (0-1 range)
+        y (float): Y coordinate (0-1 range)
+    """
+
+    x: float = Field(..., ge=0.0, le=1.0, description="X coordinate (0-1 range)")
+    y: float = Field(..., ge=0.0, le=1.0, description="Y coordinate (0-1 range)")
+
+
 class ImprovementMarker(BaseModel):
     """
     Model representing an improvement marker on an image.
@@ -115,13 +143,68 @@ class ImprovementMarker(BaseModel):
 
     Attributes:
         id (str): Unique identifier for the marker
-        position (Dict[str, float]): Normalized coordinates as {"x": 0.3, "y": 0.4}
+        position (MarkerPosition): Normalized coordinates
         description (str): Description of the improvement needed at this location
+        color (str): Visual color identifier for the marker
     """
 
     id: str
-    position: Dict[str, float]  # {"x": 0.3, "y": 0.4}
+    position: MarkerPosition
     description: str
+    color: str = Field(
+        ..., description="Color identifier (red, green, blue, purple, orange)"
+    )
+
+
+class ProjectContext(BaseModel):
+    """
+    Project context that evolves through the design workflow.
+
+    Contains the essential data needed for each step of the design process.
+    """
+
+    # Core data
+    base_image: Optional[str] = None
+    is_base_image_empty_room: Optional[bool] = None
+    space_type: Optional[str] = None
+    improvement_markers: List[ImprovementMarker] = Field(default_factory=list)
+    labelled_base_image: Optional[str] = None
+    marker_recommendations: List[str] = Field(default_factory=list)
+
+    # Inspiration images
+    inspiration_images: List[str] = Field(
+        default_factory=list, description="Paths to uploaded inspiration images"
+    )
+    inspiration_recommendations: List[str] = Field(
+        default_factory=list,
+        description="AI recommendations based on inspiration images",
+    )
+
+    def is_ready_for_markers(self) -> bool:
+        """Check if ready for marker placement."""
+        return (
+            self.base_image is not None
+            and self.space_type is not None
+            and self.is_base_image_empty_room is False
+        )
+
+    def is_ready_for_recommendations(self) -> bool:
+        """Check if ready for AI recommendations."""
+        return (
+            self.base_image is not None
+            and self.space_type is not None
+            and len(self.improvement_markers) > 0
+            and self.labelled_base_image is not None
+        )
+
+    def is_ready_for_inspiration(self) -> bool:
+        """Check if ready for inspiration image upload."""
+        return (
+            self.base_image is not None
+            and self.space_type is not None
+            and len(self.improvement_markers) > 0
+            and self.labelled_base_image is not None
+        )
 
 
 class ImprovementMarkersRequest(BaseModel):
@@ -171,3 +254,58 @@ class MarkerRecommendationsResponse(BaseModel):
     recommendations: List[str]
     status: str
     message: str = "Marker recommendations generated successfully"
+
+
+class InspirationImageUploadResponse(BaseModel):
+    """
+    Response model for inspiration image upload operations.
+
+    Attributes:
+        project_id (str): ID of the project the image was uploaded to
+        image_path (str): File path where the uploaded inspiration image is stored
+        status (str): Status of the upload operation
+        message (str): Human-readable message describing the upload result
+    """
+
+    project_id: str
+    image_path: str
+    status: str
+    message: str = "Inspiration image uploaded successfully"
+
+
+class InspirationImagesBatchUploadResponse(BaseModel):
+    """
+    Response model for batch inspiration images upload operations.
+
+    Attributes:
+        project_id (str): ID of the project the images were uploaded to
+        image_paths (List[str]): File paths where the uploaded inspiration images are stored
+        uploaded_count (int): Number of images successfully uploaded
+        status (str): Status of the upload operation
+        message (str): Human-readable message describing the upload result
+    """
+
+    project_id: str
+    image_paths: List[str]
+    uploaded_count: int
+    status: str
+    message: str = "Inspiration images uploaded successfully"
+
+
+class InspirationRecommendationsResponse(BaseModel):
+    """
+    Response model for inspiration-based recommendations.
+
+    Attributes:
+        project_id (str): ID of the project recommendations are generated for
+        space_type (str): Type of space the recommendations are based on
+        recommendations (List[str]): List of inspiration-based design suggestions
+        status (str): Status of the recommendations generation
+        message (str): Human-readable message describing the operation result
+    """
+
+    project_id: str
+    space_type: str
+    recommendations: List[str]
+    status: str
+    message: str = "Inspiration recommendations generated successfully"

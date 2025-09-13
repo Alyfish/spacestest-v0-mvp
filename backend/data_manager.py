@@ -1,12 +1,13 @@
 import json
 import shutil
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List
 
 from fastapi import UploadFile
-from models import ImprovementMarker
+from models import ImprovementMarker, ProjectContext
 from openai_client import OpenAIClient
 
 DATA_FILE = Path("data/projects.json")
@@ -77,7 +78,7 @@ class DataManager:
     def _generate_marker_recommendations(
         self,
         space_type: str,
-        markers: List[dict],
+        markers: List[ImprovementMarker],
         labelled_image_path: str,
     ) -> List[str]:
         """
@@ -103,7 +104,7 @@ class DataManager:
             # Build the prompt with marker information
             marker_info = "\n".join(
                 [
-                    f"Marker {i + 1} ({marker['color']}): {marker['description']}"
+                    f"Marker {i + 1} ({marker.color}): {marker.description}"
                     for i, marker in enumerate(markers)
                 ]
             )
@@ -137,6 +138,9 @@ class DataManager:
 
         except Exception as e:
             print(f"Error generating marker recommendations: {e}")
+            import traceback
+
+            traceback.print_exc()
             # Return default recommendations if AI analysis fails
             return [
                 "Add a statement piece at marker 1 to create a focal point",
@@ -191,8 +195,8 @@ class DataManager:
             # Draw markers for each improvement request (max 5)
             for i, marker in enumerate(markers[:5]):
                 # Convert relative coordinates to pixel coordinates
-                x = int(marker.position["x"] * img.width)
-                y = int(marker.position["y"] * img.height)
+                x = int(marker.position.x * img.width)
+                y = int(marker.position.y * img.height)
 
                 # Get marker color (cycle through the 5 colors)
                 color = marker_colors[i % len(marker_colors)]
@@ -252,7 +256,7 @@ class DataManager:
         projects[project_id] = {
             "status": "NEW",
             "created_at": datetime.now().isoformat(),  # Proper ISO timestamp
-            "context": {},
+            "context": ProjectContext().model_dump(),
         }
 
         self._save_projects(projects)
@@ -289,8 +293,15 @@ class DataManager:
         is_empty_room = self._check_room_emptiness(str(image_path))
 
         # Update project with image path, emptiness check, and status
-        projects[project_id]["context"]["base_image"] = str(image_path)
-        projects[project_id]["context"]["is_base_image_empty_room"] = is_empty_room
+        current_context = ProjectContext.model_validate(projects[project_id]["context"])
+        updated_context = current_context.model_copy(
+            update={
+                "base_image": str(image_path),
+                "is_base_image_empty_room": is_empty_room,
+            }
+        )
+
+        projects[project_id]["context"] = updated_context.model_dump()
         projects[project_id]["status"] = "BASE_IMAGE_UPLOADED"
 
         self._save_projects(projects)
@@ -304,7 +315,10 @@ class DataManager:
             raise ValueError(f"Project {project_id} not found")
 
         # Update project with space type and status
-        projects[project_id]["context"]["space_type"] = space_type
+        current_context = ProjectContext.model_validate(projects[project_id]["context"])
+        updated_context = current_context.model_copy(update={"space_type": space_type})
+
+        projects[project_id]["context"] = updated_context.model_dump()
         projects[project_id]["status"] = "SPACE_TYPE_SELECTED"
 
         self._save_projects(projects)
@@ -314,45 +328,266 @@ class DataManager:
         self, project_id: str, markers: List[ImprovementMarker]
     ) -> str:
         """Save improvement markers, create labelled image, and generate AI recommendations"""
-        projects = self._load_projects()
+        try:
+            print(f"Starting save_improvement_markers for project {project_id}")
+            projects = self._load_projects()
 
-        if project_id not in projects:
-            raise ValueError(f"Project {project_id} not found")
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
 
-        # Get the base image path and space type
-        base_image_path = projects[project_id]["context"].get("base_image")
-        space_type = projects[project_id]["context"].get("space_type")
+            # Get the base image path and space type
+            base_image_path = projects[project_id]["context"].get("base_image")
+            space_type = projects[project_id]["context"].get("space_type")
 
-        if not base_image_path:
-            raise ValueError("No base image found for this project")
+            if not base_image_path:
+                raise ValueError("No base image found for this project")
 
-        if not space_type:
-            raise ValueError("No space type selected for this project")
+            if not space_type:
+                raise ValueError("No space type selected for this project")
 
-        # Create labelled image with markers
-        labelled_image_path = self._create_labelled_image(base_image_path, markers)
+            print(f"Creating labelled image with {len(markers)} markers")
+            # Create labelled image with markers
+            labelled_image_path = self._create_labelled_image(base_image_path, markers)
 
-        # Add color information to markers
-        color_names = ["red", "green", "blue", "purple", "orange"]
-        markers_with_colors = []
-        for i, marker in enumerate(markers[:5]):
-            marker_data = marker.model_dump()
-            marker_data["color"] = color_names[i % len(color_names)]
-            markers_with_colors.append(marker_data)
+            # Add color information to markers and convert to proper format
+            color_names = ["red", "green", "blue", "purple", "orange"]
+            markers_with_colors = []
+            for i, marker in enumerate(markers[:5]):
+                # marker.position is already a MarkerPosition object, no need to convert
+                marker_with_color = ImprovementMarker(
+                    id=marker.id,
+                    position=marker.position,  # Use the existing MarkerPosition object
+                    description=marker.description,
+                    color=color_names[i % len(color_names)],
+                )
+                markers_with_colors.append(marker_with_color)
 
-        # Generate AI recommendations based on markers
-        recommendations = self._generate_marker_recommendations(
-            space_type, markers_with_colors, labelled_image_path
-        )
+            print(
+                f"Generating AI recommendations for {len(markers_with_colors)} markers"
+            )
+            # Generate AI recommendations based on markers
+            recommendations = self._generate_marker_recommendations(
+                space_type,
+                markers_with_colors,
+                labelled_image_path,
+            )
 
-        # Update project with markers, labelled image, recommendations, and status
-        projects[project_id]["context"]["improvement_markers"] = markers_with_colors
-        projects[project_id]["context"]["labelled_base_image"] = labelled_image_path
-        projects[project_id]["context"]["marker_recommendations"] = recommendations
-        projects[project_id]["status"] = "MARKER_RECOMMENDATIONS_READY"
+            print(
+                f"Updating project context with {len(recommendations)} recommendations"
+            )
+            # Update project with markers, labelled image, recommendations, and status
+            current_context = ProjectContext.model_validate(
+                projects[project_id]["context"]
+            )
+            updated_context = current_context.model_copy(
+                update={
+                    "improvement_markers": markers_with_colors,
+                    "labelled_base_image": labelled_image_path,
+                    "marker_recommendations": recommendations,
+                }
+            )
 
-        self._save_projects(projects)
-        return labelled_image_path
+            projects[project_id]["context"] = updated_context.model_dump()
+            projects[project_id]["status"] = "MARKER_RECOMMENDATIONS_READY"
+
+            print("Saving projects to file")
+            self._save_projects(projects)
+            print("Successfully completed save_improvement_markers")
+            return labelled_image_path
+
+        except Exception as e:
+            print(f"ERROR in save_improvement_markers: {e}")
+            import traceback
+
+            traceback.print_exc()
+            raise
+
+    def upload_inspiration_image(
+        self, project_id: str, image_file: UploadFile, filename: str
+    ) -> str:
+        """Upload an inspiration image for a project"""
+        try:
+            print(f"Starting inspiration image upload for project {project_id}")
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            # Create project-specific inspiration images directory
+            project_images_dir = IMAGES_DIR / project_id / "inspiration"
+            project_images_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save the inspiration image file
+            image_path = project_images_dir / filename
+            with open(image_path, "wb") as buffer:
+                shutil.copyfileobj(image_file.file, buffer)
+
+            # Update project context with inspiration image
+            current_context = ProjectContext.model_validate(
+                projects[project_id]["context"]
+            )
+            updated_inspiration_images = current_context.inspiration_images + [
+                str(image_path)
+            ]
+
+            updated_context = current_context.model_copy(
+                update={"inspiration_images": updated_inspiration_images}
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            projects[project_id]["status"] = "INSPIRATION_IMAGES_UPLOADED"
+
+            print(f"Successfully uploaded inspiration image: {image_path}")
+            self._save_projects(projects)
+            return str(image_path)
+
+        except Exception as e:
+            print(f"ERROR in upload_inspiration_image: {e}")
+            import traceback
+
+            traceback.print_exc()
+            raise
+
+    def upload_inspiration_images_batch(
+        self, project_id: str, image_files: List[UploadFile]
+    ) -> List[str]:
+        """Upload multiple inspiration images for a project in one batch"""
+        try:
+            print(f"Starting batch inspiration images upload for project {project_id}")
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            # Create project-specific inspiration images directory
+            project_images_dir = IMAGES_DIR / project_id / "inspiration"
+            project_images_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save all inspiration image files
+            uploaded_paths = []
+            for i, image_file in enumerate(image_files):
+                # Generate unique filename to avoid conflicts
+                file_extension = (
+                    Path(image_file.filename).suffix if image_file.filename else ".jpg"
+                )
+                filename = f"inspiration_{i + 1}_{int(time.time())}{file_extension}"
+                image_path = project_images_dir / filename
+
+                with open(image_path, "wb") as buffer:
+                    shutil.copyfileobj(image_file.file, buffer)
+
+                uploaded_paths.append(str(image_path))
+                print(f"Uploaded inspiration image {i + 1}: {image_path}")
+
+            # Update project context with all inspiration images
+            current_context = ProjectContext.model_validate(
+                projects[project_id]["context"]
+            )
+            updated_inspiration_images = (
+                current_context.inspiration_images + uploaded_paths
+            )
+
+            updated_context = current_context.model_copy(
+                update={"inspiration_images": updated_inspiration_images}
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            projects[project_id]["status"] = "INSPIRATION_IMAGES_UPLOADED"
+
+            print(f"Successfully uploaded {len(uploaded_paths)} inspiration images")
+            self._save_projects(projects)
+            return uploaded_paths
+
+        except Exception as e:
+            print(f"ERROR in upload_inspiration_images_batch: {e}")
+            import traceback
+
+            traceback.print_exc()
+            raise
+
+    def generate_inspiration_recommendations(self, project_id: str) -> List[str]:
+        """Generate AI recommendations based on inspiration images"""
+        try:
+            print(f"Generating inspiration recommendations for project {project_id}")
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(projects[project_id]["context"])
+
+            if not context.inspiration_images:
+                raise ValueError("No inspiration images found for this project")
+
+            if not context.space_type:
+                raise ValueError("No space type selected for this project")
+
+            # Create a Pydantic model for the AI response
+            from typing import List
+
+            from pydantic import BaseModel
+
+            class AIInspirationResponse(BaseModel):
+                recommendations: List[str]
+
+            # Build the prompt with inspiration images
+            inspiration_info = "\n".join(
+                [
+                    f"Inspiration Image {i + 1}: {img_path}"
+                    for i, img_path in enumerate(context.inspiration_images)
+                ]
+            )
+
+            prompt = f"""
+            Analyze these inspiration images for a {context.space_type} design project and provide specific recommendations.
+
+            Space Type: {context.space_type}
+            
+            Inspiration Images:
+            {inspiration_info}
+
+            Based on these inspiration images, provide specific, actionable design recommendations that:
+            - Incorporate the style, colors, and design elements from the inspiration images
+            - Are tailored to the {context.space_type} space type
+            - Include practical suggestions for furniture, decor, colors, and layout
+            - Reference specific elements from the inspiration images
+            - Are written in a clear, actionable format
+
+            Format each recommendation as a simple string that clearly states what to do and where.
+            """
+
+            # Analyze the inspiration images using vision API
+            # For now, we'll analyze the first inspiration image
+            # In a full implementation, you might want to analyze all images
+            first_inspiration = context.inspiration_images[0]
+
+            result = self.openai_client.analyze_image_with_vision(
+                prompt=prompt,
+                pydantic_model=AIInspirationResponse,
+                image_path=first_inspiration,
+                system_message="You are an expert interior designer. Analyze inspiration images and provide specific, actionable design recommendations that incorporate the style and elements from the inspiration while being practical for the target space type.",
+            )
+
+            # Update project with inspiration recommendations
+            updated_context = context.model_copy(
+                update={"inspiration_recommendations": result.recommendations}
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            projects[project_id]["status"] = "INSPIRATION_RECOMMENDATIONS_READY"
+
+            print(
+                f"Generated {len(result.recommendations)} inspiration recommendations"
+            )
+            self._save_projects(projects)
+            return result.recommendations
+
+        except Exception as e:
+            print(f"ERROR in generate_inspiration_recommendations: {e}")
+            import traceback
+
+            traceback.print_exc()
+            raise
 
 
 # Global instance

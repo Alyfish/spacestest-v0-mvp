@@ -2,6 +2,8 @@
 
 import { ImageMarkerInterface } from "@/components/ImageMarkerInterface";
 import { ImageUploadSection } from "@/components/ImageUploadSection";
+import { InspirationImageUpload } from "@/components/InspirationImageUpload";
+import { InspirationRecommendations } from "@/components/InspirationRecommendations";
 import { LabelledImageDisplay } from "@/components/LabelledImageDisplay";
 import { MarkerRecommendations } from "@/components/MarkerRecommendations";
 import { ProjectContext } from "@/components/ProjectContext";
@@ -155,6 +157,26 @@ export default function ProjectPage() {
               />
               <MarkerRecommendations projectId={project.project_id} />
             </>
+          )}
+
+          {(project.status === "MARKER_RECOMMENDATIONS_READY" ||
+            project.status === "INSPIRATION_IMAGES_UPLOADED" ||
+            project.status === "INSPIRATION_RECOMMENDATIONS_READY") && (
+            <InspirationImageUpload
+              projectId={project.project_id}
+              inspirationImages={project.context.inspiration_images || []}
+            />
+          )}
+
+          {(project.status === "INSPIRATION_IMAGES_UPLOADED" ||
+            project.status === "INSPIRATION_RECOMMENDATIONS_READY") && (
+            <InspirationRecommendations
+              projectId={project.project_id}
+              recommendations={
+                project.context.inspiration_recommendations || []
+              }
+              spaceType={project.context.space_type || "unknown"}
+            />
           )}
         </main>
       </div>

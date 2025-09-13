@@ -9,6 +9,33 @@ export function ProjectDetails({
   status,
   createdAt,
 }: ProjectDetailsProps) {
+  const getStatusDisplay = (status: string) => {
+    const statusMap: Record<string, { text: string; color: string }> = {
+      NEW: { text: "New Project", color: "text-gray-600" },
+      BASE_IMAGE_UPLOADED: { text: "Image Uploaded", color: "text-blue-600" },
+      SPACE_TYPE_SELECTED: {
+        text: "Space Type Selected",
+        color: "text-green-600",
+      },
+      MARKER_RECOMMENDATIONS_READY: {
+        text: "Markers & Recommendations Ready",
+        color: "text-purple-600",
+      },
+      INSPIRATION_IMAGES_UPLOADED: {
+        text: "Inspiration Images Uploaded",
+        color: "text-pink-600",
+      },
+      INSPIRATION_RECOMMENDATIONS_READY: {
+        text: "Complete with Inspiration",
+        color: "text-indigo-600",
+      },
+    };
+
+    return statusMap[status] || { text: status, color: "text-gray-600" };
+  };
+
+  const statusDisplay = getStatusDisplay(status);
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
       <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
@@ -23,7 +50,9 @@ export function ProjectDetails({
         </div>
         <div className="flex justify-between">
           <span className="text-gray-600 dark:text-gray-300">Status:</span>
-          <span className="font-medium">{status}</span>
+          <span className={`font-medium ${statusDisplay.color}`}>
+            {statusDisplay.text}
+          </span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-600 dark:text-gray-300">Created:</span>
