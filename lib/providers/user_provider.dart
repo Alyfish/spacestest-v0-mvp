@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../utils/logger.dart';
 import '../models/user.dart';
 
 class UserProvider extends ChangeNotifier {
@@ -10,6 +11,7 @@ class UserProvider extends ChangeNotifier {
   User get user => _user;
   bool get isAuthenticated => _authState == AuthState.authenticated;
   bool get isAuthenticating => _authState == AuthState.authenticating;
+  bool get isSignedIn => _authState == AuthState.authenticated;
 
   // Sign in with Google (mock implementation)
   Future<void> signInWithGoogle() async {
@@ -33,13 +35,14 @@ class UserProvider extends ChangeNotifier {
         name: 'John Doe',
         email: 'john.doe@example.com',
         photoUrl: 'https://via.placeholder.com/150',
+        token: 'mock_auth_token_xyz789',
       );
 
       _authState = AuthState.authenticated;
       notifyListeners();
 
       if (kDebugMode) {
-        print('✅ User signed in successfully: ${_user.name}');
+        AppLogger.info('✅ User signed in successfully: ${_user.name}');
       }
     } catch (e) {
       // Handle error
@@ -48,7 +51,7 @@ class UserProvider extends ChangeNotifier {
       notifyListeners();
 
       if (kDebugMode) {
-        print('❌ Sign in failed: $e');
+        AppLogger.error('❌ Sign in failed: $e');
       }
       rethrow;
     }
@@ -61,7 +64,7 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
 
     if (kDebugMode) {
-      print('👋 User signed out');
+      AppLogger.info('👋 User signed out');
     }
   }
 

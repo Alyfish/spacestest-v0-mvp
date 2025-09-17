@@ -4,11 +4,15 @@ import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import '../providers/image_provider.dart';
+import '../providers/project_provider.dart';
 import '../theme.dart';
-import 'confirm_selection_screen.dart';
+import '../utils/logger.dart';
 
 class TakePictureScreen extends StatefulWidget {
-  const TakePictureScreen({Key? key}) : super(key: key);
+  const TakePictureScreen({super.key, required this.onBack, required this.onConfirmSelection}) ;
+  final VoidCallback onConfirmSelection;
+  
+  final VoidCallback onBack;
 
   @override
   State<TakePictureScreen> createState() => _TakePictureScreenState();
@@ -17,8 +21,7 @@ class TakePictureScreen extends StatefulWidget {
 class TakePictureContent extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onConfirmSelection;
-  
-  const TakePictureContent({Key? key, this.onBack, this.onConfirmSelection}) : super(key: key);
+  const TakePictureContent({super.key, this.onBack, this.onConfirmSelection});
 
   @override
   State<TakePictureContent> createState() => _TakePictureContentState();
@@ -61,12 +64,7 @@ class _TakePictureScreenState extends State<TakePictureScreen> {
       if (capturedImage != null) {
         // Navigate to confirm selection screen
         if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const ConfirmSelectionScreen(),
-            ),
-          );
+          widget.onConfirmSelection();
         }
       }
     } catch (e) {
@@ -85,7 +83,7 @@ class _TakePictureScreenState extends State<TakePictureScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: TakePictureContent(),
+        child: TakePictureContent(onConfirmSelection: widget.onConfirmSelection, onBack: widget.onBack,),
       ),
     );
   }
@@ -123,21 +121,24 @@ class _TakePictureContentState extends State<TakePictureContent> {
     });
 
     try {
+      // Capture the image using the image provider for camera functionality
       final imageProvider = Provider.of<CapturedImageProvider>(context, listen: false);
       final File? capturedImage = await imageProvider.takePhoto();
       
       if (capturedImage != null) {
+        // Set the captured image as project image in ProjectProvider only
+        final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+        projectProvider.setProjectImage(capturedImage);
+        
+        AppLogger.info('Image captured and set as project image');
+        
         // Navigate to confirm selection screen
         if (mounted) {
           if (widget.onConfirmSelection != null) {
             widget.onConfirmSelection!();
           } else {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const ConfirmSelectionScreen(),
-              ),
-            );
+            // Log that confirm screen navigation is not working
+            AppLogger.error('Confirm Screen is not passed.');
           }
         }
       }
@@ -145,6 +146,7 @@ class _TakePictureContentState extends State<TakePictureContent> {
       setState(() {
         _errorMessage = 'Failed to take photo: ${e.toString()}';
       });
+      AppLogger.error('Error taking photo: $e');
     } finally {
       setState(() {
         _isLoading = false;

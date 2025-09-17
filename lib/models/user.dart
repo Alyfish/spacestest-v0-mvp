@@ -10,12 +10,14 @@ class User {
   final String? name;
   final String? email;
   final String? photoUrl;
+  final String? token;
 
   const User({
     this.id,
     this.name,
     this.email,
     this.photoUrl,
+    this.token,
   });
 
   // Create empty user for unauthenticated state

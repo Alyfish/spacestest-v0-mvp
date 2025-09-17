@@ -3,7 +3,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../theme.dart';
 
 class DiscoverScreen extends StatelessWidget {
-  const DiscoverScreen({Key? key}) : super(key: key);
+  const DiscoverScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -18,12 +18,7 @@ class DiscoverScreen extends StatelessWidget {
               // Title
               Text(
                 'Discover.',
-                style: const TextStyle(
-                  fontFamily: AppTheme.primaryFont,
-                  fontSize: 32,
-                  fontWeight: FontWeight.normal,
-                  color: AppTheme.primaryColor,
-                ),
+                style: AppTheme.sectionTitleStyle,
               ),
               const SizedBox(height: 24),
               

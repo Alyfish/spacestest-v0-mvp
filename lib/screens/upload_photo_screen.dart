@@ -4,15 +4,15 @@ import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
-import '../providers/image_provider.dart';
+import '../providers/project_provider.dart';
 import '../theme.dart';
-import 'confirm_selection_screen.dart';
+import '../utils/logger.dart';
 
 class UploadPhotoContent extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onConfirmSelection;
   
-  const UploadPhotoContent({Key? key, this.onBack, this.onConfirmSelection}) : super(key: key);
+  const UploadPhotoContent({super.key, this.onBack, this.onConfirmSelection});
 
   @override
   State<UploadPhotoContent> createState() => _UploadPhotoContentState();
@@ -58,23 +58,21 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
       );
 
       if (image != null) {
-        final imageProvider = Provider.of<CapturedImageProvider>(context, listen: false);
+        final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
         final File imageFile = File(image.path);
         
-        // Store the selected image
-        await imageProvider.setCapturedImage(imageFile);
+        // Store the selected image only in project provider
+        projectProvider.setProjectImage(imageFile);
+        
+        AppLogger.info('Gallery image selected and set as project image');
         
         // Navigate to confirm selection screen
         if (mounted) {
           if (widget.onConfirmSelection != null) {
             widget.onConfirmSelection!();
           } else {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const ConfirmSelectionScreen(),
-              ),
-            );
+            // Log that confirm screen navigation is not working
+            AppLogger.error('Confirm Screen is not passed.');
           }
         }
       }
@@ -106,12 +104,7 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
             children: [
               const Text(
                 'Upload Photo',
-                style: TextStyle(
-                  fontFamily: AppTheme.primaryFont,
-                  fontSize: 32,
-                  color: AppTheme.primaryColor,
-                ),
-              ),
+                style: AppTheme.sectionTitleStyle,),
             ],
           ),
         ),

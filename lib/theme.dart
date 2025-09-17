@@ -32,11 +32,9 @@ class AppTheme {
         primary: primaryColor,
         secondary: primaryColor,
         surface: backgroundColor,
-        background: backgroundColor,
         onPrimary: backgroundColor,
         onSecondary: backgroundColor,
         onSurface: bodyTextColor,
-        onBackground: bodyTextColor,
         outline: unselectedCardOutline,
       ),
 
@@ -307,7 +305,7 @@ class AppTheme {
 
   static const TextStyle sectionTitleStyle = TextStyle(
     fontFamily: primaryFont,
-    fontSize: 24,
+    fontSize: 40,
     fontWeight: FontWeight.normal,
     color: primaryColor,
   );

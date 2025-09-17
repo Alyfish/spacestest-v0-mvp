@@ -3,7 +3,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../theme.dart';
 
 class SavedScreen extends StatelessWidget {
-  const SavedScreen({Key? key}) : super(key: key);
+  const SavedScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -18,13 +18,7 @@ class SavedScreen extends StatelessWidget {
               // Title
               Text(
                 'Saved.',
-                style: const TextStyle(
-                  fontFamily: AppTheme.primaryFont,
-                  fontSize: 32,
-                  fontWeight: FontWeight.normal,
-                  color: AppTheme.primaryColor,
-                ),
-              ),
+                style: AppTheme.sectionTitleStyle,),
               const SizedBox(height: 24),
               
               // Content placeholder

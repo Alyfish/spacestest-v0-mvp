@@ -3,7 +3,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../theme.dart';
 
 class CartScreen extends StatelessWidget {
-  const CartScreen({Key? key}) : super(key: key);
+  const CartScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -18,12 +18,7 @@ class CartScreen extends StatelessWidget {
               // Title
               Text(
                 'Cart.',
-                style: const TextStyle(
-                  fontFamily: AppTheme.primaryFont,
-                  fontSize: 32,
-                  fontWeight: FontWeight.normal,
-                  color: AppTheme.primaryColor,
-                ),
+                style: AppTheme.sectionTitleStyle,
               ),
               const SizedBox(height: 24),
               

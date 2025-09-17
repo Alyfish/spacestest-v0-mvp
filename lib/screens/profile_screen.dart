@@ -5,7 +5,7 @@ import '../theme.dart';
 import '../providers/user_provider.dart';
 
 class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({Key? key}) : super(key: key);
+  const ProfileScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -22,13 +22,7 @@ class ProfileScreen extends StatelessWidget {
                   // Title
                   Text(
                     'Profile.',
-                    style: const TextStyle(
-                      fontFamily: AppTheme.primaryFont,
-                      fontSize: 32,
-                      fontWeight: FontWeight.normal,
-                      color: AppTheme.primaryColor,
-                    ),
-                  ),
+                    style: AppTheme.sectionTitleStyle,),
                   const SizedBox(height: 24),
                   
                   // User Info

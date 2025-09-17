@@ -14,7 +14,7 @@ class PhotoActionWidget extends StatelessWidget {
   final double scale;
 
   const PhotoActionWidget({
-    Key? key,
+    super.key,
     required this.imagePath,
     required this.buttonText,
     required this.onPressed,
@@ -25,7 +25,7 @@ class PhotoActionWidget extends StatelessWidget {
     this.fontSize = 20,
     this.iconSize = 24,
     this.scale = 1.5,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

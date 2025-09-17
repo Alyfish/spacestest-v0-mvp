@@ -10,14 +10,14 @@ class MarketplaceItemWidget extends StatelessWidget {
   final VoidCallback? onTap;
 
   const MarketplaceItemWidget({
-    Key? key,
+    super.key,
     required this.imagePath,
     required this.title,
     required this.subtitle,
     this.providerIconPath,
     this.comingSoon = false,
     this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

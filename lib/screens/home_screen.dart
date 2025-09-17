@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import '../theme.dart';
 import '../widgets/photo_action_widget.dart';
@@ -6,11 +7,13 @@ import '../widgets/marketplace_item_widget.dart';
 import '../screens/take_picture_screen.dart';
 import '../screens/upload_photo_screen.dart';
 import '../screens/confirm_selection_screen.dart';
+import '../providers/project_provider.dart';
+import '../utils/logger.dart';
 
 enum HomeContentType { main, uploadPhoto, confirmSelection }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -18,6 +21,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   HomeContentType _currentContent = HomeContentType.main;
+  bool _isCreatingProject = false;
 
   void _showUploadPhoto() {
     setState(() {
@@ -35,6 +39,99 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _currentContent = HomeContentType.confirmSelection;
     });
+  }
+
+  Future<void> _createProjectAndNavigateToCamera() async {
+    if (_isCreatingProject) return;
+
+    setState(() {
+      _isCreatingProject = true;
+    });
+
+    try {
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final success = await projectProvider.createProject(context);
+      
+      if (success && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => TakePictureScreen(
+              onBack: () {
+                Navigator.pop(context);
+              },
+              onConfirmSelection: () {
+                Navigator.pop(context);
+                _showConfirmSelection();
+              },
+            ),
+          ),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create project: ${projectProvider.errorMessage ?? 'Unknown error'}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        AppLogger.error('Error creating project: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCreatingProject = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _createProjectAndShowUpload() async {
+    if (_isCreatingProject) return;
+
+    setState(() {
+      _isCreatingProject = true;
+    });
+
+    try {
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final success = await projectProvider.createProject(context);
+      
+      if (success && mounted) {
+        _showUploadPhoto();
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create project: ${projectProvider.errorMessage ?? 'Unknown error'}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        AppLogger.error('Error creating project: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCreatingProject = false;
+        });
+      }
+    }
   }
 
   @override
@@ -66,13 +163,7 @@ class _HomeScreenState extends State<HomeScreen> {
               // Redesign Section
               Text(
                 'Redesign.',
-                style: const TextStyle(
-                  fontFamily: AppTheme.primaryFont,
-                  fontSize: 40,
-                  fontWeight: FontWeight.normal,
-                  color: AppTheme.primaryColor,
-                ),
-              ),
+                style: AppTheme.sectionTitleStyle),
               const SizedBox(height: 24),
               
               // Photo Action Buttons - 2 Column Grid
@@ -88,23 +179,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     imagePath: 'assets/images/home/take_photo.png', // Using existing logo as placeholder
                     scale: 1.7,
                     buttonText: 'take photo',
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const TakePictureScreen(),
-                        ),
-                      );
-                    },
+                    onPressed: _isCreatingProject ? () {} : _createProjectAndNavigateToCamera,
                   ),
                   PhotoActionWidget(
                     mirror: true,
                     scale: 1.8,
                     imagePath: 'assets/images/home/upload_photo.png', // Using existing logo as placeholder
                     buttonText: 'upload picture',
-                    onPressed: () {
-                      _showUploadPhoto();
-                    },
+                    onPressed: _isCreatingProject ? () {} : _createProjectAndShowUpload,
                   ),
                 ],
               ),
@@ -117,16 +199,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Text(
                     'Marketplace.',
-                    style: const TextStyle(
-                      fontFamily: AppTheme.primaryFont,
-                      fontSize: 32,
-                      fontWeight: FontWeight.normal,
-                      color: AppTheme.primaryColor,
-                    ),
+                    style: AppTheme.sectionTitleStyle,
                   ),
                   TextButton(
                     onPressed: () {
-                      print('View Products pressed');
+                      AppLogger.info('View Products pressed');
                       // TODO: Navigate to full marketplace
                     },
                     child: Row(
@@ -171,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     subtitle: '\$7',
                     comingSoon: true,
                     onTap: () {
-                      print('Wayfair item tapped');
+                      AppLogger.info('Wayfair item tapped');
                     },
                   ),
                   MarketplaceItemWidget(
@@ -181,7 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     subtitle: '\$5',
                     comingSoon: true,
                     onTap: () {
-                      print('Amazon item tapped');
+                      AppLogger.info('Amazon item tapped');
                     },
                   ),
                   

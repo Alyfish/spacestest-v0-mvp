@@ -8,7 +8,7 @@ import 'saved_screen.dart';
 import 'profile_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
-  const MainNavigationScreen({Key? key}) : super(key: key);
+  const MainNavigationScreen({super.key});
 
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
@@ -41,10 +41,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         automaticallyImplyLeading: false,
         title: Row(
           children: [
-            Image.asset(
-              'assets/logo/logo.png',
-              height: 100,
-              width: 100,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10.0),
+              child: Image.asset(
+                'assets/logo/logo.png',
+                height: 100,
+                width: 100,
+              ),
             ),
           ],
         ),
