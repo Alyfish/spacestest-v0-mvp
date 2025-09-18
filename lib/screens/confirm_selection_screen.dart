@@ -3,8 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import '../providers/project_provider.dart';
 import '../theme.dart';
+import '../utils/logger.dart';
 import '../widgets/custom_outlined_button.dart';
-
 
 class ConfirmSelectionContent extends StatefulWidget {
   final VoidCallback? onBack;
@@ -13,8 +13,10 @@ class ConfirmSelectionContent extends StatefulWidget {
   const ConfirmSelectionContent({super.key, this.onBack, this.onSuccess});
 
   @override
-  State<ConfirmSelectionContent> createState() => _ConfirmSelectionContentState();
+  State<ConfirmSelectionContent> createState() =>
+      _ConfirmSelectionContentState();
 }
+
 class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
   bool _isUploading = false;
 
@@ -27,59 +29,42 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
   }
 
   Future<void> _confirmSelection() async {
-    setState(() {
-      _isUploading = true;
-    });
-
     try {
-      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
-      
-      // Upload the project image
-      final success = await projectProvider.uploadProjectImage(context);
-      
-      if (success && mounted) {
-        // Clear project state after successful upload
-        projectProvider.clearProject();
-        
-        if (widget.onSuccess != null) {
-          widget.onSuccess!();
-        } else {
-          // Navigate back to home or show success message
-          Navigator.popUntil(context, (route) => route.isFirst);
-        }
-        
-        // Show success snackbar
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Project image uploaded successfully!'),
-            backgroundColor: AppTheme.primaryColor,
-          ),
-        );
-      } else {
-        // Show error from project provider
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Upload failed: ${projectProvider.errorMessage ?? 'Unknown error'}'),
-              backgroundColor: AppTheme.errorColor,
-            ),
-          );
-        }
+      // Call the success callback to move to choose space screen
+      if (widget.onSuccess != null) {
+        widget.onSuccess!();
       }
+
+      // Start upload in background (optional - can be removed if not needed)
+      final projectProvider = Provider.of<ProjectProvider>(
+        context,
+        listen: false,
+      );
+      projectProvider
+          .uploadProjectImage(context)
+          .then((success) {
+            // Upload happens in background, no UI feedback needed
+            if (success) {
+              AppLogger.info(
+                'Project image uploaded successfully in background',
+              );
+            } else {
+              AppLogger.error(
+                'Background upload failed: ${projectProvider.errorMessage}',
+              );
+            }
+          })
+          .catchError((error) {
+            AppLogger.error('Background upload error: $error');
+          });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Upload failed: ${e.toString()}'),
+            content: Text('Navigation failed: ${e.toString()}'),
             backgroundColor: AppTheme.errorColor,
           ),
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isUploading = false;
-        });
       }
     }
   }
@@ -110,7 +95,8 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
                 children: [
                   const Text(
                     'Confirm Selection',
-                    style: AppTheme.sectionTitleStyle,),
+                    style: AppTheme.sectionTitleStyle,
+                  ),
                 ],
               ),
               const SizedBox(height: 40),
@@ -119,46 +105,52 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                      Expanded(
+                    Expanded(
                       child: Container(
                         width: double.infinity,
                         decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                          color: AppTheme.bodyTextColor.withValues(alpha:0.2),
-                          blurRadius: 30,
-                          spreadRadius: 5,
-                          offset: const Offset(0, 8),
-                          ),
-                        ],
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppTheme.bodyTextColor.withValues(
+                                alpha: 0.2,
+                              ),
+                              blurRadius: 30,
+                              spreadRadius: 5,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
                         ),
                         child: ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
-                        child: projectProvider.getProjectImageProvider() != null
-                          ? Image(
-                              image: projectProvider.getProjectImageProvider()!,
-                              fit: BoxFit.cover,
-                            )
-                          : Container(
-                              decoration: BoxDecoration(
-                                color: AppTheme.grayColor.withValues(alpha: 0.3),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Center(
-                                child: Icon(
-                                  IconsaxPlusLinear.image,
-                                  size: 48,
-                                  color: AppTheme.grayColor,
+                          borderRadius: BorderRadius.circular(20),
+                          child:
+                              projectProvider.getProjectImageProvider() != null
+                              ? Image(
+                                  image: projectProvider
+                                      .getProjectImageProvider()!,
+                                  fit: BoxFit.cover,
+                                )
+                              : Container(
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.grayColor.withValues(
+                                      alpha: 0.3,
+                                    ),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Center(
+                                    child: Icon(
+                                      IconsaxPlusLinear.image,
+                                      size: 48,
+                                      color: AppTheme.grayColor,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
                         ),
                       ),
-                      ),
-                    
+                    ),
+
                     const SizedBox(height: 40),
-                    
+
                     // Action buttons
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -169,13 +161,16 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
                           text: 'Retake',
                           icon: IconsaxPlusLinear.camera,
                         ),
-                        
+
                         const SizedBox(width: 20),
-                        
+
                         // Upload button
                         _isUploading
                             ? Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
                                 decoration: BoxDecoration(
                                   color: AppTheme.primaryColor,
                                   borderRadius: BorderRadius.circular(25),
@@ -188,9 +183,10 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
                                       height: 20,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
-                                        valueColor: AlwaysStoppedAnimation<Color>(
-                                          AppTheme.backgroundColor,
-                                        ),
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              AppTheme.backgroundColor,
+                                            ),
                                       ),
                                     ),
                                     const SizedBox(width: 8),

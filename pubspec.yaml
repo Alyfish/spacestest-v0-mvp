@@ -20,6 +20,7 @@ dependencies:
   image_picker: ^1.0.7
   logger: ^2.0.2+1
   http: ^1.1.0
+  uuid: ^4.3.3
 
 dev_dependencies:
   flutter_test:

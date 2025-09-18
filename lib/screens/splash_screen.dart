@@ -66,11 +66,11 @@ class _SplashScreenState extends State<SplashScreen>
       // Stays centered
       TweenSequenceItem(tween: ConstantTween(Offset.zero), weight: 41),
       // Moves left by half its width
-      TweenSequenceItem(tween: Tween(begin: Offset.zero, end: const Offset(0.16, 0.015)).chain(CurveTween(curve: Curves.easeOut)),weight: 14),
+      TweenSequenceItem(tween: Tween(begin: Offset.zero, end: const Offset(0.15, 0.012)).chain(CurveTween(curve: Curves.easeOut)),weight: 14),
       // Stays there
-      TweenSequenceItem(tween: ConstantTween(const Offset(0.16, 0.015)), weight: 17),
+      TweenSequenceItem(tween: ConstantTween(const Offset(0.15, 0.012)), weight: 17),
       // Moves down off-screen
-      TweenSequenceItem(tween: Tween(begin: const Offset(0.16, 0.015), end: const Offset(0.16, 0.015)), weight: 28),
+      TweenSequenceItem(tween: Tween(begin: const Offset(0.15, 0.012), end: const Offset(0.15, 0.012)), weight: 28),
     ]).animate(CurvedAnimation(parent: _introController, curve: Curves.easeInOut));
         
     // Phase 3: Logo slides in to overlap

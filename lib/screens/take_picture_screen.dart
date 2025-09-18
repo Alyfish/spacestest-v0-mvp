@@ -9,9 +9,13 @@ import '../theme.dart';
 import '../utils/logger.dart';
 
 class TakePictureScreen extends StatefulWidget {
-  const TakePictureScreen({super.key, required this.onBack, required this.onConfirmSelection}) ;
+  const TakePictureScreen({
+    super.key,
+    required this.onBack,
+    required this.onConfirmSelection,
+  });
   final VoidCallback onConfirmSelection;
-  
+
   final VoidCallback onBack;
 
   @override
@@ -28,54 +32,9 @@ class TakePictureContent extends StatefulWidget {
 }
 
 class _TakePictureScreenState extends State<TakePictureScreen> {
-  bool _isLoading = false;
-  String? _errorMessage;
-  bool _isFlashOn = false;
-
   @override
   void initState() {
     super.initState();
-    _checkPermissions();
-  }
-
-  Future<void> _checkPermissions() async {
-    final cameraStatus = await Permission.camera.status;
-    if (cameraStatus.isDenied) {
-      await Permission.camera.request();
-    }
-  }
-
-  void _toggleFlash() {
-    setState(() {
-      _isFlashOn = !_isFlashOn;
-    });
-  }
-
-  Future<void> _takePhoto() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final imageProvider = Provider.of<CapturedImageProvider>(context, listen: false);
-      final File? capturedImage = await imageProvider.takePhoto();
-      
-      if (capturedImage != null) {
-        // Navigate to confirm selection screen
-        if (mounted) {
-          widget.onConfirmSelection();
-        }
-      }
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to take photo: ${e.toString()}';
-      });
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
   }
 
   @override
@@ -83,12 +42,14 @@ class _TakePictureScreenState extends State<TakePictureScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: TakePictureContent(onConfirmSelection: widget.onConfirmSelection, onBack: widget.onBack,),
+        child: TakePictureContent(
+          onConfirmSelection: widget.onConfirmSelection,
+          onBack: widget.onBack,
+        ),
       ),
     );
   }
 }
-
 
 class _TakePictureContentState extends State<TakePictureContent> {
   bool _isLoading = false;
@@ -122,16 +83,22 @@ class _TakePictureContentState extends State<TakePictureContent> {
 
     try {
       // Capture the image using the image provider for camera functionality
-      final imageProvider = Provider.of<CapturedImageProvider>(context, listen: false);
+      final imageProvider = Provider.of<CapturedImageProvider>(
+        context,
+        listen: false,
+      );
       final File? capturedImage = await imageProvider.takePhoto();
-      
+
       if (capturedImage != null) {
         // Set the captured image as project image in ProjectProvider only
-        final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+        final projectProvider = Provider.of<ProjectProvider>(
+          context,
+          listen: false,
+        );
         projectProvider.setProjectImage(capturedImage);
-        
+
         AppLogger.info('Image captured and set as project image');
-        
+
         // Navigate to confirm selection screen
         if (mounted) {
           if (widget.onConfirmSelection != null) {
@@ -176,7 +143,7 @@ class _TakePictureContentState extends State<TakePictureContent> {
             ),
           ),
         ),
-        
+
         // Top bar with flash and close button
         Positioned(
           top: 16,
@@ -189,12 +156,16 @@ class _TakePictureContentState extends State<TakePictureContent> {
               IconButton(
                 onPressed: _toggleFlash,
                 icon: Icon(
-                  _isFlashOn ? IconsaxPlusLinear.flash_1 : IconsaxPlusLinear.flash,
-                  color: _isFlashOn ? AppTheme.warningColor : AppTheme.backgroundColor,
+                  _isFlashOn
+                      ? IconsaxPlusLinear.flash_1
+                      : IconsaxPlusLinear.flash,
+                  color: _isFlashOn
+                      ? AppTheme.warningColor
+                      : AppTheme.backgroundColor,
                   size: 24,
                 ),
               ),
-              
+
               // Close button
               IconButton(
                 onPressed: widget.onBack ?? () => Navigator.pop(context),
@@ -207,7 +178,7 @@ class _TakePictureContentState extends State<TakePictureContent> {
             ],
           ),
         ),
-        
+
         // Bottom controls
         Positioned(
           bottom: 40,
@@ -218,9 +189,12 @@ class _TakePictureContentState extends State<TakePictureContent> {
               if (_errorMessage != null)
                 Container(
                   margin: const EdgeInsets.only(bottom: 16),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
-                    color: AppTheme.errorColor.withValues(alpha:0.8),
+                    color: AppTheme.errorColor.withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -229,11 +203,10 @@ class _TakePictureContentState extends State<TakePictureContent> {
                     textAlign: TextAlign.center,
                   ),
                 ),
-              
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  
                   // Capture button
                   GestureDetector(
                     onTap: _isLoading ? null : _takePhoto,

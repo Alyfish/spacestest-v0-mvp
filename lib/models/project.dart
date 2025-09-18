@@ -17,6 +17,7 @@ class Project {
   // Project properties (can be expanded)
   final String? name;
   final String? description;
+  final String? spaceChosen;
   final List<String> tags;
   final Map<String, dynamic> designPreferences;
 
@@ -33,6 +34,7 @@ class Project {
     this.localInspirationImage,
     this.name,
     this.description,
+    this.spaceChosen,
     this.tags = const [],
     this.designPreferences = const {},
   });
@@ -53,6 +55,7 @@ class Project {
       inspirationImageUrl: json['inspirationImageUrl'],
       name: json['name'],
       description: json['description'],
+      spaceChosen: json['spaceChosen'],
       tags: List<String>.from(json['tags'] ?? []),
       designPreferences: json['designPreferences'] ?? {},
     );
@@ -88,6 +91,7 @@ class Project {
     File? localInspirationImage,
     String? name,
     String? description,
+    String? spaceChosen,
     List<String>? tags,
     Map<String, dynamic>? designPreferences,
   }) {
@@ -105,6 +109,7 @@ class Project {
           localInspirationImage ?? this.localInspirationImage,
       name: name ?? this.name,
       description: description ?? this.description,
+      spaceChosen: spaceChosen ?? this.spaceChosen,
       tags: tags ?? this.tags,
       designPreferences: designPreferences ?? this.designPreferences,
     );

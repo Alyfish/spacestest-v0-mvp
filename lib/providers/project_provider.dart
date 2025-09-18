@@ -2,7 +2,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 import '../models/project.dart';
+import '../models/marker.dart';
 import '../services/api_service.dart';
 import '../providers/user_provider.dart';
 import '../utils/logger.dart';
@@ -13,6 +15,8 @@ class ProjectProvider extends ChangeNotifier {
   Project? _currentProject;
   ProjectStatus _status = ProjectStatus.idle;
   String? _errorMessage;
+  final List<ImprovementMarker> _markers = [];
+  final Uuid _uuid = const Uuid();
 
   // Getters
   Project? get currentProject => _currentProject;
@@ -23,6 +27,8 @@ class ProjectProvider extends ChangeNotifier {
       _status == ProjectStatus.loading || _status == ProjectStatus.creating;
   bool get hasProjectImage => _currentProject?.hasProjectImage ?? false;
   bool get hasInspirationImage => _currentProject?.hasInspirationImage ?? false;
+  List<ImprovementMarker> get markers => List.unmodifiable(_markers);
+  bool get hasMarkers => _markers.isNotEmpty;
 
   void _setStatus(ProjectStatus status) {
     _status = status;
@@ -138,6 +144,22 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Set chosen space type
+  void setSpaceChosen(String spaceType) {
+    if (_currentProject == null) {
+      AppLogger.warning('No active project to set space type for');
+      return;
+    }
+
+    _currentProject = _currentProject!.copyWith(
+      spaceChosen: spaceType,
+      updatedAt: DateTime.now(),
+    );
+
+    AppLogger.info('Space type set to: $spaceType');
+    notifyListeners();
+  }
+
   // Upload project image to server
   Future<bool> uploadProjectImage(BuildContext context) async {
     if (_currentProject?.localProjectImage == null) {
@@ -165,9 +187,7 @@ class ProjectProvider extends ChangeNotifier {
       );
 
       if (success) {
-        _currentProject = _currentProject!.copyWith(
-          updatedAt: DateTime.now(),
-        );
+        _currentProject = _currentProject!.copyWith(updatedAt: DateTime.now());
         _setStatus(ProjectStatus.ready);
         AppLogger.info('Project image uploaded successfully');
         return true;
@@ -209,9 +229,7 @@ class ProjectProvider extends ChangeNotifier {
       );
 
       if (success) {
-        _currentProject = _currentProject!.copyWith(
-          updatedAt: DateTime.now(),
-        );
+        _currentProject = _currentProject!.copyWith(updatedAt: DateTime.now());
         _setStatus(ProjectStatus.ready);
         AppLogger.info('Inspiration image uploaded successfully');
         return true;
@@ -270,6 +288,7 @@ class ProjectProvider extends ChangeNotifier {
   void clearProject() {
     _currentProject = null;
     _errorMessage = null;
+    _markers.clear();
     _setStatus(ProjectStatus.idle);
     AppLogger.info('Project cleared');
   }
@@ -292,5 +311,62 @@ class ProjectProvider extends ChangeNotifier {
       return NetworkImage(_currentProject!.inspirationImageUrl!);
     }
     return null;
+  }
+
+  // Marker management methods
+  void addMarker(double x, double y, String description) {
+    final trimmedDescription = description.trim();
+
+    final marker = ImprovementMarker(
+      id: _uuid.v4(),
+      position: MarkerPosition(x: x, y: y),
+      description: trimmedDescription,
+      color: ImprovementMarker.generateRandomColor(),
+    );
+    _markers.add(marker);
+    notifyListeners();
+    AppLogger.info(
+      'Marker added at (${x.toStringAsFixed(2)}, ${y.toStringAsFixed(2)})',
+    );
+  }
+
+  void updateMarker(String markerId, String newDescription) {
+    final index = _markers.indexWhere((marker) => marker.id == markerId);
+    if (index != -1) {
+      final updatedMarker = _markers[index].copyWith(
+        description: newDescription.trim(),
+      );
+      _markers[index] = updatedMarker;
+      notifyListeners();
+      AppLogger.info('Marker updated: $markerId');
+    }
+  }
+
+  void deleteMarker(String markerId) {
+    final initialLength = _markers.length;
+    _markers.removeWhere((marker) => marker.id == markerId);
+    if (_markers.length < initialLength) {
+      notifyListeners();
+      AppLogger.info('Marker deleted: $markerId');
+    }
+  }
+
+  void clearMarkers() {
+    _markers.clear();
+    notifyListeners();
+    AppLogger.info('All markers cleared');
+  }
+
+  ImprovementMarker? getMarkerById(String markerId) {
+    try {
+      return _markers.firstWhere((marker) => marker.id == markerId);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Get markers as JSON array for API submission
+  List<Map<String, dynamic>> getMarkersJson() {
+    return _markers.map((marker) => marker.toJson()).toList();
   }
 }

@@ -7,10 +7,12 @@ import '../widgets/marketplace_item_widget.dart';
 import '../screens/take_picture_screen.dart';
 import '../screens/upload_photo_screen.dart';
 import '../screens/confirm_selection_screen.dart';
+import '../screens/choose_space_screen.dart';
+import '../screens/choose_items_screen.dart';
 import '../providers/project_provider.dart';
 import '../utils/logger.dart';
 
-enum HomeContentType { main, uploadPhoto, confirmSelection }
+enum HomeContentType { main, uploadPhoto, confirmSelection, chooseSpace, chooseItems }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -38,6 +40,18 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showConfirmSelection() {
     setState(() {
       _currentContent = HomeContentType.confirmSelection;
+    });
+  }
+
+  void _showChooseSpace() {
+    setState(() {
+      _currentContent = HomeContentType.chooseSpace;
+    });
+  }
+
+  void _showChooseItems() {
+    setState(() {
+      _currentContent = HomeContentType.chooseItems;
     });
   }
 
@@ -147,9 +161,25 @@ class _HomeScreenState extends State<HomeScreen> {
           : _currentContent == HomeContentType.confirmSelection
             ? ConfirmSelectionContent(
                 onBack: _showUploadPhoto,
-                onSuccess: _showMainContent,
+                onSuccess: _showChooseSpace,
               )
-            : _buildMainContent(),
+            : _currentContent == HomeContentType.chooseSpace
+              ? ChooseSpaceContent(
+                  onBack: _showConfirmSelection,
+                  onContinue: _showChooseItems,
+                )
+              : _currentContent == HomeContentType.chooseItems
+                ? ChooseItemsContent(
+                    onBack: _showChooseSpace,
+                    onContinue: () {
+                      // TODO: Navigate to next screen in the flow
+                      // For now, clear project and go back to home
+                      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+                      projectProvider.clearProject();
+                      _showMainContent();
+                    },
+                  )
+                : _buildMainContent(),
       ),
     );
   }

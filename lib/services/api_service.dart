@@ -177,4 +177,39 @@ class ApiService {
         return 'image/jpeg'; // Default to JPEG
     }
   }
+
+  /// Save improvement markers for a project
+  static Future<void> saveImprovementMarkers(
+    String projectId,
+    List<Map<String, dynamic>> markers,
+    String authToken,
+  ) async {
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}/projects/$projectId/improvement-markers',
+      );
+
+      AppLogger.info('Saving ${markers.length} markers for project: $projectId');
+
+      final response = await http.post(
+        url,
+        headers: ApiConstants.authHeaders(authToken),
+        body: jsonEncode({
+          'markers': markers,
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        AppLogger.info('Markers saved successfully');
+      } else {
+        AppLogger.error(
+          'Failed to save markers: ${response.statusCode} - ${response.body}',
+        );
+        throw Exception('Failed to save markers: ${response.statusCode}');
+      }
+    } catch (e) {
+      AppLogger.error('Error saving markers', e);
+      rethrow;
+    }
+  }
 }
