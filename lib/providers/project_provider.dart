@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
@@ -17,6 +16,11 @@ class ProjectProvider extends ChangeNotifier {
   String? _errorMessage;
   final List<ImprovementMarker> _markers = [];
   final Uuid _uuid = const Uuid();
+  
+  // Room dimensions
+  double? _roomWidth;
+  double? _roomHeight;
+  double? _roomLength;
 
   // Getters
   Project? get currentProject => _currentProject;
@@ -27,8 +31,14 @@ class ProjectProvider extends ChangeNotifier {
       _status == ProjectStatus.loading || _status == ProjectStatus.creating;
   bool get hasProjectImage => _currentProject?.hasProjectImage ?? false;
   bool get hasInspirationImage => _currentProject?.hasInspirationImage ?? false;
+  bool get hasMultipleInspirationImages => _currentProject?.hasMultipleInspirationImages ?? false;
+  List<File> get inspirationImages => _currentProject?.inspirationImages ?? [];
   List<ImprovementMarker> get markers => List.unmodifiable(_markers);
   bool get hasMarkers => _markers.isNotEmpty;
+  double? get roomWidth => _roomWidth;
+  double? get roomHeight => _roomHeight;
+  double? get roomLength => _roomLength;
+  bool get hasRoomDimensions => _roomWidth != null && _roomHeight != null && _roomLength != null;
 
   void _setStatus(ProjectStatus status) {
     _status = status;
@@ -128,19 +138,51 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Set inspiration image (local file)
-  Future<void> setInspirationImage(File imageFile) async {
+  Future<void> setInspirationImages(List<File> imageFiles) async {
     if (_currentProject == null) {
-      AppLogger.warning('No active project to set inspiration image for');
+      AppLogger.warning('No active project to set inspiration images for');
       return;
     }
 
     _currentProject = _currentProject!.copyWith(
-      localInspirationImage: imageFile,
+      localInspirationImages: imageFiles,
       updatedAt: DateTime.now(),
     );
 
-    AppLogger.info('Inspiration image set locally');
+    AppLogger.info('${imageFiles.length} inspiration images set locally');
+    notifyListeners();
+  }
+
+  Future<void> addInspirationImages(List<File> imageFiles) async {
+    if (_currentProject == null) {
+      AppLogger.warning('No active project to add inspiration images to');
+      return;
+    }
+
+    final currentImages = _currentProject!.inspirationImages;
+    final updatedImages = [...currentImages, ...imageFiles];
+
+    _currentProject = _currentProject!.copyWith(
+      localInspirationImages: updatedImages,
+      updatedAt: DateTime.now(),
+    );
+
+    AppLogger.info('Added ${imageFiles.length} inspiration images (total: ${updatedImages.length})');
+    notifyListeners();
+  }
+
+  void clearInspirationImages() {
+    if (_currentProject == null) {
+      AppLogger.warning('No active project to clear inspiration images from');
+      return;
+    }
+
+    _currentProject = _currentProject!.copyWith(
+      localInspirationImages: [],
+      updatedAt: DateTime.now(),
+    );
+
+    AppLogger.info('Cleared all inspiration images');
     notifyListeners();
   }
 
@@ -202,47 +244,7 @@ class ProjectProvider extends ChangeNotifier {
     }
   }
 
-  // Upload inspiration image to server
-  Future<bool> uploadInspirationImage(BuildContext context) async {
-    if (_currentProject?.localInspirationImage == null) {
-      _setError('No inspiration image to upload');
-      return false;
-    }
 
-    try {
-      _setStatus(ProjectStatus.uploading);
-
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final authToken = userProvider.user.token;
-
-      if (authToken == null) {
-        _setError('Authentication token not available');
-        return false;
-      }
-
-      AppLogger.info('Uploading inspiration image...');
-      final success = await ApiService.uploadProjectImage(
-        _currentProject!.id,
-        authToken,
-        _currentProject!.localInspirationImage!,
-        isInspiration: true,
-      );
-
-      if (success) {
-        _currentProject = _currentProject!.copyWith(updatedAt: DateTime.now());
-        _setStatus(ProjectStatus.ready);
-        AppLogger.info('Inspiration image uploaded successfully');
-        return true;
-      } else {
-        _setError('Failed to upload inspiration image');
-        return false;
-      }
-    } catch (e) {
-      AppLogger.error('Failed to upload inspiration image', e);
-      _setError('Failed to upload inspiration image: ${e.toString()}');
-      return false;
-    }
-  }
 
   // Update project properties
   Future<bool> updateProject(
@@ -297,21 +299,11 @@ class ProjectProvider extends ChangeNotifier {
   ImageProvider? getProjectImageProvider() {
     if (_currentProject?.localProjectImage != null) {
       return FileImage(_currentProject!.localProjectImage!);
-    } else if (_currentProject?.projectImageUrl != null) {
-      return NetworkImage(_currentProject!.projectImageUrl!);
     }
     return null;
   }
 
-  // Get inspiration image provider (for Image widget)
-  ImageProvider? getInspirationImageProvider() {
-    if (_currentProject?.localInspirationImage != null) {
-      return FileImage(_currentProject!.localInspirationImage!);
-    } else if (_currentProject?.inspirationImageUrl != null) {
-      return NetworkImage(_currentProject!.inspirationImageUrl!);
-    }
-    return null;
-  }
+
 
   // Marker management methods
   void addMarker(double x, double y, String description) {
@@ -368,5 +360,27 @@ class ProjectProvider extends ChangeNotifier {
   /// Get markers as JSON array for API submission
   List<Map<String, dynamic>> getMarkersJson() {
     return _markers.map((marker) => marker.toJson()).toList();
+  }
+
+  /// Set room dimensions
+  void setRoomDimensions({
+    required double width,
+    required double height,
+    required double length,
+  }) {
+    _roomWidth = width;
+    _roomHeight = height;
+    _roomLength = length;
+    notifyListeners();
+    AppLogger.info('Room dimensions set: ${width}x${height}x$length');
+  }
+
+  /// Clear room dimensions
+  void clearRoomDimensions() {
+    _roomWidth = null;
+    _roomHeight = null;
+    _roomLength = null;
+    notifyListeners();
+    AppLogger.info('Room dimensions cleared');
   }
 }

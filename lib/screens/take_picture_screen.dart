@@ -89,7 +89,7 @@ class _TakePictureContentState extends State<TakePictureContent> {
       );
       final File? capturedImage = await imageProvider.takePhoto();
 
-      if (capturedImage != null) {
+      if (capturedImage != null && mounted) {
         // Set the captured image as project image in ProjectProvider only
         final projectProvider = Provider.of<ProjectProvider>(
           context,

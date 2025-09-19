@@ -53,5 +53,8 @@
 	<string>This app needs access to photo library to select images for redesigning your space.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>This app needs access to save photos to your photo library.</string>
+	<!-- ARKit Permission -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app uses AR to measure room dimensions.</string>
 </dict>
 </plist>

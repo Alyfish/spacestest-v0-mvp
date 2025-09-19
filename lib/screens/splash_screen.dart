@@ -8,7 +8,7 @@ class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  _SplashScreenState createState() => _SplashScreenState();
+  State<SplashScreen> createState() => _SplashScreenState();
 }
 
 class _SplashScreenState extends State<SplashScreen>
@@ -252,11 +252,13 @@ class _SplashScreenState extends State<SplashScreen>
                                  // Clear any existing snackbars
                                  ScaffoldMessenger.of(context).clearSnackBars();
                                  
+                                 final navigator = Navigator.of(context);
+                                 final scaffoldMessenger = ScaffoldMessenger.of(context);
                                  try {
                                    await userProvider.signInWithGoogle();
                                    if (mounted && userProvider.isAuthenticated) {
                                      // Navigate to main app screen
-                                     Navigator.of(context).pushReplacement(
+                                     navigator.pushReplacement(
                                        PageRouteBuilder(
                                          pageBuilder: (ctx, animation, secondary) => const MainNavigationScreen(),
                                          transitionsBuilder: (ctx, animation, secondary, child) {
@@ -269,7 +271,7 @@ class _SplashScreenState extends State<SplashScreen>
                                  } catch (e) {
                                    // Handle error - show a snackbar
                                    if (mounted) {
-                                     ScaffoldMessenger.of(context).showSnackBar(
+                                     scaffoldMessenger.showSnackBar(
                                        SnackBar(
                                          content: Text(
                                            'Sign in failed. Please try again.',

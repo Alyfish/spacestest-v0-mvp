@@ -96,8 +96,16 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
     final offsetX = (containerWidth - displayedWidth) / 2;
     final offsetY = (containerHeight - displayedHeight) / 2;
 
-    _imageSize = Size(displayedWidth, displayedHeight);
-    _imageOffset = Offset(offsetX, offsetY);
+    final newSize = Size(displayedWidth, displayedHeight);
+    final newOffset = Offset(offsetX, offsetY);
+
+    // Only update and trigger rebuild if values have changed
+    if (_imageSize != newSize || _imageOffset != newOffset) {
+      setState(() {
+        _imageSize = newSize;
+        _imageOffset = newOffset;
+      });
+    }
   }
 
   void _handleTap(TapUpDetails details) {

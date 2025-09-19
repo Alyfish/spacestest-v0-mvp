@@ -118,7 +118,7 @@ class ApiService {
       final fileSize = await imageFile.length();
 
       AppLogger.info(
-        'Uploading ${isInspiration ? 'inspiration' : 'project'} image as file (${fileSize} bytes)',
+        'Uploading ${isInspiration ? 'inspiration' : 'project'} image as file ($fileSize bytes)',
       );
 
       // Create multipart request
@@ -159,6 +159,69 @@ class ApiService {
     }
   }
 
+  static Future<bool> uploadInspirationImagesBatch(
+    String projectId,
+    String authToken,
+    List<File> imageFiles,
+  ) async {
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.uploadInspirationBatch.replaceAll('{project_id}', projectId)}',
+      );
+
+      AppLogger.info(
+        'Uploading ${imageFiles.length} inspiration images in batch',
+      );
+
+      // Create multipart request
+      var request = http.MultipartRequest('POST', url);
+      request.headers.addAll(ApiConstants.authHeaders(authToken));
+
+      // Add all image files
+      for (int i = 0; i < imageFiles.length; i++) {
+        final imageFile = imageFiles[i];
+        final fileName = imageFile.path.split('/').last;
+        final fileExtension = fileName.split('.').last.toLowerCase();
+        final mimeType = _getMimeType(fileExtension);
+
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'images', // Use same field name for all images so they become an array
+            imageFile.path,
+            filename: fileName,
+          ),
+        );
+
+        // Add metadata for each image
+        request.fields['fileName_$i'] = fileName;
+        request.fields['mimeType_$i'] = mimeType;
+      }
+
+      // Add batch metadata
+      request.fields['imageCount'] = imageFiles.length.toString();
+      request.fields['batchId'] = DateTime.now().millisecondsSinceEpoch
+          .toString();
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        AppLogger.info('Inspiration images batch uploaded successfully');
+        return true;
+      } else {
+        AppLogger.error(
+          'Failed to upload inspiration images batch: ${response.statusCode} - ${response.body}',
+        );
+        throw Exception(
+          'Failed to upload inspiration images batch: ${response.statusCode}',
+        );
+      }
+    } catch (e) {
+      AppLogger.error('Error uploading inspiration images batch', e);
+      rethrow;
+    }
+  }
+
   // Helper method to determine MIME type from file extension
   static String _getMimeType(String extension) {
     switch (extension) {
@@ -189,14 +252,14 @@ class ApiService {
         '${ApiConstants.baseUrl}/projects/$projectId/improvement-markers',
       );
 
-      AppLogger.info('Saving ${markers.length} markers for project: $projectId');
+      AppLogger.info(
+        'Saving ${markers.length} markers for project: $projectId',
+      );
 
       final response = await http.post(
         url,
         headers: ApiConstants.authHeaders(authToken),
-        body: jsonEncode({
-          'markers': markers,
-        }),
+        body: jsonEncode({'markers': markers}),
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {

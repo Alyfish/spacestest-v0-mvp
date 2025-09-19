@@ -8,6 +8,7 @@ class ApiConstants {
   static const String updateProject = '/api/projects';
   static const String uploadImage = '/api/projects/upload-image';
   static const String uploadInspiration = '/api/projects/upload-inspiration';
+  static const String uploadInspirationBatch = '/api/projects/{project_id}/inspiration-images-batch';
 
   // Headers
   static const Map<String, String> defaultHeaders = {

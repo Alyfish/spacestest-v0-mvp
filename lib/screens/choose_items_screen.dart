@@ -105,6 +105,17 @@ class ChooseItemsContent extends StatefulWidget {
 class _ChooseItemsContentState extends State<ChooseItemsContent> {
   bool _isLoading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    print('ChooseItemsScreen: initState called');
+
+    // Trigger a rebuild to ensure markers are displayed when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      setState(() {});
+    });
+  }
+
   void _showMarkerDialog(double x, double y) {
     showDialog(
       context: context,
@@ -212,11 +223,11 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              Row(
                 children: [
                   Text(
                     'Choose Items to Redesign.',
-                    style: AppTheme.sectionTitleStyle,
+                    style: AppTheme.sectionTitleStyle.copyWith(fontSize: 36),
                   ),
                 ],
               ),
@@ -225,7 +236,7 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
                 'Unselected items remain unchanged in your design',
                 style: TextStyle(
                   fontFamily: AppTheme.secondaryFont,
-                  fontSize: 16,
+                  fontSize: 15,
                   fontWeight: FontWeight.w100,
                   color: AppTheme.bodyTextColor,
                 ),
@@ -270,7 +281,9 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
                     ),
                   );
                 }
-
+                AppLogger.info(
+                  'Displaying project image with markers ${projectProvider.markers.toString()}',
+                );
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(24),
                   child: InteractiveImageWidget(

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:spaces/screens/confirm_inspiration_screen.dart';
+import 'package:spaces/screens/upload_inspiration_screen.dart';
 import '../theme.dart';
 import '../widgets/photo_action_widget.dart';
 import '../widgets/marketplace_item_widget.dart';
@@ -9,10 +11,11 @@ import '../screens/upload_photo_screen.dart';
 import '../screens/confirm_selection_screen.dart';
 import '../screens/choose_space_screen.dart';
 import '../screens/choose_items_screen.dart';
+import '../screens/measure_room_screen.dart';
 import '../providers/project_provider.dart';
 import '../utils/logger.dart';
 
-enum HomeContentType { main, uploadPhoto, confirmSelection, chooseSpace, chooseItems }
+enum HomeContentType { main, uploadPhoto, confirmSelection, chooseSpace, chooseItems, measureRoom, uploadInspiration, confirmInspiration }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -33,6 +36,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _showMainContent() {
     setState(() {
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      projectProvider.clearProject();
       _currentContent = HomeContentType.main;
     });
   }
@@ -52,6 +57,24 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showChooseItems() {
     setState(() {
       _currentContent = HomeContentType.chooseItems;
+    });
+  }
+
+  void _showMeasureRoom() {
+    setState(() {
+      _currentContent = HomeContentType.measureRoom;
+    });
+  }
+
+  void _showUploadInspiration() {
+    setState(() {
+      _currentContent = HomeContentType.uploadInspiration;
+    });
+  }
+
+  void _showConfirmInspiration() {
+    setState(() {
+      _currentContent = HomeContentType.confirmInspiration;
     });
   }
 
@@ -171,14 +194,22 @@ class _HomeScreenState extends State<HomeScreen> {
               : _currentContent == HomeContentType.chooseItems
                 ? ChooseItemsContent(
                     onBack: _showChooseSpace,
-                    onContinue: () {
-                      // TODO: Navigate to next screen in the flow
-                      // For now, clear project and go back to home
-                      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
-                      projectProvider.clearProject();
-                      _showMainContent();
-                    },
+                    onContinue: _showMeasureRoom,
                   )
+                : _currentContent == HomeContentType.measureRoom
+                ? MeasureRoomScreen(
+                  onBack: _showChooseItems,
+                  onContinue: _showUploadInspiration,
+                )
+                : _currentContent == HomeContentType.uploadInspiration
+                  ? UploadInspirationContent(
+                      onBack: _showMeasureRoom,
+                      onConfirmSelection: _showConfirmInspiration,
+                    ) : _currentContent == HomeContentType.confirmInspiration
+                    ? ConfirmInspirationContent(
+                        onBack: _showUploadInspiration,
+                        onSuccess: _showMainContent,
+                      )
                 : _buildMainContent(),
       ),
     );

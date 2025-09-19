@@ -57,7 +57,7 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
         imageQuality: 85,
       );
 
-      if (image != null) {
+      if (image != null && mounted) {
         final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
         final File imageFile = File(image.path);
         
@@ -156,49 +156,30 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
               // Upload button
               GestureDetector(
                 onTap: _isLoading ? null : _pickFromGallery,
-                child: Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppTheme.backgroundColor,
-                    border: Border.all(
-                      color: AppTheme.bodyTextColor,
-                      width: 0.5,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _isLoading
+                        ? CircularProgressIndicator(
+                            color: AppTheme.bodyTextColor,
+                            strokeWidth: 2,
+                          )
+                        : const Icon(
+                            IconsaxPlusLinear.arrow_up_2,
+                            color: AppTheme.bodyTextColor,
+                            size: 32,
+                          ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'upload',
+                      style: TextStyle(
+                        fontFamily: AppTheme.secondaryFont,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w200,
+                        color: AppTheme.bodyTextColor,
+                      ),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.bodyTextColor.withValues(alpha:0.1),
-                        blurRadius: 10,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _isLoading
-                          ? CircularProgressIndicator(
-                              color: AppTheme.bodyTextColor,
-                              strokeWidth: 2,
-                            )
-                          : const Icon(
-                              IconsaxPlusLinear.arrow_up_2,
-                              color: AppTheme.bodyTextColor,
-                              size: 32,
-                            ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'upload',
-                        style: TextStyle(
-                          fontFamily: AppTheme.secondaryFont,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w200,
-                          color: AppTheme.bodyTextColor,
-                        ),
-                      ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
             ],

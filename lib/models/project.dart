@@ -9,10 +9,8 @@ class Project {
   final Map<String, dynamic> metadata;
 
   // Image properties
-  final String? projectImageUrl;
-  final String? inspirationImageUrl;
   final File? localProjectImage;
-  final File? localInspirationImage;
+  final List<File>? localInspirationImages;
 
   // Project properties (can be expanded)
   final String? name;
@@ -28,10 +26,8 @@ class Project {
     required this.updatedAt,
     required this.status,
     this.metadata = const {},
-    this.projectImageUrl,
-    this.inspirationImageUrl,
     this.localProjectImage,
-    this.localInspirationImage,
+    this.localInspirationImages,
     this.name,
     this.description,
     this.spaceChosen,
@@ -51,8 +47,6 @@ class Project {
       ),
       status: json['status'] ?? 'draft',
       metadata: json['metadata'] ?? {},
-      projectImageUrl: json['projectImageUrl'],
-      inspirationImageUrl: json['inspirationImageUrl'],
       name: json['name'],
       description: json['description'],
       spaceChosen: json['spaceChosen'],
@@ -69,8 +63,6 @@ class Project {
       'updatedAt': updatedAt.toIso8601String(),
       'status': status,
       'metadata': metadata,
-      'projectImageUrl': projectImageUrl,
-      'inspirationImageUrl': inspirationImageUrl,
       'name': name,
       'description': description,
       'tags': tags,
@@ -85,10 +77,8 @@ class Project {
     DateTime? updatedAt,
     String? status,
     Map<String, dynamic>? metadata,
-    String? projectImageUrl,
-    String? inspirationImageUrl,
     File? localProjectImage,
-    File? localInspirationImage,
+    List<File>? localInspirationImages,
     String? name,
     String? description,
     String? spaceChosen,
@@ -102,11 +92,9 @@ class Project {
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
       metadata: metadata ?? this.metadata,
-      projectImageUrl: projectImageUrl ?? this.projectImageUrl,
-      inspirationImageUrl: inspirationImageUrl ?? this.inspirationImageUrl,
       localProjectImage: localProjectImage ?? this.localProjectImage,
-      localInspirationImage:
-          localInspirationImage ?? this.localInspirationImage,
+      localInspirationImages:
+          localInspirationImages ?? this.localInspirationImages,
       name: name ?? this.name,
       description: description ?? this.description,
       spaceChosen: spaceChosen ?? this.spaceChosen,
@@ -115,9 +103,11 @@ class Project {
     );
   }
 
-  bool get hasProjectImage =>
-      projectImageUrl != null || localProjectImage != null;
+  bool get hasProjectImage => localProjectImage != null;
   bool get hasInspirationImage =>
-      inspirationImageUrl != null || localInspirationImage != null;
+      localInspirationImages != null && localInspirationImages!.isNotEmpty;
+  bool get hasMultipleInspirationImages =>
+      localInspirationImages != null && localInspirationImages!.isNotEmpty;
+  List<File> get inspirationImages => localInspirationImages ?? [];
   bool get isComplete => hasProjectImage && hasInspirationImage;
 }

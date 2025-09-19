@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
-import '../providers/project_provider.dart';
+import 'package:provider/provider.dart';
+import 'package:spaces/providers/project_provider.dart';
 import '../theme.dart';
 import '../widgets/custom_outlined_button.dart';
 
@@ -127,6 +127,26 @@ class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
   void initState() {
     super.initState();
     _pageController = PageController(viewportFraction: 1.2);
+    
+    // Initialize the current index based on existing selection from ProjectProvider
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final existingSpaceChosen = projectProvider.currentProject?.spaceChosen;
+      
+      if (existingSpaceChosen != null) {
+        // Find the index of the existing selection
+        for (int i = 0; i < _spaceTypes.length; i++) {
+          if (_spaceTypes[i]['id'] == existingSpaceChosen) {
+            setState(() {
+              _currentIndex = i;
+            });
+            // Update the page controller to show the correct page
+            _pageController.jumpToPage(i);
+            break;
+          }
+        }
+      }
+    });
   }
 
   @override
@@ -289,7 +309,7 @@ class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
               // Continue button
               CustomOutlinedButton(
                 text: 'Continue',
-                onPressed: widget.onContinue ?? () => Navigator.pop(context),
+                onPressed: _onContinue,
                 textColor: AppTheme.bodyTextColor,
                 borderColor: AppTheme.primaryColor,
                 iconColor: AppTheme.primaryColor,

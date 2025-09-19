@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
-import 'package:iconsax_plus/iconsax_plus.dart';
 import '../models/marker.dart';
 import '../theme.dart';
 

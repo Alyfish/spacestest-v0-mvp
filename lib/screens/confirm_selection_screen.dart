@@ -18,7 +18,7 @@ class ConfirmSelectionContent extends StatefulWidget {
 }
 
 class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
-  bool _isUploading = false;
+  final bool _isUploading = false;
 
   void _retakePhoto() {
     if (widget.onBack != null) {
