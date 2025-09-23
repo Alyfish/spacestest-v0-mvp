@@ -10,6 +10,10 @@ export const getProjectImageUrl = (projectId: string) =>
 export const getProjectLabelledImageUrl = (projectId: string) =>
   `${API_BASE_URL}/projects/${projectId}/labelled-image`;
 
+// Helper function to get generated image URL
+export const getProjectGeneratedImageUrl = (projectId: string) =>
+  `${API_BASE_URL}/projects/${projectId}/generated-image`;
+
 // API client functions
 const apiClient = {
   async get<T>(endpoint: string): Promise<T> {
@@ -164,6 +168,89 @@ export interface InspirationRecommendationsResponse {
   project_id: string;
   space_type: string;
   recommendations: string[];
+  status: string;
+  message: string;
+}
+
+export interface ProductRecommendationsResponse {
+  project_id: string;
+  space_type: string;
+  recommendations: string[];
+  status: string;
+  message: string;
+}
+
+export interface ProductRecommendationSelectionRequest {
+  selected_recommendation: string;
+}
+
+export interface ProductRecommendationSelectionResponse {
+  project_id: string;
+  selected_recommendation: string;
+  status: string;
+  message: string;
+}
+
+export interface ProductSearchResponse {
+  project_id: string;
+  selected_recommendation: string;
+  search_query: string;
+  products: Array<{
+    url: string;
+    title: string;
+    store_name: string;
+    price: string;
+    original_price?: string;
+    discount?: string;
+    availability: string;
+    shipping: string;
+    materials: string[];
+    colors: string[];
+    dimensions: string[];
+    features: string[];
+    rating?: string;
+    reviews_count?: string;
+    relevance_score: number;
+    extract: string;
+    is_product_page: boolean;
+    images: string[];
+    source_api?: string; // "exa" or "serp"
+    search_method?: string; // "Provider-Specific" or "Google Shopping"
+  }>;
+  total_found: number;
+  status: string;
+  message: string;
+}
+
+export interface ProductSelectionRequest {
+  product_url: string;
+  product_title: string;
+  product_image_url: string;
+  generation_prompt?: string;
+}
+
+export interface ProductSelectionResponse {
+  project_id: string;
+  selected_product: {
+    url: string;
+    title: string;
+    image_url: string;
+    selected_at: string;
+  };
+  status: string;
+  message: string;
+}
+
+export interface ImageGenerationResponse {
+  project_id: string;
+  selected_product: {
+    url: string;
+    title: string;
+    image_url: string;
+    selected_at: string;
+  };
+  generated_image_base64: string; // Changed from URL to base64
+  generation_prompt: string;
   status: string;
   message: string;
 }
@@ -335,3 +422,90 @@ export const useGenerateInspirationRecommendations = () => {
 // Helper function to get inspiration image URL
 export const getInspirationImageUrl = (projectId: string, imageIndex: number) =>
   `${API_BASE_URL}/projects/${projectId}/inspiration-image/${imageIndex}`;
+
+export const useGenerateProductRecommendations = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<ProductRecommendationsResponse>(
+        `/projects/${projectId}/product-recommendations`
+      ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSelectProductRecommendation = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      selectedRecommendation,
+    }: {
+      projectId: string;
+      selectedRecommendation: string;
+    }) =>
+      apiClient.post<ProductRecommendationSelectionResponse>(
+        `/projects/${projectId}/product-recommendation-selection`,
+        { selected_recommendation: selectedRecommendation }
+      ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSearchProducts = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<ProductSearchResponse>(
+        `/projects/${projectId}/product-search`
+      ),
+    onSuccess: (data) => {
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSelectProduct = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      productSelection,
+    }: {
+      projectId: string;
+      productSelection: ProductSelectionRequest;
+    }) =>
+      apiClient.post<ProductSelectionResponse>(
+        `/projects/${projectId}/product-selection`,
+        productSelection
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useGenerateImage = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<ImageGenerationResponse>(
+        `/projects/${projectId}/generate-image`
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};

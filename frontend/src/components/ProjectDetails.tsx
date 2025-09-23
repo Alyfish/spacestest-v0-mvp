@@ -29,6 +29,26 @@ export function ProjectDetails({
         text: "Complete with Inspiration",
         color: "text-indigo-600",
       },
+      PRODUCT_RECOMMENDATIONS_READY: {
+        text: "Product Recommendations Ready",
+        color: "text-purple-600",
+      },
+      PRODUCT_RECOMMENDATION_SELECTED: {
+        text: "Product Recommendation Selected",
+        color: "text-pink-600",
+      },
+      PRODUCT_SEARCH_COMPLETE: {
+        text: "Product Search Complete",
+        color: "text-green-600",
+      },
+      PRODUCT_SELECTED: {
+        text: "Product Selected for Generation",
+        color: "text-purple-600",
+      },
+      IMAGE_GENERATED: {
+        text: "AI Image Generated",
+        color: "text-purple-800",
+      },
     };
 
     return statusMap[status] || { text: status, color: "text-gray-600" };

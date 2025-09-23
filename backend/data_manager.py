@@ -1,4 +1,5 @@
 import json
+import logging
 import shutil
 import time
 import uuid
@@ -7,8 +8,15 @@ from pathlib import Path
 from typing import List
 
 from fastapi import UploadFile
+from logger_config import (
+    log_api_call,
+    log_external_api_call,
+    log_project_status_change,
+    log_user_action,
+)
 from models import ImprovementMarker, ProjectContext
 from openai_client import OpenAIClient
+from serp_client import SerpClient
 
 DATA_FILE = Path("data/projects.json")
 IMAGES_DIR = Path("data/images")
@@ -16,9 +24,33 @@ IMAGES_DIR = Path("data/images")
 
 class DataManager:
     def __init__(self):
+        self.logger = logging.getLogger("spaces_ai")
         self._ensure_data_file_exists()
         self._ensure_images_dir_exists()
         self.openai_client = OpenAIClient()
+
+        # Initialize SERP client for product discovery
+        try:
+            self.serp_client = SerpClient()
+            self.logger.info("Successfully initialized SERP client")
+        except Exception as e:
+            self.logger.warning(f"Could not initialize SERP client: {e}")
+            self.serp_client = None
+
+        # Exa client disabled - it doesn't work, gets CAPTCHA pages
+        self.exa_client = None
+
+        # Initialize Gemini client for image generation
+        try:
+            from gemini_client import GeminiImageClient
+
+            self.gemini_client = GeminiImageClient()
+            self.logger.info(
+                "Successfully initialized Gemini client for image generation"
+            )
+        except Exception as e:
+            self.logger.warning(f"Could not initialize Gemini client: {e}")
+            self.gemini_client = None
 
     def _ensure_data_file_exists(self):
         """Create the data file if it doesn't exist"""
@@ -248,6 +280,7 @@ class DataManager:
             # Return original image path if processing fails
             return base_image_path
 
+    @log_api_call("create_project")
     def create_project(self) -> str:
         """Create a new project and return its ID"""
         projects = self._load_projects()
@@ -260,6 +293,10 @@ class DataManager:
         }
 
         self._save_projects(projects)
+        self.logger.info(
+            "Created new project", extra={"project_id": project_id, "status": "NEW"}
+        )
+        log_user_action("project_created", project_id=project_id)
         return project_id
 
     def get_project(self, project_id: str) -> dict | None:
@@ -588,6 +625,557 @@ class DataManager:
 
             traceback.print_exc()
             raise
+
+    @log_api_call("generate_product_recommendations")
+    def generate_product_recommendations(self, project_id: str) -> List[str]:
+        """Generate AI product recommendations based on the current project context"""
+        try:
+            self.logger.info(
+                "Starting product recommendations generation",
+                extra={"project_id": project_id},
+            )
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(projects[project_id]["context"])
+
+            if not context.is_ready_for_product_recommendations():
+                raise ValueError("Project is not ready for product recommendations")
+
+            # Create a Pydantic model for the AI response
+            from typing import List
+
+            from pydantic import BaseModel
+
+            class AIProductRecommendations(BaseModel):
+                recommendations: List[str]
+                reasoning: str
+
+            # Build comprehensive context for the AI
+            context_info = f"""
+            Space Type: {context.space_type}
+            Room Status: {"Empty room" if context.is_base_image_empty_room else "Furnished room"}
+            """
+
+            if context.improvement_markers:
+                markers_info = "\n".join(
+                    [
+                        f"- {marker.description} (at {marker.position.x:.1%}, {marker.position.y:.1%})"
+                        for marker in context.improvement_markers
+                    ]
+                )
+                context_info += f"\nImprovement Areas Identified:\n{markers_info}"
+
+            if context.inspiration_recommendations:
+                inspiration_info = "\n".join(
+                    [f"- {rec}" for rec in context.inspiration_recommendations]
+                )
+                context_info += f"\n\nStyle Recommendations:\n{inspiration_info}"
+
+            prompt = f"""Based on this interior design project context, generate exactly 2 specific, actionable product recommendations.
+
+{context_info}
+
+Requirements:
+- Each recommendation should be a specific action like "change sofa", "add coffee table", "replace dining chairs", "add floor lamp", etc.
+- Focus on items that would have the most visual impact for this {context.space_type}
+- Consider the improvement areas and style preferences mentioned above
+- Make recommendations that are realistic and achievable for most homeowners
+- Keep each recommendation to 2-4 words maximum
+
+Return exactly 2 recommendations that are distinct and complementary to each other."""
+
+            # Log AI API call with timing
+            start_time = time.time()
+            result = self.openai_client.get_structured_completion(
+                prompt=prompt,
+                pydantic_model=AIProductRecommendations,
+                system_message="You are an expert interior designer who specializes in making targeted, high-impact product recommendations for home improvement projects.",
+            )
+            ai_duration = (time.time() - start_time) * 1000
+
+            log_external_api_call(
+                "openai",
+                "product_recommendations",
+                ai_duration,
+                True,
+                len(str(result.recommendations)),
+            )
+
+            # Update the project context
+            old_status = projects[project_id]["status"]
+            updated_context = context.model_copy(
+                update={"product_recommendations": result.recommendations}
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            projects[project_id]["status"] = "PRODUCT_RECOMMENDATIONS_READY"
+
+            self.logger.info(
+                "Generated product recommendations",
+                extra={
+                    "project_id": project_id,
+                    "recommendations_count": len(result.recommendations),
+                    "recommendations": result.recommendations,
+                    "status": "PRODUCT_RECOMMENDATIONS_READY",
+                },
+            )
+            log_project_status_change(
+                project_id, old_status, "PRODUCT_RECOMMENDATIONS_READY"
+            )
+            log_user_action(
+                "product_recommendations_generated",
+                project_id=project_id,
+                count=len(result.recommendations),
+            )
+
+            self._save_projects(projects)
+            return result.recommendations
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to generate product recommendations: {str(e)}",
+                extra={"project_id": project_id, "error_type": type(e).__name__},
+                exc_info=True,
+            )
+            log_external_api_call("openai", "product_recommendations", 0, False)
+            raise
+
+    @log_api_call("select_product_recommendation")
+    def select_product_recommendation(
+        self, project_id: str, selected_recommendation: str
+    ) -> str:
+        """Select a product recommendation and update project status"""
+        try:
+            self.logger.info(
+                "Selecting product recommendation",
+                extra={
+                    "project_id": project_id,
+                    "selected_recommendation": selected_recommendation,
+                },
+            )
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(projects[project_id]["context"])
+
+            if not context.product_recommendations:
+                raise ValueError(
+                    "No product recommendations available for this project"
+                )
+
+            if selected_recommendation not in context.product_recommendations:
+                raise ValueError(
+                    f"'{selected_recommendation}' is not a valid recommendation option"
+                )
+
+            # Update the project context
+            old_status = projects[project_id]["status"]
+            updated_context = context.model_copy(
+                update={"selected_product_recommendation": selected_recommendation}
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            projects[project_id]["status"] = "PRODUCT_RECOMMENDATION_SELECTED"
+
+            self.logger.info(
+                "Selected product recommendation successfully",
+                extra={
+                    "project_id": project_id,
+                    "selected_recommendation": selected_recommendation,
+                    "status": "PRODUCT_RECOMMENDATION_SELECTED",
+                },
+            )
+            log_project_status_change(
+                project_id, old_status, "PRODUCT_RECOMMENDATION_SELECTED"
+            )
+            log_user_action(
+                "product_recommendation_selected",
+                project_id=project_id,
+                recommendation=selected_recommendation,
+            )
+
+            self._save_projects(projects)
+            return selected_recommendation
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to select product recommendation: {str(e)}",
+                extra={
+                    "project_id": project_id,
+                    "selected_recommendation": selected_recommendation,
+                    "error_type": type(e).__name__,
+                },
+                exc_info=True,
+            )
+            raise
+
+    @log_api_call("search_products")
+    def search_products(self, project_id: str) -> dict:
+        """Search for products based on the selected recommendation using AI and Exa"""
+        try:
+            self.logger.info(
+                "Starting product search", extra={"project_id": project_id}
+            )
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(projects[project_id]["context"])
+
+            if not context.is_ready_for_product_search():
+                raise ValueError("Project is not ready for product search")
+
+            if not self.serp_client:
+                raise ValueError(
+                    "SERP client not available - please check SERP_API_KEY"
+                )
+
+            # Use AI to generate a specific search query
+            search_query = self._generate_search_query(context)
+            self.logger.info(
+                "Generated search query",
+                extra={
+                    "project_id": project_id,
+                    "search_query": search_query,
+                    "selected_recommendation": context.selected_product_recommendation,
+                },
+            )
+
+            # Use SERP API only - Exa doesn't work (gets CAPTCHA pages)
+            search_start_time = time.time()
+
+            if self.serp_client:
+                self.logger.info("Using SERP Google Shopping for product search")
+                products = self.serp_client.search_and_analyze_products(
+                    query=search_query,
+                    space_type=context.space_type or "general",
+                    num_results=12,
+                )
+                search_duration = (time.time() - search_start_time) * 1000
+                log_external_api_call(
+                    "serp", "product_search", search_duration, True, len(products)
+                )
+
+                # Mark SERP products for frontend identification
+                for product in products:
+                    product["source_api"] = "serp"
+                    product["search_method"] = "Google Shopping"
+            else:
+                self.logger.error("No SERP client available for product search")
+                products = []
+
+            # Filter and enhance results
+            filtered_products = [p for p in products if p.get("is_product_page", True)][
+                :8
+            ]
+
+            # Update the project context with search results
+            old_status = projects[project_id]["status"]
+            search_result = {
+                "search_query": search_query,
+                "products": filtered_products,
+                "total_found": len(filtered_products),
+            }
+
+            updated_context = context.model_copy(
+                update={"product_search_results": filtered_products}
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            projects[project_id]["status"] = "PRODUCT_SEARCH_COMPLETE"
+
+            self.logger.info(
+                "Product search completed successfully",
+                extra={
+                    "project_id": project_id,
+                    "search_query": search_query,
+                    "total_found": len(filtered_products),
+                    "filtered_count": len(filtered_products),
+                    "status": "PRODUCT_SEARCH_COMPLETE",
+                },
+            )
+            log_project_status_change(project_id, old_status, "PRODUCT_SEARCH_COMPLETE")
+            log_user_action(
+                "product_search_completed",
+                project_id=project_id,
+                query=search_query,
+                results_count=len(filtered_products),
+            )
+
+            self._save_projects(projects)
+            return search_result
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to search for products: {str(e)}",
+                extra={"project_id": project_id, "error_type": type(e).__name__},
+                exc_info=True,
+            )
+            # Log failed search call
+            log_external_api_call("search", "product_search", 0, False)
+            raise
+
+    def select_product_for_generation(
+        self,
+        project_id: str,
+        product_url: str,
+        product_title: str,
+        product_image_url: str,
+        generation_prompt: str = None,
+    ):
+        """Select a product for image generation and save to project context"""
+        try:
+            print(f"🎯 SELECTING PRODUCT FOR PROJECT: {project_id}")
+            print(f"   Product URL: {product_url}")
+            print(f"   Product Title: {product_title}")
+            print(f"   Image URL: {product_image_url}")
+            print(f"   Custom Prompt: {generation_prompt}")
+
+            log_user_action(
+                "product_selected",
+                {
+                    "project_id": project_id,
+                    "product_url": product_url,
+                    "product_title": product_title[:50],
+                },
+            )
+
+            print("📂 Loading project context...")
+            # Load project
+            project = self.get_project(project_id)
+            if not project:
+                print(f"❌ Project {project_id} not found!")
+                raise ValueError(f"Project {project_id} not found")
+
+            # Get context from project
+            context = ProjectContext.model_validate(project["context"])
+            print("✅ Project context loaded successfully")
+            print(f"   Current status: {project['status']}")
+
+            print("🔍 Checking if ready for product selection...")
+            if not context.is_ready_for_product_selection():
+                print("❌ Project not ready for product selection!")
+                print(
+                    f"   Ready for product search: {context.is_ready_for_product_search()}"
+                )
+                print(
+                    f"   Product search results count: {len(context.product_search_results)}"
+                )
+                raise ValueError("Project is not ready for product selection")
+
+            print("💾 Creating selected product data...")
+            # Save selected product
+            selected_product = {
+                "url": product_url,
+                "title": product_title,
+                "image_url": product_image_url,
+                "selected_at": datetime.now().isoformat(),
+            }
+
+            print("📝 Updating context with selected product...")
+            context.selected_product = selected_product
+            context.generation_prompt = generation_prompt
+
+            print("💾 Saving project context...")
+            # Save context
+            projects = self._load_projects()
+            projects[project_id]["context"] = context.model_dump()
+            projects[project_id]["status"] = "PRODUCT_SELECTED"
+            self._save_projects(projects)
+
+            print("📊 Logging project status change...")
+            log_project_status_change(
+                project_id, "PRODUCT_SEARCH_COMPLETE", "PRODUCT_SELECTED"
+            )
+
+            print("✅ Product selection completed successfully!")
+            return {
+                "project_id": project_id,
+                "selected_product": selected_product,
+                "status": "success",
+                "message": f"Product selected: {product_title[:50]}...",
+            }
+
+        except Exception as e:
+            self.logger.error(f"Failed to select product for generation: {e}")
+            raise
+
+    def generate_product_visualization(self, project_id: str):
+        """Generate a new image visualization using Gemini with the selected product"""
+        try:
+            log_user_action("image_generation_started", {"project_id": project_id})
+
+            # Load project context
+            project = self.get_project(project_id)
+            if not project:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(project["context"])
+            if not context.is_ready_for_image_generation():
+                raise ValueError("Project is not ready for image generation")
+
+            if not self.gemini_client:
+                raise ValueError("Gemini client is not available")
+
+            # Extract product details
+            selected_product = context.selected_product
+            product_image_url = selected_product["image_url"]
+            product_title = selected_product["title"]
+            space_type = context.space_type or "living space"
+            custom_prompt = context.generation_prompt
+
+            # Get the original room image path
+            original_room_image_path = None
+            if context.base_image:
+                print(f"🖼️ Base image from context: {context.base_image}")
+
+                # Handle path construction correctly
+                if context.base_image.startswith("data/"):
+                    # Strip the "data/" prefix since DATA_FILE.parent is already "data"
+                    relative_path = context.base_image[5:]  # Remove "data/" prefix
+                    original_room_image_path = DATA_FILE.parent / relative_path
+                    print(
+                        f"📂 Stripped 'data/' prefix, using: {original_room_image_path}"
+                    )
+                elif "/" in context.base_image:
+                    # It's a relative path without "data/" prefix
+                    original_room_image_path = DATA_FILE.parent / context.base_image
+                    print(f"📂 Using relative path: {original_room_image_path}")
+                else:
+                    # It's just a filename, construct the full path
+                    project_images_dir = DATA_FILE.parent / "images" / project_id
+                    original_room_image_path = project_images_dir / context.base_image
+                    print(
+                        f"📂 Constructed path from filename: {original_room_image_path}"
+                    )
+
+                # Verify the file exists
+                if not original_room_image_path.exists():
+                    print(f"❌ File not found at: {original_room_image_path}")
+                    raise ValueError(
+                        f"Original room image not found: {original_room_image_path}"
+                    )
+                else:
+                    print(
+                        f"✅ Found original room image at: {original_room_image_path}"
+                    )
+
+            if not original_room_image_path:
+                raise ValueError("No original room image available for integration")
+
+            # Create project-specific directory for the generated image
+            project_dir = DATA_FILE.parent / "images" / project_id
+
+            # Generate the visualization with full context
+            generated_image_base64, final_prompt = (
+                self.gemini_client.generate_product_visualization(
+                    original_room_image_path=str(original_room_image_path),
+                    product_image_url=product_image_url,
+                    space_type=space_type,
+                    product_title=product_title,
+                    inspiration_recommendations=context.inspiration_recommendations
+                    or [],
+                    marker_locations=context.improvement_markers or [],
+                    custom_prompt=custom_prompt,
+                    project_data_dir=project_dir,
+                )
+            )
+
+            # Update context with generated image base64
+            context.generated_image_base64 = generated_image_base64
+            context.generation_prompt = final_prompt
+
+            # Save context
+            projects = self._load_projects()
+            projects[project_id]["context"] = context.model_dump()
+            projects[project_id]["status"] = "IMAGE_GENERATED"
+            self._save_projects(projects)
+
+            log_project_status_change(project_id, "PRODUCT_SELECTED", "IMAGE_GENERATED")
+            log_user_action(
+                "image_generation_completed",
+                {
+                    "project_id": project_id,
+                    "generated_image_size": f"{len(generated_image_base64)} chars",
+                },
+            )
+
+            return {
+                "project_id": project_id,
+                "selected_product": selected_product,
+                "generated_image_base64": generated_image_base64,
+                "generation_prompt": final_prompt,
+                "status": "success",
+                "message": "Image generated successfully using Gemini",
+            }
+
+        except Exception as e:
+            self.logger.error(f"Failed to generate product visualization: {e}")
+            # Log failed Gemini call
+            log_external_api_call("gemini", "image_generation", 0, False)
+            raise
+
+    def _generate_search_query(self, context: ProjectContext) -> str:
+        """Generate an optimized search query based on the project context and selected recommendation"""
+        try:
+            from pydantic import BaseModel
+
+            class SearchQuery(BaseModel):
+                query: str
+                reasoning: str
+
+            # Build context for AI
+            context_info = f"""
+            Space Type: {context.space_type}
+            Selected Recommendation: {context.selected_product_recommendation}
+            """
+
+            if context.improvement_markers:
+                markers_summary = ", ".join(
+                    [marker.description for marker in context.improvement_markers]
+                )
+                context_info += f"\nImprovement Areas: {markers_summary}"
+
+            if context.inspiration_recommendations:
+                style_summary = ", ".join(context.inspiration_recommendations[:2])
+                context_info += f"\nStyle Preferences: {style_summary}"
+
+            prompt = f"""Generate a specific, optimized search query to find products for this recommendation.
+
+{context_info}
+
+Create a search query that:
+- Is specific enough to find the right type of product
+- Includes relevant style/material hints from the context
+- Is optimized for e-commerce sites like Wayfair, West Elm, etc.
+- Is 3-8 words maximum
+- Focuses on the most important product characteristics
+
+For example:
+- If recommendation is "change sofa" and style is modern → "modern sectional sofa gray"
+- If recommendation is "add coffee table" and space is small → "round coffee table wood small"
+- If recommendation is "replace dining chairs" → "dining chairs set upholstered"
+
+Generate the most effective search query for this scenario:"""
+
+            result = self.openai_client.get_structured_completion(
+                prompt=prompt,
+                pydantic_model=SearchQuery,
+                system_message="You are an expert at generating optimized product search queries for furniture and home decor e-commerce sites.",
+            )
+
+            return result.query
+
+        except Exception as e:
+            print(f"Error generating search query: {e}")
+            # Fallback to simple query
+            return f"{context.selected_product_recommendation} {context.space_type}"
 
 
 # Global instance

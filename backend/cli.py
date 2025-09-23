@@ -1,184 +1,228 @@
 #!/usr/bin/env python3
 """
-CLI test script for the new OpenAI structured output functionality with Pydantic models.
+CLI test script for Exa API functionality
 """
 
+import json
 import os
 import sys
-from typing import List, Optional
+from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
-from openai_client import OpenAIClient
-from pydantic import BaseModel, Field
+from exa_client import ExaClient
 
 load_dotenv()
 
 
-# Example Pydantic models for testing
-class CalendarEvent(BaseModel):
-    """Model for calendar event information"""
+def save_images_debug(products, query):
+    """Save product images and data for debugging"""
+    # Create temp directory
+    temp_dir = Path("temp")
+    temp_dir.mkdir(exist_ok=True)
 
-    name: str = Field(description="The name or title of the event")
-    date: str = Field(description="The date of the event")
-    participants: List[str] = Field(
-        description="List of people participating in the event"
-    )
-    location: Optional[str] = Field(default=None, description="Location of the event")
-    description: Optional[str] = Field(
-        default=None, description="Description of the event"
-    )
+    # Clean query for filename
+    safe_query = "".join(c for c in query if c.isalnum() or c in (" ", "_")).rstrip()
+    safe_query = safe_query.replace(" ", "_")[:50]
 
+    # Save product data as JSON
+    products_file = temp_dir / f"products_{safe_query}.json"
+    with open(products_file, "w") as f:
+        json.dump(products, f, indent=2, default=str)
 
-class RoomAnalysis(BaseModel):
-    """Model for room analysis results"""
+    print(f"\n💾 Saved product data to: {products_file}")
 
-    room_type: str = Field(
-        description="Type of room (bedroom, living room, kitchen, etc.)"
-    )
-    dimensions: Optional[str] = Field(
-        default=None, description="Room dimensions if mentioned"
-    )
-    current_furniture: List[str] = Field(description="List of current furniture items")
-    style_preferences: List[str] = Field(description="Style preferences mentioned")
-    improvement_suggestions: List[str] = Field(description="Suggested improvements")
-    color_scheme: Optional[str] = Field(
-        default=None, description="Recommended color scheme"
-    )
+    # Extract and save all image URLs
+    all_images = []
+    product_info = []  # Store for later URL printing
 
+    for i, product in enumerate(products):
+        images = product.get("images", [])
+        all_images.extend(images)
 
-class ContactInfo(BaseModel):
-    """Model for contact information extraction"""
-
-    name: str = Field(description="Full name of the person")
-    email: Optional[str] = Field(default=None, description="Email address")
-    phone: Optional[str] = Field(default=None, description="Phone number")
-    company: Optional[str] = Field(default=None, description="Company or organization")
-    title: Optional[str] = Field(default=None, description="Job title or role")
-
-
-def test_calendar_event_extraction():
-    """Test calendar event extraction using the exact approach from the example"""
-    print("🔍 Testing Calendar Event Extraction...")
-
-    client = OpenAIClient()
-
-    try:
-        event = client.get_structured_completion(
-            prompt="Alice and Bob are going to a science fair on Friday.",
-            pydantic_model=CalendarEvent,
-            system_message="Extract the event information.",
+        # Store product info for URL section
+        product_info.append(
+            {
+                "title": product.get("title", "Unknown"),
+                "url": product.get("url", ""),
+                "store": product.get("store", "Unknown"),
+                "images": images,
+            }
         )
 
-        print("✅ Successfully extracted event:")
-        print(f"   Name: {event.name}")
-        print(f"   Date: {event.date}")
-        print(f"   Participants: {', '.join(event.participants)}")
-        print(f"   Location: {event.location}")
-        print(f"   Description: {event.description}")
+        print(f"\n📦 Product {i + 1}: {product.get('title', 'Unknown')[:50]}...")
+        print(f"   🖼️  Images found: {len(images)}")
+        for j, img_url in enumerate(images):
+            print(f"      {j + 1}. {img_url}")
 
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    # Save all image URLs to text file
+    urls_file = temp_dir / f"image_urls_{safe_query}.txt"
+    with open(urls_file, "w") as f:
+        f.write(f"Image URLs for query: {query}\n")
+        f.write("=" * 50 + "\n\n")
+        for i, product in enumerate(products):
+            f.write(f"Product {i + 1}: {product.get('title', 'Unknown')}\n")
+            f.write(f"Store: {product.get('store', 'Unknown')}\n")
+            f.write(f"URL: {product.get('url', 'Unknown')}\n")
+            images = product.get("images", [])
+            f.write(f"Images ({len(images)}):\n")
+            for img_url in images:
+                f.write(f"  - {img_url}\n")
+            f.write("\n" + "-" * 30 + "\n\n")
 
+    print(f"💾 Saved image URLs to: {urls_file}")
 
-def test_room_analysis():
-    """Test room analysis"""
-    print("\n🏠 Testing Room Analysis...")
+    # Print all URLs for manual browser testing
+    print("\n🌐 COPY-PASTE URLs FOR BROWSER TESTING:")
+    print("=" * 70)
 
-    client = OpenAIClient()
+    for i, prod_info in enumerate(product_info):
+        print(f"\n🛍️  PRODUCT {i + 1}: {prod_info['title'][:60]}")
+        print(f"   Store: {prod_info['store']}")
+        print("   📋 Product Page URL:")
+        print(f"   {prod_info['url']}")
 
-    prompt = """
-    I have a small bedroom that's about 12x10 feet. Currently it has a queen bed, 
-    a small desk, and a bookshelf. I love Scandinavian design and want a minimalist 
-    look with lots of natural light. I prefer neutral colors like whites, grays, and 
-    light wood tones.
-    """
+        if prod_info["images"]:
+            print(f"\n   🖼️  Images ({len(prod_info['images'])}):")
+            for j, img_url in enumerate(
+                prod_info["images"][:2]
+            ):  # Show first 2 images per product
+                print(f"   \n   Image {j + 1}:")
+                print(f"   🔗 Direct: {img_url}")
+                proxy_url = f"https://images.weserv.nl/?url={requests.utils.quote(img_url, safe='')}&w=400&h=300&fit=cover"
+                print(f"   🔄 Proxy:  {proxy_url}")
 
-    try:
-        analysis = client.get_structured_completion(
-            prompt=prompt,
-            pydantic_model=RoomAnalysis,
-            system_message="Analyze the room description and provide detailed recommendations for interior design improvements.",
-        )
+        print(f"\n   {'-' * 50}")
 
-        print("✅ Successfully analyzed room:")
-        print(f"   Room Type: {analysis.room_type}")
-        print(f"   Dimensions: {analysis.dimensions}")
-        print(f"   Current Furniture: {', '.join(analysis.current_furniture)}")
-        print(f"   Style Preferences: {', '.join(analysis.style_preferences)}")
+    print("\n💡 How to test:")
+    print("   1. Copy product page URLs - check if they work")
+    print(
+        "   2. Copy direct image URLs - WILL LIKELY SHOW CAPTCHA (this is the problem!)"
+    )
+    print("   3. Copy proxy image URLs - might bypass the CAPTCHA")
+    print("   4. Compare: do you get CAPTCHA on direct vs actual images on proxy?")
+
+    # Test what we actually get when downloading images (to detect CAPTCHAs)
+    sample_images = all_images[:3]  # Test first 3 images
+    if sample_images:
         print(
-            f"   Improvement Suggestions: {', '.join(analysis.improvement_suggestions)}"
+            f"\n🔍 Testing what backend gets when downloading {len(sample_images)} images:"
         )
-        print(f"   Color Scheme: {analysis.color_scheme}")
 
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        for i, img_url in enumerate(sample_images):
+            try:
+                # Try to download and see what we actually get
+                response = requests.get(
+                    img_url,
+                    timeout=10,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                    },
+                )
+                content_type = response.headers.get("content-type", "unknown")
+                content_preview = response.content[:200].decode(
+                    "utf-8", errors="ignore"
+                )
+
+                print(f"\n   🔍 Image {i + 1}: {img_url}")
+                print(f"      Status: {response.status_code}")
+                print(f"      Content-Type: {content_type}")
+                print(f"      Content size: {len(response.content)} bytes")
+
+                # Check if it's actually HTML (CAPTCHA page)
+                if (
+                    content_type.startswith("text/html")
+                    or "<html" in content_preview.lower()
+                ):
+                    print("      🚨 CAPTCHA DETECTED! Got HTML instead of image:")
+                    print(f"      Preview: {content_preview[:100]}...")
+                elif content_type.startswith("image/"):
+                    print("      ✅ Looks like real image data")
+                    print(f"      Preview: {content_preview[:50]} (binary data)")
+                else:
+                    print("      ⚠️  Unknown content type")
+                    print(f"      Preview: {content_preview[:100]}...")
+
+            except Exception as e:
+                print(f"   ❌ Image {i + 1}: Error - {str(e)[:100]}...")
+
+        print(
+            "\n💡 Solution: Frontend now uses image proxy (images.weserv.nl) for blocked images"
+        )
+        print("   - Browser tries direct URL first")
+        print("   - If CAPTCHA/blocked → automatically tries proxy")
+        print("   - Proxy service can bypass CAPTCHA issues")
+
+    print(f"\n📁 All debug files saved in: {temp_dir.absolute()}")
+    return temp_dir
 
 
-def test_contact_info_extraction():
-    """Test contact information extraction"""
-    print("\n📞 Testing Contact Information Extraction...")
-
-    client = OpenAIClient()
-
-    prompt = "John Smith is a Senior Software Engineer at TechCorp. You can reach him at john.smith@techcorp.com or call him at (555) 123-4567."
+def test_exa_search():
+    """Test Exa search functionality"""
+    print("\n🔍 Testing Exa Search...")
 
     try:
-        contact = client.get_structured_completion(
-            prompt=prompt,
-            pydantic_model=ContactInfo,
-            system_message="Extract contact information from the given text. Only include information that is explicitly provided.",
+        exa_client = ExaClient()
+
+        # Test the exact query from the user
+        query = "large abstract art for bedroom amazon"
+
+        print(f"Testing query: '{query}'")
+
+        # Test basic search
+        search_results = exa_client.search_products(query, num_results=5)
+        print("\n📝 Search Results Structure:")
+        print(f"   - Results count: {len(search_results.get('results', []))}")
+
+        if "error" in search_results:
+            print(f"   - Error: {search_results['error']}")
+        else:
+            results = search_results.get("results", [])
+            if results:
+                first_result = results[0]
+                print(f"   - First result URL: {first_result.get('url', 'N/A')}")
+                print(f"   - First result title: {first_result.get('title', 'N/A')}")
+
+        # Test full product search and analysis
+        print("\n🛍️ Testing Full Product Analysis...")
+        products = exa_client.search_and_analyze_products(
+            query=query, space_type="bedroom", num_results=3
         )
 
-        print("✅ Successfully extracted contact info:")
-        print(f"   Name: {contact.name}")
-        print(f"   Email: {contact.email}")
-        print(f"   Phone: {contact.phone}")
-        print(f"   Company: {contact.company}")
-        print(f"   Title: {contact.title}")
+        print(f"   - Analyzed products count: {len(products)}")
+        if products:
+            first_product = products[0]
+            print(f"   - First product title: {first_product.get('title', 'N/A')}")
+            print(f"   - First product store: {first_product.get('store', 'N/A')}")
+            print(f"   - First product price: {first_product.get('price_str', 'N/A')}")
+            print(f"   - First product images: {len(first_product.get('images', []))}")
+
+            # Save images and product data for debugging
+            save_images_debug(products, query)
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Exa Error: {e}")
+        import traceback
 
-
-def test_direct_example():
-    """Test the exact example from the user"""
-    print("\n🎯 Testing Direct Example...")
-
-    client = OpenAIClient()
-
-    try:
-        event = client.get_structured_completion(
-            prompt="Alice and Bob are going to a science fair on Friday.",
-            pydantic_model=CalendarEvent,
-            system_message="Extract the event information.",
-        )
-
-        print("✅ Direct example result:")
-        print(f"   Event: {event}")
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        traceback.print_exc()
 
 
 def main():
     """Main CLI function"""
-    print("🚀 OpenAI Structured Output CLI Test")
-    print("=" * 50)
+    print("🚀 Exa API Test")
+    print("=" * 30)
 
-    # Check if API key is set
-    if not os.getenv("OPENAI_API_KEY"):
-        print("❌ Error: OPENAI_API_KEY environment variable is not set")
-        print("Please set your OpenAI API key:")
-        print("export OPENAI_API_KEY='your-api-key-here'")
+    # Check if EXA API key is set
+    if not os.getenv("EXA_API_KEY"):
+        print("❌ Error: EXA_API_KEY environment variable is not set")
+        print("Please set your Exa API key:")
+        print("export EXA_API_KEY='your-exa-api-key-here'")
         sys.exit(1)
 
-    # Run tests
-    test_direct_example()
-    test_calendar_event_extraction()
-    test_room_analysis()
-    test_contact_info_extraction()
+    # Run Exa test
+    test_exa_search()
 
-    print("\n🎉 All tests completed!")
+    print("\n🎉 Exa test completed!")
 
 
 if __name__ == "__main__":

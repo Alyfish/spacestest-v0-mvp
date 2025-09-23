@@ -5,8 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "exa-py>=1.15.6",
     "fastapi[standard]>=0.116.1",
+    "google-genai>=1.38.0",
+    "google-generativeai>=0.8.5",
+    "google-search-results>=2.4.2",
     "openai>=1.99.9",
     "pillow>=11.3.0",
     "python-dotenv>=1.1.1",
+    "requests>=2.32.5",
 ]

@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from logger_config import setup_logging
 from models import (
+    ImageGenerationResponse,
     ImageUploadResponse,
     ImprovementMarkersRequest,
     ImprovementMarkersResponse,
@@ -14,6 +16,12 @@ from models import (
     InspirationImageUploadResponse,
     InspirationRecommendationsResponse,
     MarkerRecommendationsResponse,
+    ProductRecommendationSelectionRequest,
+    ProductRecommendationSelectionResponse,
+    ProductRecommendationsResponse,
+    ProductSearchResponse,
+    ProductSelectionRequest,
+    ProductSelectionResponse,
     ProjectContext,
     ProjectCreateResponse,
     ProjectResponse,
@@ -24,6 +32,9 @@ from models import (
 )
 
 load_dotenv()
+
+# Initialize logging
+logger = setup_logging()
 
 app = FastAPI(title="AI Interior Design Agent", version="1.0.0", root_path="/api")
 
@@ -52,6 +63,7 @@ async def root():
 @app.post("/projects", response_model=ProjectCreateResponse)
 async def create_project():
     """Create a new project"""
+    logger.info("Received request to create new project")
     project_id = data_manager.create_project()
     project = data_manager.get_project(project_id)
 
@@ -366,6 +378,256 @@ async def generate_inspiration_recommendations(project_id: str):
             status_code=500,
             detail=f"Failed to generate inspiration recommendations: {str(e)}",
         )
+
+
+@app.post(
+    "/projects/{project_id}/product-recommendations",
+    response_model=ProductRecommendationsResponse,
+)
+async def generate_product_recommendations(project_id: str):
+    """Generate AI product recommendations based on project context"""
+    logger.info(
+        "API request: generate product recommendations",
+        extra={"project_id": project_id},
+    )
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        logger.info(
+            "Generating product recommendations",
+            extra={"project_id": project_id, "current_status": project["status"]},
+        )
+
+        recommendations = data_manager.generate_product_recommendations(project_id)
+        project = data_manager.get_project(project_id)
+        context = ProjectContext.model_validate(project["context"])
+
+        logger.info(
+            "Product recommendations generated successfully",
+            extra={
+                "project_id": project_id,
+                "recommendations_count": len(recommendations),
+                "new_status": project["status"],
+            },
+        )
+
+        return ProductRecommendationsResponse(
+            project_id=project_id,
+            space_type=context.space_type or "unknown",
+            recommendations=recommendations,
+            status=project["status"],
+        )
+    except ValueError as e:
+        logger.error(
+            "Product recommendations generation failed: ValueError",
+            extra={"project_id": project_id, "error": str(e)},
+        )
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "Product recommendations generation failed: Unexpected error",
+            extra={
+                "project_id": project_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate product recommendations: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/product-recommendation-selection",
+    response_model=ProductRecommendationSelectionResponse,
+)
+async def select_product_recommendation(
+    project_id: str, selection_request: ProductRecommendationSelectionRequest
+):
+    """Select a product recommendation option"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project["status"] != "PRODUCT_RECOMMENDATIONS_READY":
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have product recommendations ready first",
+        )
+
+    try:
+        selected = data_manager.select_product_recommendation(
+            project_id, selection_request.selected_recommendation
+        )
+        project = data_manager.get_project(project_id)
+
+        return ProductRecommendationSelectionResponse(
+            project_id=project_id,
+            selected_recommendation=selected,
+            status=project["status"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to select product recommendation: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/product-search",
+    response_model=ProductSearchResponse,
+)
+async def search_products(project_id: str):
+    """Search for products based on selected recommendation using AI and Exa"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project["status"] != "PRODUCT_RECOMMENDATION_SELECTED":
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have a selected product recommendation first",
+        )
+
+    try:
+        search_result = data_manager.search_products(project_id)
+        project = data_manager.get_project(project_id)
+        context = ProjectContext.model_validate(project["context"])
+
+        return ProductSearchResponse(
+            project_id=project_id,
+            selected_recommendation=context.selected_product_recommendation or "",
+            search_query=search_result["search_query"],
+            products=search_result["products"],
+            total_found=search_result["total_found"],
+            status=project["status"],
+            message=f"Found {search_result['total_found']} products for '{context.selected_product_recommendation}'",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to search for products: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/product-selection",
+    response_model=ProductSelectionResponse,
+)
+async def select_product_for_generation(
+    project_id: str, selection_request: ProductSelectionRequest
+):
+    """Select a product for Gemini image generation"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project["status"] != "PRODUCT_SEARCH_COMPLETE":
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have completed product search first",
+        )
+
+    try:
+        selected = data_manager.select_product_for_generation(
+            project_id,
+            selection_request.product_url,
+            selection_request.product_title,
+            selection_request.product_image_url,
+            selection_request.generation_prompt,
+        )
+
+        return ProductSelectionResponse(
+            project_id=project_id,
+            selected_product=selected["selected_product"],
+            status="success",
+            message=selected["message"],
+        )
+
+    except Exception as e:
+        import traceback
+
+        error_details = traceback.format_exc()
+        print(f"❌ PRODUCT SELECTION ERROR: {str(e)}")
+        print(f"❌ FULL TRACEBACK:\n{error_details}")
+        logger.error(f"Product selection failed for project {project_id}: {str(e)}")
+        logger.error(f"Full traceback: {error_details}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to select product: {str(e)}"
+        )
+
+
+@app.post(
+    "/projects/{project_id}/generate-image",
+    response_model=ImageGenerationResponse,
+)
+async def generate_product_visualization(project_id: str):
+    """Generate a new image visualization using Gemini with the selected product"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project["status"] != "PRODUCT_SELECTED":
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have a selected product first",
+        )
+
+    try:
+        generation_result = data_manager.generate_product_visualization(project_id)
+
+        return ImageGenerationResponse(
+            project_id=project_id,
+            selected_product=generation_result["selected_product"],
+            generated_image_url=generation_result["generated_image_url"],
+            generation_prompt=generation_result["generation_prompt"],
+            status="success",
+            message=generation_result["message"],
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to generate image: {str(e)}"
+        )
+
+
+@app.get("/projects/{project_id}/generated-image")
+async def get_generated_image(project_id: str):
+    """Serve the generated image for a project"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    context = ProjectContext.model_validate(project["context"])
+
+    if not context.generated_image_path:
+        raise HTTPException(
+            status_code=404, detail="No generated image found for this project"
+        )
+
+    image_path = Path(context.generated_image_path)
+
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Generated image file not found")
+
+    return FileResponse(
+        path=str(image_path),
+        media_type="image/png",
+        filename=f"generated_visualization_{project_id}.png",
+    )
 
 
 if __name__ == "__main__":

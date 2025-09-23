@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -180,6 +180,29 @@ class ProjectContext(BaseModel):
         description="AI recommendations based on inspiration images",
     )
 
+    # Product recommendations
+    product_recommendations: List[str] = Field(
+        default_factory=list,
+        description="AI-generated product recommendations (e.g., 'change sofa', 'add photo frame')",
+    )
+    selected_product_recommendation: Optional[str] = Field(
+        default=None, description="The product recommendation selected by the user"
+    )
+    product_search_results: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Exa search results for products matching the selected recommendation",
+    )
+    selected_product: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="The specific product selected by the user for image generation",
+    )
+    generated_image_base64: Optional[str] = Field(
+        default=None, description="Base64 encoded Gemini-generated image"
+    )
+    generation_prompt: Optional[str] = Field(
+        default=None, description="The prompt used for Gemini image generation"
+    )
+
     def is_ready_for_markers(self) -> bool:
         """Check if ready for marker placement."""
         return (
@@ -204,6 +227,34 @@ class ProjectContext(BaseModel):
             and self.space_type is not None
             and len(self.improvement_markers) > 0
             and self.labelled_base_image is not None
+        )
+
+    def is_ready_for_product_recommendations(self) -> bool:
+        """Check if ready for product recommendations."""
+        return (
+            self.base_image is not None
+            and self.space_type is not None
+            and len(self.inspiration_recommendations) > 0
+        )
+
+    def is_ready_for_product_search(self) -> bool:
+        """Check if ready for product search."""
+        return (
+            self.is_ready_for_product_recommendations()
+            and len(self.product_recommendations) > 0
+            and self.selected_product_recommendation is not None
+        )
+
+    def is_ready_for_product_selection(self) -> bool:
+        """Check if ready for product selection."""
+        return (
+            self.is_ready_for_product_search() and len(self.product_search_results) > 0
+        )
+
+    def is_ready_for_image_generation(self) -> bool:
+        """Check if ready for Gemini image generation."""
+        return (
+            self.is_ready_for_product_selection() and self.selected_product is not None
         )
 
 
@@ -309,3 +360,128 @@ class InspirationRecommendationsResponse(BaseModel):
     recommendations: List[str]
     status: str
     message: str = "Inspiration recommendations generated successfully"
+
+
+class ProductRecommendationsResponse(BaseModel):
+    """
+    Response model for product recommendations generation.
+
+    Attributes:
+        project_id (str): ID of the project recommendations are generated for
+        space_type (str): Type of space the recommendations are based on
+        recommendations (List[str]): List of product recommendation options
+        status (str): Status of the recommendations generation
+        message (str): Human-readable message describing the operation result
+    """
+
+    project_id: str
+    space_type: str
+    recommendations: List[str]
+    status: str
+    message: str = "Product recommendations generated successfully"
+
+
+class ProductRecommendationSelectionRequest(BaseModel):
+    """
+    Request model for selecting a product recommendation.
+
+    Attributes:
+        selected_recommendation (str): The product recommendation selected by the user
+    """
+
+    selected_recommendation: str
+
+
+class ProductRecommendationSelectionResponse(BaseModel):
+    """
+    Response model for product recommendation selection.
+
+    Attributes:
+        project_id (str): ID of the project
+        selected_recommendation (str): The selected recommendation
+        status (str): Status of the selection operation
+        message (str): Human-readable message describing the operation result
+    """
+
+    project_id: str
+    selected_recommendation: str
+    status: str
+    message: str = "Product recommendation selected successfully"
+
+
+class ProductSearchResponse(BaseModel):
+    """
+    Response model for product search results.
+
+    Attributes:
+        project_id (str): ID of the project
+        selected_recommendation (str): The recommendation that was searched for
+        search_query (str): The AI-generated search query used
+        products (List[Dict[str, Any]]): List of found products with details
+        total_found (int): Total number of products found
+        status (str): Status of the search operation
+        message (str): Human-readable message describing the operation result
+    """
+
+    project_id: str
+    selected_recommendation: str
+    search_query: str
+    products: List[Dict[str, Any]]
+    total_found: int
+    status: str
+    message: str
+
+
+class ProductSelectionRequest(BaseModel):
+    """
+    Request model for selecting a product for image generation.
+
+    Attributes:
+        product_url (str): URL of the selected product
+        product_title (str): Title of the selected product
+        product_image_url (str): Image URL of the selected product
+        generation_prompt (str): Custom prompt for image generation (optional)
+    """
+
+    product_url: str
+    product_title: str
+    product_image_url: str
+    generation_prompt: Optional[str] = None
+
+
+class ProductSelectionResponse(BaseModel):
+    """
+    Response model for product selection.
+
+    Attributes:
+        project_id (str): ID of the project
+        selected_product (Dict[str, Any]): Details of the selected product
+        status (str): Status of the selection operation
+        message (str): Human-readable message describing the operation result
+    """
+
+    project_id: str
+    selected_product: Dict[str, Any]
+    status: str
+    message: str
+
+
+class ImageGenerationResponse(BaseModel):
+    """
+    Response model for Gemini image generation.
+
+    Attributes:
+        project_id (str): ID of the project
+        selected_product (Dict[str, Any]): Details of the product used for generation
+        generated_image_base64 (str): Base64 encoded generated image
+        generation_prompt (str): The prompt used for image generation
+        status (str): Status of the generation operation
+        message (str): Human-readable message describing the operation result
+    """
+
+    project_id: str
+    selected_product: Dict[str, Any]
+    generated_image_base64: str  # Return base64 string instead of URL
+    generation_prompt: str
+    status: str
+    message: str = "Image generation completed successfully"
