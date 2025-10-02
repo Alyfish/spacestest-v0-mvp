@@ -12,6 +12,7 @@ from models import (
     ImageUploadResponse,
     ImprovementMarkersRequest,
     ImprovementMarkersResponse,
+    InspirationImageGenerationResponse,
     InspirationImagesBatchUploadResponse,
     InspirationImageUploadResponse,
     InspirationRecommendationsResponse,
@@ -377,6 +378,46 @@ async def generate_inspiration_recommendations(project_id: str):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate inspiration recommendations: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/inspiration-redesign",
+    response_model=InspirationImageGenerationResponse,
+)
+async def generate_inspiration_redesign(project_id: str):
+    """Generate a redesigned room image based on inspiration recommendations"""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project["status"] not in [
+        "INSPIRATION_RECOMMENDATIONS_READY",
+        "INSPIRATION_REDESIGN_COMPLETE",
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Project is not ready for inspiration-based redesign",
+        )
+
+    try:
+        result = data_manager.generate_inspiration_redesign(project_id)
+
+        return InspirationImageGenerationResponse(
+            project_id=project_id,
+            generated_image_base64=result["generated_image_base64"],
+            inspiration_prompt=result["inspiration_prompt"],
+            inspiration_recommendations=result["inspiration_recommendations"],
+            status=result["status"],
+            message=result["message"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate inspiration redesign: {str(e)}",
         )
 
 

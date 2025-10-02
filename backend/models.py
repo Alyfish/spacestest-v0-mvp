@@ -202,6 +202,14 @@ class ProjectContext(BaseModel):
     generation_prompt: Optional[str] = Field(
         default=None, description="The prompt used for Gemini image generation"
     )
+    
+    # Inspiration-based image generation
+    inspiration_generated_image_base64: Optional[str] = Field(
+        default=None, description="Base64 encoded inspiration-redesigned image"
+    )
+    inspiration_generation_prompt: Optional[str] = Field(
+        default=None, description="The prompt used for inspiration-based generation"
+    )
 
     def is_ready_for_markers(self) -> bool:
         """Check if ready for marker placement."""
@@ -255,6 +263,14 @@ class ProjectContext(BaseModel):
         """Check if ready for Gemini image generation."""
         return (
             self.is_ready_for_product_selection() and self.selected_product is not None
+        )
+    
+    def is_ready_for_inspiration_redesign(self) -> bool:
+        """Check if ready for inspiration-based image redesign."""
+        return (
+            self.base_image is not None
+            and self.space_type is not None
+            and len(self.inspiration_recommendations) > 0
         )
 
 
@@ -485,3 +501,24 @@ class ImageGenerationResponse(BaseModel):
     generation_prompt: str
     status: str
     message: str = "Image generation completed successfully"
+
+
+class InspirationImageGenerationResponse(BaseModel):
+    """
+    Response model for inspiration-based image redesign.
+
+    Attributes:
+        project_id (str): The unique identifier for the project
+        generated_image_base64 (str): Base64 encoded redesigned image
+        inspiration_prompt (str): The prompt used for inspiration-based generation
+        inspiration_recommendations (List[str]): The inspiration recommendations used
+        status (str): Status of the generation operation
+        message (str): Human-readable message about the result
+    """
+
+    project_id: str
+    generated_image_base64: str
+    inspiration_prompt: str
+    inspiration_recommendations: List[str]
+    status: str
+    message: str = "Inspiration-based image redesign completed successfully"

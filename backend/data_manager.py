@@ -1121,6 +1121,175 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             log_external_api_call("gemini", "image_generation", 0, False)
             raise
 
+    def generate_inspiration_redesign(self, project_id: str):
+        """Generate a redesigned room image based on inspiration recommendations using Gemini"""
+        try:
+            log_user_action("inspiration_redesign_started", {"project_id": project_id})
+
+            # Load project context
+            project = self.get_project(project_id)
+            if not project:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(project["context"])
+            if not context.is_ready_for_inspiration_redesign():
+                raise ValueError("Project is not ready for inspiration-based redesign")
+
+            if not self.gemini_client:
+                raise ValueError("Gemini client is not available")
+
+            # Get the original room image path
+            original_room_image_path = None
+            if context.base_image:
+                print(f"🖼️ Base image from context: {context.base_image}")
+
+                # Handle path construction correctly
+                if context.base_image.startswith("data/"):
+                    relative_path = context.base_image[5:]
+                    original_room_image_path = DATA_FILE.parent / relative_path
+                elif "/" in context.base_image:
+                    original_room_image_path = DATA_FILE.parent / context.base_image
+                else:
+                    project_images_dir = DATA_FILE.parent / "images" / project_id
+                    original_room_image_path = project_images_dir / context.base_image
+
+                if not original_room_image_path.exists():
+                    raise ValueError(
+                        f"Original room image not found: {original_room_image_path}"
+                    )
+
+            if not original_room_image_path:
+                raise ValueError("No original room image available")
+
+            # Create comprehensive prompt based on inspiration recommendations
+            space_type = context.space_type or "living space"
+            inspiration_context = "\n".join(
+                [
+                    f"{i+1}. {rec}"
+                    for i, rec in enumerate(context.inspiration_recommendations[:5])
+                ]
+            )
+
+            prompt = f"""
+TASK: Redesign this {space_type} by incorporating the following inspiration-based design recommendations.
+
+INSPIRATION RECOMMENDATIONS:
+{inspiration_context}
+
+REQUIREMENTS:
+1. **Preserve Room Structure**: Keep the room's walls, windows, doors, and architectural elements exactly as shown
+2. **Implement Recommendations**: Apply each inspiration recommendation to transform the space
+3. **Style Consistency**: Ensure all changes work together cohesively
+4. **Practical Design**: Make changes that are realistic and achievable
+5. **Detailed Execution**: Show specific changes like:
+   - Updated furniture pieces matching the recommended style
+   - New color schemes and materials
+   - Improved layouts and arrangements
+   - Added or modified decor elements
+   - Updated lighting as suggested
+
+OUTPUT: Generate a photorealistic redesigned image of this {space_type} that beautifully incorporates all the inspiration recommendations while maintaining the room's original structure.
+"""
+
+            print(f"🎨 Inspiration redesign prompt: {prompt[:200]}...")
+
+            # Use Gemini to generate the redesigned image
+            from PIL import Image
+            import base64
+            from io import BytesIO
+
+            # Load the original image
+            original_image = Image.open(original_room_image_path)
+
+            # Convert to base64
+            buffer = BytesIO()
+            original_image.save(buffer, format="PNG")
+            original_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            original_image_url = f"data:image/png;base64,{original_image_b64}"
+
+            # Call Gemini API
+            response = self.gemini_client.client.chat.completions.create(
+                extra_headers={
+                    "HTTP-Referer": "https://spaces-ai.com",
+                    "X-Title": "Spaces AI - Interior Design Tool",
+                },
+                model="google/gemini-2.5-flash-image-preview",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": original_image_url,
+                                    "detail": "high",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=1024,
+                temperature=0.7,
+            )
+
+            # Extract generated image
+            generated_image_base64 = None
+            if (
+                response.choices
+                and hasattr(response.choices[0].message, "images")
+                and response.choices[0].message.images
+            ):
+                first_image = response.choices[0].message.images[0]
+                if isinstance(first_image, dict) and "image_url" in first_image:
+                    image_data_url = first_image["image_url"]["url"]
+                    if image_data_url.startswith("data:image/"):
+                        import re
+
+                        base64_match = re.search(
+                            r"data:image/[^;]+;base64,(.+)", image_data_url
+                        )
+                        if base64_match:
+                            generated_image_base64 = base64_match.group(1)
+
+            if not generated_image_base64:
+                raise ValueError("No image generated by Gemini")
+
+            # Update context with generated image
+            context.inspiration_generated_image_base64 = generated_image_base64
+            context.inspiration_generation_prompt = prompt
+
+            # Save context
+            projects = self._load_projects()
+            projects[project_id]["context"] = context.model_dump()
+            projects[project_id]["status"] = "INSPIRATION_REDESIGN_COMPLETE"
+            self._save_projects(projects)
+
+            log_project_status_change(
+                project_id, project["status"], "INSPIRATION_REDESIGN_COMPLETE"
+            )
+            log_user_action(
+                "inspiration_redesign_completed",
+                {
+                    "project_id": project_id,
+                    "image_size": f"{len(generated_image_base64)} chars",
+                },
+            )
+
+            return {
+                "project_id": project_id,
+                "generated_image_base64": generated_image_base64,
+                "inspiration_prompt": prompt,
+                "inspiration_recommendations": context.inspiration_recommendations,
+                "status": "success",
+                "message": "Inspiration-based redesign completed successfully",
+            }
+
+        except Exception as e:
+            self.logger.error(f"Failed to generate inspiration redesign: {e}")
+            log_external_api_call("gemini", "inspiration_redesign", 0, False)
+            raise
+
     def _generate_search_query(self, context: ProjectContext) -> str:
         """Generate an optimized search query based on the project context and selected recommendation"""
         try:
