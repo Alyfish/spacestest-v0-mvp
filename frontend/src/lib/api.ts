@@ -33,7 +33,15 @@ const apiClient = {
       body: data ? JSON.stringify(data) : undefined,
     });
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.statusText}`);
+      let message = response.statusText;
+      try {
+        const err = await response.json();
+        // FastAPI returns { detail: "..." }
+        if (err && (err.detail || err.message)) {
+          message = err.detail || err.message;
+        }
+      } catch {}
+      throw new Error(`(${response.status}) ${message}`);
     }
     return response.json();
   },
@@ -251,6 +259,36 @@ export interface ImageGenerationResponse {
   };
   generated_image_base64: string; // Changed from URL to base64
   generation_prompt: string;
+  status: string;
+  message: string;
+}
+
+export interface ClipRect {
+  x: number; // 0-1
+  y: number; // 0-1
+  width: number; // 0-1
+  height: number; // 0-1
+}
+
+export interface ClipSearchRequest {
+  rect: ClipRect;
+}
+
+export interface ClipSearchResponse {
+  project_id: string;
+  rect: ClipRect;
+  search_query: string;
+  products: ProductSearchResponse["products"];
+  total_found: number;
+  status: string;
+  message: string;
+}
+
+export interface InspirationImageGenerationResponse {
+  project_id: string;
+  generated_image_base64: string;
+  inspiration_prompt: string;
+  inspiration_recommendations: string[];
   status: string;
   message: string;
 }
@@ -505,6 +543,42 @@ export const useGenerateImage = () => {
         `/projects/${projectId}/generate-image`
       ),
     onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useGenerateInspirationRedesign = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<InspirationImageGenerationResponse>(
+        `/projects/${projectId}/inspiration-redesign`
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useClipSearch = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      rect,
+    }: {
+      projectId: string;
+      rect: ClipRect;
+    }) =>
+      apiClient.post<ClipSearchResponse>(
+        `/projects/${projectId}/clip-search`,
+        { rect }
+      ),
+    onSuccess: (data) => {
+      // Refresh project to capture any future state effects if added
       queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
     },
   });

@@ -14,7 +14,7 @@ from logger_config import (
     log_project_status_change,
     log_user_action,
 )
-from models import ImprovementMarker, ProjectContext
+from models import ImprovementMarker, ProjectContext, ClipRect
 from openai_client import OpenAIClient
 from serp_client import SerpClient
 
@@ -921,6 +921,121 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             log_external_api_call("search", "product_search", 0, False)
             raise
 
+    @log_api_call("clip_search_products")
+    def clip_search_products(self, project_id: str, rect: ClipRect) -> dict:
+        """Crop the generated image by a normalized rect, describe it, and search matching products.
+
+        The flow:
+        - Decode generated image from context
+        - Convert normalized rect to pixel box and crop with Pillow
+        - Call vision model to generate a concise product search query from the crop
+        - Use SERP client to find products
+        - Return results (does not mutate project status)
+        """
+        try:
+            projects = self._load_projects()
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            project = projects[project_id]
+            context = ProjectContext.model_validate(project["context"])
+
+            if not context.generated_image_base64:
+                raise ValueError("No generated image available to clip-search")
+
+            if not self.serp_client:
+                raise ValueError("SERP client not available - please check SERP_API_KEY")
+
+            # Decode base64 image
+            import base64
+            from io import BytesIO
+            from PIL import Image
+
+            image_bytes = base64.b64decode(context.generated_image_base64)
+            image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            width, height = image.size
+
+            # Clamp and convert normalized rect to pixel box
+            x = max(0.0, min(1.0, rect.x))
+            y = max(0.0, min(1.0, rect.y))
+            w = max(0.0, min(1.0, rect.width))
+            h = max(0.0, min(1.0, rect.height))
+            if w <= 0 or h <= 0:
+                raise ValueError("Clip rectangle has zero area")
+
+            left = int(x * width)
+            top = int(y * height)
+            right = int(min(1.0, x + w) * width)
+            bottom = int(min(1.0, y + h) * height)
+
+            if right <= left or bottom <= top:
+                raise ValueError("Invalid clip rectangle after conversion")
+
+            crop = image.crop((left, top, right, bottom))
+
+            # Save crop temporarily to analyze with vision
+            temp_dir = DATA_FILE.parent / "images" / project_id
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            crop_path = temp_dir / f"clip_{left}_{top}_{right}_{bottom}.png"
+            crop.save(crop_path)
+
+            # Use vision to propose a tight search query
+            from pydantic import BaseModel
+
+            class ClipQuery(BaseModel):
+                query: str
+
+            prompt = (
+                "You are an assistant generating concise shopping search queries from a product photo.\n"
+                "Given the clipped image region from an interior design visualization, output a 3-8 word query\n"
+                "that a user would type into furniture e-commerce sites to find this product (include style, color,\n"
+                "material when visible). Return only the query text."
+            )
+
+            try:
+                clip_query = self.openai_client.analyze_image_with_vision(
+                    prompt=prompt,
+                    pydantic_model=ClipQuery,
+                    image_path=str(crop_path),
+                    model="gpt-4o-mini",  # vision-capable
+                )
+                search_query = clip_query.query.strip()
+            except Exception as e:
+                self.logger.warning(f"Vision query generation failed, falling back: {e}")
+                search_query = context.selected_product["title"] if context.selected_product else (context.selected_product_recommendation or "furniture")
+
+            # Execute SERP product search
+            products = self.serp_client.search_and_analyze_products(
+                query=search_query,
+                space_type=context.space_type or "general",
+                num_results=12,
+            )
+            for product in products:
+                product["source_api"] = "serp"
+                product["search_method"] = "Google Shopping"
+
+            result = {
+                "search_query": search_query,
+                "products": products,
+                "total_found": len(products),
+            }
+
+            log_user_action(
+                "clip_product_search_completed",
+                project_id=project_id,
+                results_count=len(products),
+            )
+
+            return result
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed clip-based product search: {e}",
+                extra={"project_id": project_id},
+                exc_info=True,
+            )
+            raise
+
     def select_product_for_generation(
         self,
         project_id: str,
@@ -1132,8 +1247,29 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                 raise ValueError(f"Project {project_id} not found")
 
             context = ProjectContext.model_validate(project["context"])
-            if not context.is_ready_for_inspiration_redesign():
-                raise ValueError("Project is not ready for inspiration-based redesign")
+            # Detailed readiness logging
+            ready = context.is_ready_for_inspiration_redesign()
+            self.logger.info(
+                "Checking readiness for inspiration redesign",
+                extra={
+                    "project_id": project_id,
+                    "has_base_image": context.base_image is not None,
+                    "has_space_type": context.space_type is not None,
+                    "num_inspiration_recs": len(context.inspiration_recommendations or []),
+                    "project_status": project["status"],
+                },
+            )
+            if not ready:
+                missing = []
+                if not context.base_image:
+                    missing.append("base_image")
+                if not context.space_type:
+                    missing.append("space_type")
+                if not context.inspiration_recommendations or len(context.inspiration_recommendations) == 0:
+                    missing.append("inspiration_recommendations")
+                raise ValueError(
+                    f"Project is not ready for inspiration-based redesign; missing: {', '.join(missing)}"
+                )
 
             if not self.gemini_client:
                 raise ValueError("Gemini client is not available")
@@ -1253,6 +1389,17 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
                             generated_image_base64 = base64_match.group(1)
 
             if not generated_image_base64:
+                # Log partial response for debugging (without large payloads)
+                try:
+                    self.logger.error(
+                        "Gemini did not return an image",
+                        extra={
+                            "project_id": project_id,
+                            "has_choices": bool(getattr(response, "choices", None)),
+                        },
+                    )
+                except Exception:
+                    pass
                 raise ValueError("No image generated by Gemini")
 
             # Update context with generated image

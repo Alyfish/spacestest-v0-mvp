@@ -49,6 +49,10 @@ export function ProjectDetails({
         text: "AI Image Generated",
         color: "text-purple-800",
       },
+      INSPIRATION_REDESIGN_COMPLETE: {
+        text: "Inspiration Redesign Generated",
+        color: "text-indigo-700",
+      },
     };
 
     return statusMap[status] || { text: status, color: "text-gray-600" };

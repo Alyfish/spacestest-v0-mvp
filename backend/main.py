@@ -30,6 +30,8 @@ from models import (
     ProjectSummary,
     SpaceTypeRequest,
     SpaceTypeResponse,
+    ClipSearchRequest,
+    ClipSearchResponse,
 )
 
 load_dotenv()
@@ -387,23 +389,53 @@ async def generate_inspiration_recommendations(project_id: str):
 )
 async def generate_inspiration_redesign(project_id: str):
     """Generate a redesigned room image based on inspiration recommendations"""
+    logger.info(
+        "API request: generate inspiration redesign",
+        extra={"project_id": project_id},
+    )
     project = data_manager.get_project(project_id)
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if project["status"] not in [
-        "INSPIRATION_RECOMMENDATIONS_READY",
-        "INSPIRATION_REDESIGN_COMPLETE",
-    ]:
+    # Check if project has inspiration recommendations (regardless of status)
+    context = ProjectContext.model_validate(project["context"])
+    has_inspiration_recs = (
+        context.inspiration_recommendations 
+        and len(context.inspiration_recommendations) > 0
+    )
+    
+    if not has_inspiration_recs:
+        logger.warning(
+            "Project has no inspiration recommendations",
+            extra={
+                "project_id": project_id,
+                "current_status": project["status"],
+                "has_inspiration_recs": False,
+            },
+        )
         raise HTTPException(
             status_code=400,
-            detail="Project is not ready for inspiration-based redesign",
+            detail="Project must have inspiration recommendations first. Upload inspiration images and generate recommendations.",
         )
 
     try:
+        logger.info(
+            "Starting inspiration redesign",
+            extra={
+                "project_id": project_id,
+                "current_status": project["status"],
+            },
+        )
         result = data_manager.generate_inspiration_redesign(project_id)
 
+        logger.info(
+            "Inspiration redesign generated successfully",
+            extra={
+                "project_id": project_id,
+                "image_len": len(result.get("generated_image_base64", "")),
+            },
+        )
         return InspirationImageGenerationResponse(
             project_id=project_id,
             generated_image_base64=result["generated_image_base64"],
@@ -413,8 +445,21 @@ async def generate_inspiration_redesign(project_id: str):
             message=result["message"],
         )
     except ValueError as e:
+        logger.error(
+            "Inspiration redesign failed: ValueError",
+            extra={"project_id": project_id, "error": str(e)},
+        )
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        import traceback
+        logger.error(
+            "Inspiration redesign failed: Unexpected error",
+            extra={
+                "project_id": project_id,
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            },
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate inspiration redesign: {str(e)}",
@@ -632,7 +677,7 @@ async def generate_product_visualization(project_id: str):
         return ImageGenerationResponse(
             project_id=project_id,
             selected_product=generation_result["selected_product"],
-            generated_image_url=generation_result["generated_image_url"],
+            generated_image_base64=generation_result["generated_image_base64"],
             generation_prompt=generation_result["generation_prompt"],
             status="success",
             message=generation_result["message"],
@@ -669,6 +714,33 @@ async def get_generated_image(project_id: str):
         media_type="image/png",
         filename=f"generated_visualization_{project_id}.png",
     )
+
+
+@app.post(
+    "/projects/{project_id}/clip-search",
+    response_model=ClipSearchResponse,
+)
+async def clip_search_products(project_id: str, req: ClipSearchRequest):
+    """Perform a product search based on a clipped region of the generated image."""
+    project = data_manager.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        search_result = data_manager.clip_search_products(project_id, req.rect)
+        return ClipSearchResponse(
+            project_id=project_id,
+            rect=req.rect,
+            search_query=search_result["search_query"],
+            products=search_result["products"],
+            total_found=search_result["total_found"],
+            status="success",
+            message=f"Found {search_result['total_found']} products for clipped region",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed clip-search: {str(e)}")
 
 
 if __name__ == "__main__":

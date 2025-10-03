@@ -522,3 +522,38 @@ class InspirationImageGenerationResponse(BaseModel):
     inspiration_recommendations: List[str]
     status: str
     message: str = "Inspiration-based image redesign completed successfully"
+
+
+class ClipRect(BaseModel):
+    """
+    Normalized rectangle describing a selection on an image.
+
+    Coordinates are normalized to the image dimensions (0-1 range).
+    """
+
+    x: float = Field(..., ge=0.0, le=1.0, description="Top-left X (0-1)")
+    y: float = Field(..., ge=0.0, le=1.0, description="Top-left Y (0-1)")
+    width: float = Field(..., ge=0.0, le=1.0, description="Width (0-1)")
+    height: float = Field(..., ge=0.0, le=1.0, description="Height (0-1)")
+
+
+class ClipSearchRequest(BaseModel):
+    """
+    Request model for clip-based product search on the generated image.
+    """
+
+    rect: ClipRect
+
+
+class ClipSearchResponse(BaseModel):
+    """
+    Response model for clip-based product search results.
+    """
+
+    project_id: str
+    rect: ClipRect
+    search_query: str
+    products: List[Dict[str, Any]]
+    total_found: int
+    status: str
+    message: str
