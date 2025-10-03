@@ -32,6 +32,7 @@ from models import (
     SpaceTypeResponse,
     ClipSearchRequest,
     ClipSearchResponse,
+    ClipAnalysisInfo,
 )
 
 load_dotenv()
@@ -727,7 +728,17 @@ async def clip_search_products(project_id: str, req: ClipSearchRequest):
         raise HTTPException(status_code=404, detail="Project not found")
 
     try:
-        search_result = data_manager.clip_search_products(project_id, req.rect)
+        search_result = data_manager.clip_search_products(
+            project_id, 
+            req.rect,
+            use_inspiration_image=req.use_inspiration_image or False
+        )
+        
+        # Construct CLIP analysis info if available
+        clip_analysis_info = None
+        if "clip_analysis" in search_result and search_result["clip_analysis"]:
+            clip_analysis_info = ClipAnalysisInfo(**search_result["clip_analysis"])
+        
         return ClipSearchResponse(
             project_id=project_id,
             rect=req.rect,
@@ -736,6 +747,8 @@ async def clip_search_products(project_id: str, req: ClipSearchRequest):
             total_found=search_result["total_found"],
             status="success",
             message=f"Found {search_result['total_found']} products for clipped region",
+            analysis_method=search_result.get("analysis_method", "vision"),
+            clip_analysis=clip_analysis_info,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

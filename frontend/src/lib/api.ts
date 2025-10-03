@@ -569,13 +569,15 @@ export const useClipSearch = () => {
     mutationFn: ({
       projectId,
       rect,
+      useInspirationImage = false,
     }: {
       projectId: string;
       rect: ClipRect;
+      useInspirationImage?: boolean;
     }) =>
       apiClient.post<ClipSearchResponse>(
         `/projects/${projectId}/clip-search`,
-        { rect }
+        { rect, use_inspiration_image: useInspirationImage }
       ),
     onSuccess: (data) => {
       // Refresh project to capture any future state effects if added

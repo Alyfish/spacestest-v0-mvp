@@ -52,6 +52,22 @@ class DataManager:
             self.logger.warning(f"Could not initialize Gemini client: {e}")
             self.gemini_client = None
 
+        # Initialize CLIP client for enhanced image-based search
+        try:
+            from clip_client import CLIPClient
+
+            self.clip_client = CLIPClient()
+            if self.clip_client.is_available():
+                self.logger.info(
+                    "Successfully initialized CLIP client for image-based search"
+                )
+            else:
+                self.logger.warning("CLIP client initialized but model not available")
+                self.clip_client = None
+        except Exception as e:
+            self.logger.warning(f"Could not initialize CLIP client: {e}")
+            self.clip_client = None
+
     def _ensure_data_file_exists(self):
         """Create the data file if it doesn't exist"""
         DATA_FILE.parent.mkdir(exist_ok=True)
@@ -922,7 +938,7 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             raise
 
     @log_api_call("clip_search_products")
-    def clip_search_products(self, project_id: str, rect: ClipRect) -> dict:
+    def clip_search_products(self, project_id: str, rect: ClipRect, use_inspiration_image: bool = False) -> dict:
         """Crop the generated image by a normalized rect, describe it, and search matching products.
 
         The flow:
@@ -940,8 +956,15 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             project = projects[project_id]
             context = ProjectContext.model_validate(project["context"])
 
-            if not context.generated_image_base64:
-                raise ValueError("No generated image available to clip-search")
+            # Choose which image to use for clip-search
+            if use_inspiration_image:
+                image_base64 = context.inspiration_generated_image_base64
+                if not image_base64:
+                    raise ValueError("No inspiration redesign image available to clip-search")
+            else:
+                image_base64 = context.generated_image_base64
+                if not image_base64:
+                    raise ValueError("No generated image available to clip-search")
 
             if not self.serp_client:
                 raise ValueError("SERP client not available - please check SERP_API_KEY")
@@ -951,7 +974,7 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             from io import BytesIO
             from PIL import Image
 
-            image_bytes = base64.b64decode(context.generated_image_base64)
+            image_bytes = base64.b64decode(image_base64)
             image = Image.open(BytesIO(image_bytes)).convert("RGB")
             width, height = image.size
 
@@ -979,30 +1002,52 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             crop_path = temp_dir / f"clip_{left}_{top}_{right}_{bottom}.png"
             crop.save(crop_path)
 
-            # Use vision to propose a tight search query
-            from pydantic import BaseModel
+            # Try CLIP-based analysis first for enhanced accuracy
+            search_query = None
+            clip_analysis = None
+            
+            if self.clip_client and self.clip_client.is_available():
+                try:
+                    self.logger.info("Using CLIP for enhanced furniture detection")
+                    clip_analysis = self.clip_client.analyze_furniture_region(crop)
+                    
+                    if "search_query" in clip_analysis and not clip_analysis.get("error"):
+                        search_query = clip_analysis["search_query"]
+                        self.logger.info(
+                            f"CLIP analysis successful: {search_query}",
+                            extra={
+                                "furniture_type": clip_analysis.get("furniture_type", {}).get("name"),
+                                "confidence": clip_analysis.get("furniture_type", {}).get("confidence"),
+                            }
+                        )
+                except Exception as e:
+                    self.logger.warning(f"CLIP analysis failed, falling back to vision: {e}")
+            
+            # Fall back to OpenAI vision if CLIP not available or failed
+            if not search_query:
+                from pydantic import BaseModel
 
-            class ClipQuery(BaseModel):
-                query: str
+                class ClipQuery(BaseModel):
+                    query: str
 
-            prompt = (
-                "You are an assistant generating concise shopping search queries from a product photo.\n"
-                "Given the clipped image region from an interior design visualization, output a 3-8 word query\n"
-                "that a user would type into furniture e-commerce sites to find this product (include style, color,\n"
-                "material when visible). Return only the query text."
-            )
-
-            try:
-                clip_query = self.openai_client.analyze_image_with_vision(
-                    prompt=prompt,
-                    pydantic_model=ClipQuery,
-                    image_path=str(crop_path),
-                    model="gpt-4o-mini",  # vision-capable
+                prompt = (
+                    "You are an assistant generating concise shopping search queries from a product photo.\n"
+                    "Given the clipped image region from an interior design visualization, output a 3-8 word query\n"
+                    "that a user would type into furniture e-commerce sites to find this product (include style, color,\n"
+                    "material when visible). Return only the query text."
                 )
-                search_query = clip_query.query.strip()
-            except Exception as e:
-                self.logger.warning(f"Vision query generation failed, falling back: {e}")
-                search_query = context.selected_product["title"] if context.selected_product else (context.selected_product_recommendation or "furniture")
+
+                try:
+                    clip_query = self.openai_client.analyze_image_with_vision(
+                        prompt=prompt,
+                        pydantic_model=ClipQuery,
+                        image_path=str(crop_path),
+                        model="gpt-4o-mini",  # vision-capable
+                    )
+                    search_query = clip_query.query.strip()
+                except Exception as e:
+                    self.logger.warning(f"Vision query generation failed, falling back: {e}")
+                    search_query = context.selected_product["title"] if context.selected_product else (context.selected_product_recommendation or "furniture")
 
             # Execute SERP product search
             products = self.serp_client.search_and_analyze_products(
@@ -1018,7 +1063,18 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                 "search_query": search_query,
                 "products": products,
                 "total_found": len(products),
+                "analysis_method": "clip" if clip_analysis else "vision",
             }
+            
+            # Add CLIP analysis details if available
+            if clip_analysis and not clip_analysis.get("error"):
+                result["clip_analysis"] = {
+                    "furniture_type": clip_analysis.get("furniture_type", {}).get("name"),
+                    "furniture_confidence": clip_analysis.get("furniture_type", {}).get("confidence"),
+                    "style": clip_analysis.get("style", {}).get("name"),
+                    "material": clip_analysis.get("material", {}).get("name"),
+                    "color": clip_analysis.get("color", {}).get("name"),
+                }
 
             log_user_action(
                 "clip_product_search_completed",

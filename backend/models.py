@@ -543,6 +543,21 @@ class ClipSearchRequest(BaseModel):
     """
 
     rect: ClipRect
+    use_inspiration_image: Optional[bool] = Field(
+        default=False,
+        description="If true, use inspiration redesign image instead of product visualization"
+    )
+
+
+class ClipAnalysisInfo(BaseModel):
+    """
+    CLIP analysis information for a searched region.
+    """
+    furniture_type: Optional[str] = None
+    furniture_confidence: Optional[float] = None
+    style: Optional[str] = None
+    material: Optional[str] = None
+    color: Optional[str] = None
 
 
 class ClipSearchResponse(BaseModel):
@@ -557,3 +572,9 @@ class ClipSearchResponse(BaseModel):
     total_found: int
     status: str
     message: str
+    analysis_method: Optional[str] = Field(
+        default="vision", description="Method used for analysis: 'clip' or 'vision'"
+    )
+    clip_analysis: Optional[ClipAnalysisInfo] = Field(
+        default=None, description="CLIP-based analysis results if available"
+    )
