@@ -560,6 +560,53 @@ class ClipAnalysisInfo(BaseModel):
     color: Optional[str] = None
 
 
+class FurnitureSelection(BaseModel):
+    """
+    Represents a single furniture selection on an image.
+    """
+    id: str
+    x: float = Field(..., ge=0.0, le=1.0, description="X coordinate (0-1 range)")
+    y: float = Field(..., ge=0.0, le=1.0, description="Y coordinate (0-1 range)")
+    label: Optional[str] = None
+
+
+class BatchFurnitureAnalysisRequest(BaseModel):
+    """
+    Request model for batch furniture analysis.
+    """
+    selections: List[FurnitureSelection]
+    image_type: str = Field(
+        default="product", 
+        description="Type of image: 'product' or 'inspiration'"
+    )
+
+
+class FurnitureAnalysisItem(BaseModel):
+    """
+    Analysis result for a single furniture item.
+    """
+    id: str
+    furniture_type: str
+    confidence: float
+    style: str
+    material: str
+    color: str
+    search_query: str
+    products: List[Dict[str, Any]]
+
+
+class BatchFurnitureAnalysisResponse(BaseModel):
+    """
+    Response model for batch furniture analysis.
+    """
+    project_id: str
+    selections: List[FurnitureAnalysisItem]
+    overall_analysis: str
+    total_items: int
+    status: str
+    message: str
+
+
 class ClipSearchResponse(BaseModel):
     """
     Response model for clip-based product search results.

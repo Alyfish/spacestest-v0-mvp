@@ -33,6 +33,9 @@ from models import (
     ClipSearchRequest,
     ClipSearchResponse,
     ClipAnalysisInfo,
+    BatchFurnitureAnalysisRequest,
+    BatchFurnitureAnalysisResponse,
+    FurnitureAnalysisItem,
 )
 
 load_dotenv()
@@ -754,6 +757,39 @@ async def clip_search_products(project_id: str, req: ClipSearchRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed clip-search: {str(e)}")
+
+
+@app.post(
+    "/projects/{project_id}/analyze-furniture-batch",
+    response_model=BatchFurnitureAnalysisResponse,
+)
+async def analyze_furniture_batch(project_id: str, req: BatchFurnitureAnalysisRequest):
+    """Analyze multiple furniture items in a batch using CLIP and AI."""
+    project = data_manager.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        # Call data manager to analyze all selections
+        analysis_results = data_manager.analyze_furniture_batch(
+            project_id,
+            req.selections,
+            image_type=req.image_type
+        )
+        
+        return BatchFurnitureAnalysisResponse(
+            project_id=project_id,
+            selections=analysis_results["selections"],
+            overall_analysis=analysis_results.get("overall_analysis", ""),
+            total_items=len(analysis_results["selections"]),
+            status="success",
+            message=f"Analyzed {len(analysis_results['selections'])} furniture items"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to analyze furniture batch: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze furniture: {str(e)}")
 
 
 if __name__ == "__main__":

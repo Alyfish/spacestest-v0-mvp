@@ -1493,6 +1493,198 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
             log_external_api_call("gemini", "inspiration_redesign", 0, False)
             raise
 
+    @log_api_call("analyze_furniture_batch")
+    def analyze_furniture_batch(
+        self, 
+        project_id: str, 
+        selections: List,
+        image_type: str = "product"
+    ) -> Dict[str, Any]:
+        """
+        Analyze multiple furniture selections in a batch using CLIP.
+        
+        Args:
+            project_id: Project ID
+            selections: List of furniture selections with x,y coordinates
+            image_type: Type of image ("product" or "inspiration")
+            
+        Returns:
+            Analysis results for all selections
+        """
+        try:
+            projects = self._load_projects()
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+            
+            project = projects[project_id]
+            context = ProjectContext.model_validate(project["context"])
+            
+            # Get the appropriate image based on type
+            if image_type == "inspiration":
+                image_base64 = context.inspiration_generated_image_base64
+                if not image_base64:
+                    raise ValueError("No inspiration redesign image available")
+            else:
+                image_base64 = context.generated_image_base64
+                if not image_base64:
+                    raise ValueError("No product visualization available")
+            
+            # Decode base64 image
+            import base64
+            from io import BytesIO
+            from PIL import Image
+            
+            image_bytes = base64.b64decode(image_base64)
+            image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            width, height = image.size
+            
+            # Analyze each selection
+            analysis_results = []
+            
+            for selection in selections:
+                try:
+                    # Extract a region around the selection point
+                    # Create a box around the click point (10% of image size)
+                    box_size = 0.1
+                    x = selection.x if hasattr(selection, 'x') else selection.get('x', 0.5)
+                    y = selection.y if hasattr(selection, 'y') else selection.get('y', 0.5)
+                    
+                    # Calculate crop box
+                    left = max(0, int((x - box_size/2) * width))
+                    top = max(0, int((y - box_size/2) * height))
+                    right = min(width, int((x + box_size/2) * width))
+                    bottom = min(height, int((y + box_size/2) * height))
+                    
+                    # Crop the region
+                    crop = image.crop((left, top, right, bottom))
+                    
+                    # Save crop temporarily
+                    temp_dir = DATA_FILE.parent / "images" / project_id
+                    temp_dir.mkdir(parents=True, exist_ok=True)
+                    selection_id = selection.id if hasattr(selection, 'id') else selection.get('id', 'unknown')
+                    crop_path = temp_dir / f"selection_{selection_id}.png"
+                    crop.save(crop_path)
+                    
+                    # Analyze with CLIP if available
+                    analysis = None
+                    search_query = ""
+                    
+                    if self.clip_client and self.clip_client.is_available():
+                        try:
+                            self.logger.info(f"Using CLIP for selection {selection_id}")
+                            clip_analysis = self.clip_client.analyze_furniture_region(crop)
+                            
+                            if "search_query" in clip_analysis and not clip_analysis.get("error"):
+                                analysis = clip_analysis
+                                search_query = clip_analysis["search_query"]
+                        except Exception as e:
+                            self.logger.warning(f"CLIP analysis failed for selection {selection_id}: {e}")
+                    
+                    # Fallback to vision API if CLIP failed
+                    if not analysis:
+                        from pydantic import BaseModel
+
+                        class FurnitureQuery(BaseModel):
+                            furniture_type: str
+                            style: str
+                            material: str
+                            color: str
+                            search_query: str
+
+                        prompt = (
+                            "Analyze this furniture item and provide:\n"
+                            "1. The type of furniture (e.g., sofa, chair, table)\n"
+                            "2. The style (e.g., modern, traditional)\n"
+                            "3. The primary material\n"
+                            "4. The primary color\n"
+                            "5. A concise 3-5 word search query for shopping"
+                        )
+
+                        try:
+                            result = self.openai_client.analyze_image_with_vision(
+                                prompt=prompt,
+                                pydantic_model=FurnitureQuery,
+                                image_path=str(crop_path),
+                                model="gpt-4o-mini",
+                            )
+                            analysis = {
+                                "furniture_type": {"name": result.furniture_type, "confidence": 0.8},
+                                "style": {"name": result.style},
+                                "material": {"name": result.material},
+                                "color": {"name": result.color},
+                                "search_query": result.search_query
+                            }
+                            search_query = result.search_query
+                        except Exception as e:
+                            self.logger.warning(f"Vision analysis failed for selection {selection_id}: {e}")
+                            search_query = "furniture"
+                            analysis = {
+                                "furniture_type": {"name": "furniture", "confidence": 0.5},
+                                "style": {"name": "unknown"},
+                                "material": {"name": "unknown"},
+                                "color": {"name": "unknown"},
+                                "search_query": search_query
+                            }
+                    
+                    # Search for products using the query
+                    products = []
+                    if self.serp_client and search_query:
+                        try:
+                            products = self.serp_client.search_and_analyze_products(
+                                query=search_query,
+                                space_type=context.space_type or "general",
+                                num_results=6,
+                            )
+                            for product in products:
+                                product["source_api"] = "serp"
+                        except Exception as e:
+                            self.logger.warning(f"Product search failed for {search_query}: {e}")
+                    
+                    # Build result for this selection
+                    result_item = {
+                        "id": selection_id,
+                        "furniture_type": analysis.get("furniture_type", {}).get("name", "unknown"),
+                        "confidence": analysis.get("furniture_type", {}).get("confidence", 0.5),
+                        "style": analysis.get("style", {}).get("name", "unknown"),
+                        "material": analysis.get("material", {}).get("name", "unknown"),
+                        "color": analysis.get("color", {}).get("name", "unknown"),
+                        "search_query": search_query,
+                        "products": products[:5]  # Limit to 5 products per item
+                    }
+                    
+                    analysis_results.append(result_item)
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to analyze selection {selection_id}: {e}")
+                    # Add a default result for failed selections
+                    analysis_results.append({
+                        "id": selection_id if 'selection_id' in locals() else "unknown",
+                        "furniture_type": "unknown",
+                        "confidence": 0,
+                        "style": "unknown",
+                        "material": "unknown",
+                        "color": "unknown",
+                        "search_query": "",
+                        "products": []
+                    })
+            
+            # Generate overall analysis
+            overall_analysis = f"Analyzed {len(analysis_results)} furniture items in your {context.space_type or 'room'}. "
+            if analysis_results:
+                types = [r["furniture_type"] for r in analysis_results if r["furniture_type"] != "unknown"]
+                if types:
+                    overall_analysis += f"Found: {', '.join(types)}."
+            
+            return {
+                "selections": analysis_results,
+                "overall_analysis": overall_analysis,
+                "total_items": len(analysis_results)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to analyze furniture batch: {e}")
+            raise
+
     def _generate_search_query(self, context: ProjectContext) -> str:
         """Generate an optimized search query based on the project context and selected recommendation"""
         try:
