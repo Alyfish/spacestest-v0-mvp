@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 
 from fastapi import UploadFile
 from logger_config import (
@@ -1683,6 +1683,98 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
             
         except Exception as e:
             self.logger.error(f"Failed to analyze furniture batch: {e}")
+            raise
+
+    @log_api_call("reverse_search_batch")
+    def reverse_search_batch(
+        self,
+        project_id: str,
+        selections: List,
+        image_type: str = "product",
+    ) -> Dict[str, Any]:
+        """Perform Google Lens reverse image search for each selection via SerpAPI.
+
+        Steps:
+        - Extract small crop around each selection
+        - Upload crop to temporary file (local)
+        - Optionally upload to imgbb-like service (skipped here); use local URL fallback
+        - Call SerpAPI with engine=google_lens and url=<public or local url>
+        - Return top matches per selection
+        """
+        try:
+            projects = self._load_projects()
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            project = projects[project_id]
+            context = ProjectContext.model_validate(project["context"])
+
+            # Choose source image
+            if image_type == "inspiration":
+                image_base64 = context.inspiration_generated_image_base64
+            else:
+                image_base64 = context.generated_image_base64
+
+            if not image_base64:
+                raise ValueError("No image available for reverse search")
+
+            # Decode base64
+            import base64
+            from io import BytesIO
+            from PIL import Image
+
+            image_bytes = base64.b64decode(image_base64)
+            image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            width, height = image.size
+
+            results = []
+            for sel in selections:
+                # Crop 12% box around click
+                box_size = 0.12
+                x = sel.x if hasattr(sel, 'x') else sel.get('x', 0.5)
+                y = sel.y if hasattr(sel, 'y') else sel.get('y', 0.5)
+                left = max(0, int((x - box_size/2) * width))
+                top = max(0, int((y - box_size/2) * height))
+                right = min(width, int((x + box_size/2) * width))
+                bottom = min(height, int((y + box_size/2) * height))
+                crop = image.crop((left, top, right, bottom))
+
+                # Save temporary crop
+                temp_dir = DATA_FILE.parent / "images" / project_id / "reverse"
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                sel_id = sel.id if hasattr(sel, 'id') else sel.get('id', 'sel')
+                crop_path = temp_dir / f"lens_{sel_id}.png"
+                crop.save(crop_path)
+
+                # Prepare SerpAPI Google Lens call
+                matches = []
+                if self.serp_client:
+                    try:
+                        # Reuse serp_client but switch engine inside client method
+                        from serp_client import SerpClient
+                        serp = self.serp_client  # already configured
+                        serp_results = serp.reverse_image_search_google_lens(str(crop_path))
+                        # Normalize
+                        for m in serp_results[:10]:
+                            matches.append({
+                                "title": m.get("title"),
+                                "url": m.get("link") or m.get("product_link") or m.get("source") or None,
+                                "source": m.get("source"),
+                                "thumbnail": m.get("thumbnail"),
+                            })
+                    except Exception as e:
+                        self.logger.warning(f"Reverse search failed for {sel_id}: {e}")
+
+                results.append({
+                    "id": sel_id,
+                    "image_url": None,  # Could integrate imgbb for public URL
+                    "matches": matches,
+                })
+
+            return {"results": results}
+
+        except Exception as e:
+            self.logger.error(f"Failed reverse_search_batch: {e}")
             raise
 
     def _generate_search_query(self, context: ProjectContext) -> str:

@@ -36,6 +36,8 @@ from models import (
     BatchFurnitureAnalysisRequest,
     BatchFurnitureAnalysisResponse,
     FurnitureAnalysisItem,
+    ReverseSearchBatchRequest,
+    ReverseSearchBatchResponse,
 )
 
 load_dotenv()
@@ -790,6 +792,36 @@ async def analyze_furniture_batch(project_id: str, req: BatchFurnitureAnalysisRe
     except Exception as e:
         logger.error(f"Failed to analyze furniture batch: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze furniture: {str(e)}")
+
+
+@app.post(
+    "/projects/{project_id}/reverse-search-batch",
+    response_model=ReverseSearchBatchResponse,
+)
+async def reverse_search_batch(project_id: str, req: ReverseSearchBatchRequest):
+    """Perform Google Lens reverse image search on multiple selections."""
+    project = data_manager.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        result = data_manager.reverse_search_batch(
+            project_id,
+            req.selections,
+            image_type=req.image_type,
+        )
+        return ReverseSearchBatchResponse(
+            project_id=project_id,
+            results=result["results"],
+            total_items=len(result["results"]),
+            status="success",
+            message=f"Reverse searched {len(result['results'])} items",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed reverse-search-batch: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed reverse-search: {str(e)}")
 
 
 if __name__ == "__main__":

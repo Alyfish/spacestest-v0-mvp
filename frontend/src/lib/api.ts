@@ -15,7 +15,7 @@ export const getProjectGeneratedImageUrl = (projectId: string) =>
   `${API_BASE_URL}/projects/${projectId}/generated-image`;
 
 // API client functions
-const apiClient = {
+export const apiClient = {
   async get<T>(endpoint: string): Promise<T> {
     const response = await fetch(`${API_BASE_URL}${endpoint}`);
     if (!response.ok) {

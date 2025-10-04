@@ -607,6 +607,41 @@ class BatchFurnitureAnalysisResponse(BaseModel):
     message: str
 
 
+class ReverseSearchBatchRequest(BaseModel):
+    """
+    Request model for reverse image search on multiple selections.
+    """
+    selections: List[FurnitureSelection]
+    image_type: str = Field(
+        default="product",
+        description="Type of image: 'product' or 'inspiration'",
+    )
+
+
+class ReverseSearchMatch(BaseModel):
+    """
+    A single match returned by Google Lens via SerpAPI.
+    """
+    title: Optional[str] = None
+    url: Optional[str] = None
+    source: Optional[str] = None
+    thumbnail: Optional[str] = None
+
+
+class ReverseSearchItemResult(BaseModel):
+    id: str
+    image_url: Optional[str] = None
+    matches: List[ReverseSearchMatch]
+
+
+class ReverseSearchBatchResponse(BaseModel):
+    project_id: str
+    results: List[ReverseSearchItemResult]
+    total_items: int
+    status: str
+    message: str
+
+
 class ClipSearchResponse(BaseModel):
     """
     Response model for clip-based product search results.
