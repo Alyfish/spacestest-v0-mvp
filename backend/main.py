@@ -38,6 +38,10 @@ from models import (
     FurnitureAnalysisItem,
     ReverseSearchBatchRequest,
     ReverseSearchBatchResponse,
+    AffiliateCartRequest,
+    AffiliateCartResponse,
+    AffiliateProduct,
+    RetailerCart,
 )
 
 load_dotenv()
@@ -851,6 +855,75 @@ async def replicate_segment(project_id: str, image_type: str = "product", image_
     except Exception as e:
         logger.error(f"Replicate segment failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Replicate segment failed: {str(e)}")
+
+
+# ============================================================================
+# Affiliate Cart Endpoints
+# ============================================================================
+
+
+@app.post("/affiliate/generate-cart", response_model=AffiliateCartResponse)
+async def generate_affiliate_cart(request: AffiliateCartRequest):
+    """
+    Generate affiliate cart from product URLs.
+    Groups products by retailer and creates cart URLs.
+    """
+    logger.info(f"API request: generate affiliate cart for {len(request.product_urls)} URLs")
+    
+    try:
+        from affiliate_client import AffiliateClient
+        
+        affiliate_client = AffiliateClient()
+        
+        # Process URLs and group by retailer
+        grouped_products = affiliate_client.process_urls(request.product_urls)
+        
+        # Build response with retailer carts
+        carts = []
+        total_products = 0
+        
+        for retailer, products in grouped_products.items():
+            # Convert to AffiliateProduct models
+            affiliate_products = [
+                AffiliateProduct(
+                    original_url=p["original_url"],
+                    affiliate_url=p["affiliate_url"],
+                    product_id=p["product_id"],
+                )
+                for p in products
+            ]
+            
+            # Generate cart URL for all products from this retailer
+            product_ids = [p["product_id"] for p in products if p["product_id"] != "unknown"]
+            cart_url = affiliate_client.generate_cart_url(retailer, product_ids)
+            
+            # Create retailer cart
+            retailer_cart = RetailerCart(
+                retailer=retailer,
+                retailer_display_name=affiliate_client.get_retailer_display_name(retailer),
+                products=affiliate_products,
+                cart_url=cart_url,
+                product_count=len(affiliate_products),
+            )
+            
+            carts.append(retailer_cart)
+            total_products += len(affiliate_products)
+        
+        logger.info(f"Generated {len(carts)} retailer carts with {total_products} total products")
+        
+        return AffiliateCartResponse(
+            carts=carts,
+            total_products=total_products,
+            total_retailers=len(carts),
+            status="success",
+            message=f"Generated {len(carts)} affiliate cart(s) with {total_products} product(s)",
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to generate affiliate cart: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to generate affiliate cart: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

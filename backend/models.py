@@ -718,3 +718,49 @@ class ClipSearchResponse(BaseModel):
     clip_analysis: Optional[ClipAnalysisInfo] = Field(
         default=None, description="CLIP-based analysis results if available"
     )
+
+
+# ============================================================================
+# Affiliate Cart Models
+# ============================================================================
+
+
+class AffiliateCartRequest(BaseModel):
+    """
+    Request model for generating affiliate cart from product URLs.
+    """
+    product_urls: List[str] = Field(
+        ..., description="List of product URLs to convert to affiliate links"
+    )
+
+
+class AffiliateProduct(BaseModel):
+    """
+    Model for a single product with affiliate link.
+    """
+    original_url: str = Field(..., description="Original product URL")
+    affiliate_url: str = Field(..., description="Affiliate version of the URL")
+    product_id: str = Field(..., description="Extracted product ID")
+    product_name: Optional[str] = Field(None, description="Product name if available")
+
+
+class RetailerCart(BaseModel):
+    """
+    Model for a retailer-specific cart with multiple products.
+    """
+    retailer: str = Field(..., description="Retailer identifier (e.g., 'amazon', 'ikea')")
+    retailer_display_name: str = Field(..., description="Display name for the retailer")
+    products: List[AffiliateProduct] = Field(..., description="List of products from this retailer")
+    cart_url: str = Field(..., description="Single URL to add all products to cart")
+    product_count: int = Field(..., description="Number of products in this cart")
+
+
+class AffiliateCartResponse(BaseModel):
+    """
+    Response model for affiliate cart generation.
+    """
+    carts: List[RetailerCart] = Field(..., description="List of retailer-specific carts")
+    total_products: int = Field(..., description="Total number of products processed")
+    total_retailers: int = Field(..., description="Number of different retailers")
+    status: str = Field(default="success", description="Status of the operation")
+    message: str = Field(default="Affiliate carts generated successfully")

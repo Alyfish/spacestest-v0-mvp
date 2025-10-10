@@ -20,6 +20,16 @@ export default function Home() {
           <p className="text-lg text-gray-600 dark:text-gray-300">
             Intelligent design recommendations for your space
           </p>
+          
+          {/* Quick Links */}
+          <div className="mt-6 flex justify-center gap-4">
+            <a
+              href="/affiliate-cart"
+              className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors shadow-md"
+            >
+              🛒 Affiliate Cart Generator
+            </a>
+          </div>
         </header>
 
         <main className="max-w-4xl mx-auto">
