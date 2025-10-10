@@ -1,7 +1,9 @@
 "use client";
 
 import { useSearchProducts, useSelectProduct } from "@/lib/api";
-import { useState } from "react";
+import React, { useState } from "react";
+import ColorSchemeSelector from "./ColorSchemeSelector";
+import { StyleSelector } from "./StyleSelector";
 
 interface Product {
   url: string;
@@ -46,6 +48,15 @@ export function ProductSearchResults({
     number | null
   >(null);
   const [generationPrompt, setGenerationPrompt] = useState("");
+  const [showColorSelector, setShowColorSelector] = useState(false);
+  const [showStyleSelector, setShowStyleSelector] = useState(false);
+  const [pendingProductIndex, setPendingProductIndex] = useState<number | null>(null);
+  const [selectedColorScheme, setSelectedColorScheme] = useState<any>(null);
+
+  // Debug logging for pendingProductIndex changes
+  React.useEffect(() => {
+    console.log("🔄 pendingProductIndex changed to:", pendingProductIndex);
+  }, [pendingProductIndex]);
 
   const handleSearchProducts = () => {
     searchMutation.mutate(projectId);
@@ -58,23 +69,64 @@ export function ProductSearchResults({
       return;
     }
 
+    // Show color selector first
+    setPendingProductIndex(productIndex);
+    setShowColorSelector(true);
+  };
+
+  const handleColorSchemeConfirm = (colorPalette: any) => {
+    // Save color scheme and move to style selection
+    setSelectedColorScheme(colorPalette);
+    setShowColorSelector(false);
+    setShowStyleSelector(true);
+  };
+
+  const handleStyleConfirm = (style: any) => {
+    console.log("🎨 handleStyleConfirm called with:", style);
+    console.log("📦 pendingProductIndex:", pendingProductIndex);
+    
+    if (pendingProductIndex === null) {
+      console.error("❌ pendingProductIndex is null!");
+      return;
+    }
+    
+    const product = products[pendingProductIndex];
+    console.log("🛍️ Selected product:", product.title);
+    
     const productSelection = {
       product_url: product.url,
       product_title: product.title,
       product_image_url: product.images[0], // Use first image
       generation_prompt: generationPrompt || undefined,
+      color_scheme: selectedColorScheme ? {
+        palette_name: selectedColorScheme.name,
+        colors: selectedColorScheme.colors,
+        keep_original: false
+      } : null,
+      design_style: style ? {
+        style_name: style.style_name,
+        keep_original: style.keep_original || false
+      } : null,
     };
+    
+    console.log("📤 Sending productSelection:", productSelection);
 
     selectProductMutation.mutate(
       { projectId, productSelection },
       {
         onSuccess: () => {
-          setSelectedProductIndex(productIndex);
+          setSelectedProductIndex(pendingProductIndex);
           setGenerationPrompt("");
+          setPendingProductIndex(null);
+          setShowStyleSelector(false);
+          setSelectedColorScheme(null);
         },
         onError: (error) => {
           console.error("Failed to select product:", error);
           alert("Failed to select product. Please try again.");
+          setPendingProductIndex(null);
+          setShowStyleSelector(false);
+          setSelectedColorScheme(null);
         },
       }
     );
@@ -486,13 +538,35 @@ export function ProductSearchResults({
       </div>
 
       {products.length > 0 && (
-        <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+        <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">                                        
           <p className="text-blue-800 dark:text-blue-200 text-sm">
             💡 <strong>Tip:</strong> Products are sorted by relevance to your
             project. Click "View Product" to see full details and purchase
             options on the retailer's website.
           </p>
         </div>
+      )}
+
+      {/* Color Scheme Selector Modal */}
+      <ColorSchemeSelector
+        isOpen={showColorSelector}
+        onClose={() => {
+          setShowColorSelector(false);
+          setPendingProductIndex(null);
+        }}
+        onConfirm={handleColorSchemeConfirm}
+      />
+
+      {/* Style Selector Modal */}
+      {showStyleSelector && (
+        <StyleSelector
+          onClose={() => {
+            setShowStyleSelector(false);
+            setPendingProductIndex(null);
+            setSelectedColorScheme(null);
+          }}
+          onConfirm={handleStyleConfirm}
+        />
       )}
     </div>
   );

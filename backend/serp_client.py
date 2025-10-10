@@ -264,6 +264,52 @@ class SerpClient:
             print(f"Error in reverse_image_search_google_lens: {e}")
             return []
 
+    def reverse_image_search_google_lens_url(self, image_url: str) -> List[Dict[str, Any]]:
+        """Perform Google Lens reverse image search via SerpAPI using a public URL.
+
+        Args:
+            image_url: Publicly accessible image URL
+
+        Returns:
+            List of match dicts (title, link/product_link, source, thumbnail)
+        """
+        try:
+            params = {
+                "engine": "google_lens",
+                "url": image_url,
+                "api_key": self.api_key,
+            }
+            search = GoogleSearch(params)
+            result = search.get_dict()
+
+            matches: List[Dict[str, Any]] = []
+            for m in result.get("visual_matches", []) or []:
+                matches.append(
+                    {
+                        "title": m.get("title"),
+                        "link": m.get("link"),
+                        "product_link": m.get("product_link") or m.get("link"),
+                        "source": m.get("source"),
+                        "thumbnail": m.get("thumbnail"),
+                    }
+                )
+
+            if not matches:
+                for m in result.get("inline_images", [])[:10]:
+                    matches.append(
+                        {
+                            "title": m.get("title"),
+                            "link": m.get("link"),
+                            "source": m.get("source"),
+                            "thumbnail": m.get("thumbnail"),
+                        }
+                    )
+
+            return matches
+        except Exception as e:
+            print(f"Error in reverse_image_search_google_lens_url: {e}")
+            return []
+
     def _extract_retailer_url(self, shopping_result: Dict[str, Any]) -> str:
         """Extract the direct retailer URL instead of Google Shopping intermediate page"""
 

@@ -1,5 +1,7 @@
+from __future__ import annotations
 import json
 import logging
+import os
 import shutil
 import time
 import uuid
@@ -17,6 +19,8 @@ from logger_config import (
 from models import ImprovementMarker, ProjectContext, ClipRect
 from openai_client import OpenAIClient
 from serp_client import SerpClient
+from exa_client import ExaClient
+from claude_client import claude_client
 
 DATA_FILE = Path("data/projects.json")
 IMAGES_DIR = Path("data/images")
@@ -36,9 +40,14 @@ class DataManager:
         except Exception as e:
             self.logger.warning(f"Could not initialize SERP client: {e}")
             self.serp_client = None
-
-        # Exa client disabled - it doesn't work, gets CAPTCHA pages
-        self.exa_client = None
+        
+        # Initialize Exa client for enhanced product search
+        try:
+            self.exa_client = ExaClient()
+            self.logger.info("Successfully initialized Exa client")
+        except Exception as e:
+            self.logger.warning(f"Exa client not available: {e}")
+            self.exa_client = None
 
         # Initialize Gemini client for image generation
         try:
@@ -1099,6 +1108,8 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
         product_title: str,
         product_image_url: str,
         generation_prompt: str = None,
+        color_scheme: Dict[str, Any] = None,
+        design_style: Dict[str, Any] = None,
     ):
         """Select a product for image generation and save to project context"""
         try:
@@ -1152,6 +1163,16 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             print("📝 Updating context with selected product...")
             context.selected_product = selected_product
             context.generation_prompt = generation_prompt
+            
+            # Save color scheme if provided
+            if color_scheme:
+                print(f"🎨 Saving color scheme: {color_scheme.get('palette_name', 'Custom')}")
+                context.color_scheme = color_scheme
+            
+            # Save design style if provided
+            if design_style:
+                print(f"🏛️ Saving design style: {design_style.get('style_name', 'Custom')}")
+                context.design_style = design_style
 
             print("💾 Saving project context...")
             # Save context
@@ -1255,6 +1276,8 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                     marker_locations=context.improvement_markers or [],
                     custom_prompt=custom_prompt,
                     project_data_dir=project_dir,
+                    color_scheme=getattr(context, 'color_scheme', None),
+                    design_style=getattr(context, 'design_style', None),
                 )
             )
 
@@ -1626,19 +1649,149 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
                                 "search_query": search_query
                             }
                     
-                    # Search for products using the query
+                    # Step 1: Use CLIP analysis to get search query
+                    # Step 2: Perform Google Lens reverse image search with the cropped image
+                    # Step 3: Enhance results with Claude + Exa AI
                     products = []
-                    if self.serp_client and search_query:
+                    
+                    # First, try Google Lens reverse image search with the cropped image
+                    reverse_search_results = []
+                    if self.serp_client:
                         try:
-                            products = self.serp_client.search_and_analyze_products(
-                                query=search_query,
-                                space_type=context.space_type or "general",
-                                num_results=6,
-                            )
-                            for product in products:
-                                product["source_api"] = "serp"
+                            # Save crop as temporary file for Google Lens
+                            import io
+                            crop_buffer = io.BytesIO()
+                            crop.save(crop_buffer, format='PNG')
+                            crop_bytes = crop_buffer.getvalue()
+                            crop_base64 = base64.b64encode(crop_bytes).decode('utf-8')
+                            
+                            # Try to upload to ImgBB to get public URL (required for Google Lens)
+                            public_url = self.upload_image_to_imgbb(crop_base64)
+                            
+                            if public_url:
+                                # Use Google Lens reverse image search
+                                self.logger.info(f"🔍 Using Google Lens for selection {selection_id}")
+                                lens_results = self.serp_client.reverse_image_search_google_lens_url(public_url)
+                                
+                                # Convert Google Lens results to product format
+                                for lens_match in lens_results[:8]:
+                                    reverse_search_results.append({
+                                        "title": lens_match.get("title", "Unknown Product"),
+                                        "url": lens_match.get("product_link") or lens_match.get("link", ""),
+                                        "source": lens_match.get("source", "Unknown"),
+                                        "thumbnail": lens_match.get("thumbnail", ""),
+                                        "images": [lens_match.get("thumbnail")] if lens_match.get("thumbnail") else [],
+                                        "price_str": "Price not available",
+                                        "price": None,
+                                        "description": lens_match.get("title", ""),
+                                        "store": lens_match.get("source", "Unknown"),
+                                        "source_api": "google_lens",
+                                    })
+                                
+                                self.logger.info(f"✅ Google Lens found {len(reverse_search_results)} results for selection {selection_id}")
+                            else:
+                                # Fallback: Use Google Shopping with CLIP search query
+                                self.logger.info(f"📦 Falling back to Google Shopping for selection {selection_id}")
+                                if search_query:
+                                    shopping_results = self.serp_client.search_products(search_query, num_results=10)
+                                    if shopping_results and "results" in shopping_results:
+                                        for shop_item in shopping_results["results"][:8]:
+                                            # Extract product info from shopping result
+                                            product_info = self.serp_client._extract_product_info(shop_item)
+                                            if product_info:
+                                                reverse_search_results.append({
+                                                    "title": product_info.get("title", "Unknown Product"),
+                                                    "url": product_info.get("url", ""),
+                                                    "source": product_info.get("store", "Unknown"),
+                                                    "thumbnail": product_info.get("images", [""])[0] if product_info.get("images") else "",
+                                                    "images": product_info.get("images", []),
+                                                    "price_str": product_info.get("price_str", "Price not available"),
+                                                    "price": product_info.get("price"),
+                                                    "description": product_info.get("description", ""),
+                                                    "store": product_info.get("store", "Unknown"),
+                                                    "source_api": "google_shopping",
+                                                    "availability": product_info.get("availability", "Check availability"),
+                                                    "rating": product_info.get("rating"),
+                                                    "reviews": product_info.get("reviews"),
+                                                })
+                                        self.logger.info(f"✅ Google Shopping found {len(reverse_search_results)} results for '{search_query}'")
                         except Exception as e:
-                            self.logger.warning(f"Product search failed for {search_query}: {e}")
+                            self.logger.warning(f"Product search failed for selection {selection_id}: {e}")
+                    
+                    # Enhance reverse search results with Claude analysis
+                    if reverse_search_results and claude_client:
+                        try:
+                            # Prepare context for Claude
+                            context_prompt = f"""
+                            You are analyzing furniture search results from Google Lens reverse image search.
+                            
+                            Original CLIP Analysis:
+                            - Furniture Type: {analysis.get("furniture_type", {}).get("name", "unknown")}
+                            - Style: {analysis.get("style", {}).get("name", "unknown")}
+                            - Material: {analysis.get("material", {}).get("name", "unknown")}
+                            - Color: {analysis.get("color", {}).get("name", "unknown")}
+                            - Search Query: {search_query}
+                            
+                            Reverse Search Results ({len(reverse_search_results)} items):
+                            {self._format_reverse_search_results_for_claude(reverse_search_results)}
+                            
+                            Please analyze these results and:
+                            1. Identify the most relevant and high-quality products
+                            2. Extract detailed product information (price, materials, dimensions, etc.)
+                            3. Rate each product's relevance to the original furniture item
+                            4. Provide enhanced product recommendations
+                            
+                            Return a JSON response with enhanced product details.
+                            """
+                            
+                            enhanced_products = claude_client.get_completion(
+                                prompt=context_prompt,
+                                model="claude-3-5-haiku-20241022",
+                                max_tokens=2000,
+                                temperature=0.3
+                            )
+                            
+                            # Parse Claude's response and merge with original results
+                            products = self._parse_claude_enhanced_products(
+                                enhanced_products.content,
+                                reverse_search_results
+                            )
+                            
+                            # Add Exa AI search for additional products if available
+                            if self.exa_client and search_query:
+                                try:
+                                    exa_results = self.exa_client.search_and_analyze_products(
+                                        query=search_query,
+                                        space_type=context.space_type or "general",
+                                        num_results=5
+                                    )
+                                    for exa_product in exa_results:
+                                        exa_product["source_api"] = "exa"
+                                        exa_product["enhanced_by"] = "exa_ai"
+                                    products.extend(exa_results)
+                                except Exception as e:
+                                    self.logger.warning(f"Exa enhancement failed for {search_query}: {e}")
+                            
+                        except Exception as e:
+                            self.logger.warning(f"Claude enhancement failed for selection {selection_id}: {e}")
+                            # Fallback to original reverse search results
+                            products = reverse_search_results
+                    
+                    # If no reverse search results or Claude enhancement failed, use original Google Lens results
+                    if not products and reverse_search_results:
+                        self.logger.info(f"Using raw Google Lens results for selection {selection_id}")
+                        products = reverse_search_results
+                    
+                    # Final fallback: if Google Lens completely failed, log it
+                    if not products:
+                        self.logger.warning(f"No products found for selection {selection_id} after Google Lens search")
+                    
+                    # Add source tracking
+                    for product in products:
+                        if "source_api" not in product:
+                            product["source_api"] = "reverse_search"
+                        if "enhanced_by" not in product:
+                            product["enhanced_by"] = "claude"
                     
                     # Build result for this selection
                     result_item = {
@@ -1684,6 +1837,107 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
         except Exception as e:
             self.logger.error(f"Failed to analyze furniture batch: {e}")
             raise
+
+    def upload_image_to_imgbb(self, image_base64: str) -> Optional[str]:
+        """Upload a base64 image to ImgBB and return the public URL.
+        
+        Args:
+            image_base64: Base64-encoded image data (without data:image prefix)
+            
+        Returns:
+            Public URL of the uploaded image, or None if upload fails
+        """
+        import requests
+        
+        imgbb_key = os.getenv("IMGBB_API_KEY")
+        if not imgbb_key:
+            self.logger.warning("IMGBB_API_KEY not found in environment")
+            return None
+        
+        try:
+            # ImgBB API endpoint
+            url = "https://api.imgbb.com/1/upload"
+            
+            # Prepare the payload
+            payload = {
+                "key": imgbb_key,
+                "image": image_base64,
+            }
+            
+            # Make the request
+            response = requests.post(url, data=payload, timeout=10)
+            response.raise_for_status()
+            
+            # Extract the URL
+            result = response.json()
+            if result.get("success"):
+                image_url = result["data"]["url"]
+                self.logger.info(f"✅ Uploaded image to ImgBB: {image_url}")
+                return image_url
+            else:
+                self.logger.warning(f"ImgBB upload failed: {result}")
+                return None
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to upload to ImgBB: {e}")
+            return None
+
+    def _format_reverse_search_results_for_claude(self, results: List[Dict]) -> str:
+        """Format reverse search results for Claude analysis"""
+        formatted = []
+        for i, result in enumerate(results[:5]):  # Limit to top 5 for Claude
+            formatted.append(f"""
+            Result {i+1}:
+            - Title: {result.get('title', 'Unknown')}
+            - URL: {result.get('url', 'Unknown')}
+            - Source: {result.get('source', 'Unknown')}
+            - Price: {result.get('price', 'Unknown')}
+            - Description: {result.get('description', 'No description')[:200]}...
+            """)
+        return "\n".join(formatted)
+
+    def _parse_claude_enhanced_products(self, claude_response: str, original_results: List[Dict]) -> List[Dict]:
+        """Parse Claude's enhanced product analysis and merge with original results"""
+        try:
+            import json
+            
+            # Try to extract JSON from Claude's response
+            if "```json" in claude_response:
+                json_str = claude_response.split("```json")[1].split("```")[0].strip()
+            elif "```" in claude_response:
+                json_str = claude_response.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = claude_response
+            
+            enhanced_data = json.loads(json_str)
+            
+            # Merge enhanced data with original results
+            enhanced_products = []
+            for i, original in enumerate(original_results[:len(enhanced_data.get('products', []))]):
+                enhanced = original.copy()
+                
+                if i < len(enhanced_data.get('products', [])):
+                    claude_product = enhanced_data['products'][i]
+                    
+                    # Add Claude's enhancements
+                    enhanced.update({
+                        'claude_analysis': claude_product.get('analysis', ''),
+                        'relevance_score': claude_product.get('relevance_score', 0.5),
+                        'enhanced_description': claude_product.get('enhanced_description', enhanced.get('description', '')),
+                        'recommended_features': claude_product.get('recommended_features', []),
+                        'enhanced_by': 'claude'
+                    })
+                
+                enhanced_products.append(enhanced)
+            
+            return enhanced_products
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to parse Claude enhanced products: {e}")
+            # Return original results if parsing fails
+            for result in original_results:
+                result['enhanced_by'] = 'fallback'
+            return original_results
 
     @log_api_call("reverse_search_batch")
     def reverse_search_batch(
@@ -1776,6 +2030,188 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
         except Exception as e:
             self.logger.error(f"Failed reverse_search_batch: {e}")
             raise
+
+    @log_api_call("auto_detect_furniture")
+    def auto_detect_furniture(
+        self,
+        project_id: str,
+        image_type: str = "product",
+    ) -> Dict[str, Any]:
+        """Auto-detect furniture-like objects using YOLOv8 if available.
+
+        Returns an array of normalized boxes and optional labels.
+        """
+        try:
+            projects = self._load_projects()
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            project = projects[project_id]
+            context = ProjectContext.model_validate(project["context"])
+
+            image_base64 = (
+                context.inspiration_generated_image_base64
+                if image_type == "inspiration"
+                else context.generated_image_base64
+            )
+            if not image_base64:
+                raise ValueError("No image available for auto detection")
+
+            # Decode
+            import base64
+            from io import BytesIO
+            from PIL import Image
+
+            image_bytes = base64.b64decode(image_base64)
+            image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            width, height = image.size
+
+            detections: List[Dict[str, Any]] = []
+
+            try:
+                # Optional dependency
+                from ultralytics import YOLO  # type: ignore
+
+                # Use a lightweight model by default
+                model = YOLO("yolov8n.pt")
+                results = model.predict(image, imgsz=640, conf=0.35, verbose=False)
+                if results:
+                    r = results[0]
+                    boxes = getattr(r, "boxes", None)
+                    names = getattr(r, "names", None) or {}
+                    if boxes is not None:
+                        for b in boxes:
+                            xyxy = b.xyxy[0].tolist()
+                            cls = int(b.cls[0].item()) if hasattr(b, "cls") else -1
+                            label = names.get(cls, "object") if isinstance(names, dict) else "object"
+                            x1, y1, x2, y2 = xyxy
+                            detections.append(
+                                {
+                                    "label": label,
+                                    "rect": {
+                                        "x": max(0.0, x1 / width),
+                                        "y": max(0.0, y1 / height),
+                                        "width": max(0.0, (x2 - x1) / width),
+                                        "height": max(0.0, (y2 - y1) / height),
+                                    },
+                                    "center": {
+                                        "x": ((x1 + x2) / 2) / width,
+                                        "y": ((y1 + y2) / 2) / height,
+                                    },
+                                }
+                            )
+            except Exception as e:
+                # Graceful fallback: no detections
+                self.logger.warning(f"YOLO not available or failed: {e}")
+
+            return {"detections": detections}
+
+        except Exception as e:
+            self.logger.error(f"Failed auto_detect_furniture: {e}")
+            raise
+
+    @log_api_call("replicate_segment")
+    def replicate_segment(
+        self,
+        project_id: str,
+        image_type: str = "product",
+        public_image_url: str | None = None,
+    ) -> Dict[str, Any]:
+        """Run Mask2Former via Replicate and return normalized boxes.
+
+        If public_image_url is not provided, we fall back to auto-detect YOLO.
+        """
+        try:
+            projects = self._load_projects()
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            from replicate_client import ReplicateSegmentationClient
+
+            if not public_image_url:
+                # Attempt to upload the current image to ImgBB to obtain a public URL
+                try:
+                    import base64
+                    from io import BytesIO
+                    from PIL import Image
+                    import requests
+                    imgbb_key = os.getenv("IMGBB_API_KEY")
+                    if imgbb_key:
+                        project = projects[project_id]
+                        context = ProjectContext.model_validate(project["context"])
+                        image_base64 = (
+                            context.inspiration_generated_image_base64
+                            if image_type == "inspiration"
+                            else context.generated_image_base64
+                        )
+                        if not image_base64:
+                            raise ValueError("No image available for Replicate upload")
+                        # Build multipart form for imgbb
+                        resp = requests.post(
+                            "https://api.imgbb.com/1/upload",
+                            data={"key": imgbb_key, "image": image_base64},
+                            timeout=60,
+                        )
+                        if resp.ok:
+                            payload = resp.json()
+                            public_image_url = payload.get("data", {}).get("url")
+                except Exception as e:
+                    self.logger.warning(f"ImgBB upload failed, falling back to YOLO: {e}")
+                    public_image_url = None
+                if not public_image_url:
+                    # Fallback: return YOLO detections
+                    return self.auto_detect_furniture(project_id, image_type=image_type)
+
+            client = ReplicateSegmentationClient()
+            boxes = client.segment(public_image_url)
+
+            # Normalize boxes (pixel -> 0..1)
+            # We need image dimensions; load current image
+            project = projects[project_id]
+            context = ProjectContext.model_validate(project["context"])
+            import base64
+            from io import BytesIO
+            from PIL import Image
+
+            image_base64 = (
+                context.inspiration_generated_image_base64
+                if image_type == "inspiration"
+                else context.generated_image_base64
+            )
+            if not image_base64:
+                raise ValueError("No image available")
+            image_bytes = base64.b64decode(image_base64)
+            image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            width, height = image.size
+
+            detections: List[Dict[str, Any]] = []
+            for b in boxes:
+                bb = b.get("bbox")
+                label = b.get("label", "object")
+                if isinstance(bb, (list, tuple)) and len(bb) == 4:
+                    x1, y1, x2, y2 = [float(v) for v in bb]
+                    detections.append(
+                        {
+                            "label": label,
+                            "rect": {
+                                "x": max(0.0, x1 / width),
+                                "y": max(0.0, y1 / height),
+                                "width": max(0.0, (x2 - x1) / width),
+                                "height": max(0.0, (y2 - y1) / height),
+                            },
+                            "center": {"x": ((x1 + x2) / 2) / width, "y": ((y1 + y2) / 2) / height},
+                        }
+                    )
+
+            return {"detections": detections}
+
+        except Exception as e:
+            self.logger.error(f"Failed replicate segmentation: {e}")
+            # Fallback to YOLO if Replicate fails
+            try:
+                return self.auto_detect_furniture(project_id, image_type=image_type)
+            except Exception:
+                return {"detections": []}
 
     def _generate_search_query(self, context: ProjectContext) -> str:
         """Generate an optimized search query based on the project context and selected recommendation"""

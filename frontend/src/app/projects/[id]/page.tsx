@@ -241,6 +241,8 @@ export default function ProjectPage() {
                     : undefined
                 }
                 generationPrompt={project.context.generation_prompt}
+                colorScheme={project.context.color_scheme}
+                designStyle={project.context.design_style}
               />
             )}
 

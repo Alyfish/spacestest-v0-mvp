@@ -3,6 +3,54 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class ColorPalette(BaseModel):
+    """
+    Model for color palette selection
+    """
+    name: str
+    colors: List[str]  # List of hex color codes
+    description: Optional[str] = None
+
+
+class ColorSchemeRequest(BaseModel):
+    """
+    Request model for setting color scheme for a project
+    """
+    project_id: str
+    palette_name: str
+    colors: List[str]  # List of hex color codes
+    keep_original: bool = False  # If true, use original image colors
+
+
+class StyleOption(BaseModel):
+    """
+    Model for design style selection
+    """
+    name: str
+    description: Optional[str] = None
+    image_url: Optional[str] = None  # Preview image for the style
+
+
+class StyleSelectionRequest(BaseModel):
+    """
+    Request model for setting design style for a project
+    """
+    project_id: str
+    style_name: str
+    keep_original: bool = False  # If true, maintain original room style
+
+
+class GenerateWithProductRequest(BaseModel):
+    """
+    Request model for generating image with product and color scheme
+    """
+    project_id: str
+    product_url: str
+    product_title: str
+    color_scheme: Optional[ColorSchemeRequest] = None
+    use_original_colors: bool = False
+
+
 class ProjectCreateResponse(BaseModel):
     """
     Response model for project creation endpoint.
@@ -201,6 +249,12 @@ class ProjectContext(BaseModel):
     )
     generation_prompt: Optional[str] = Field(
         default=None, description="The prompt used for Gemini image generation"
+    )
+    color_scheme: Optional[Dict[str, Any]] = Field(
+        default=None, description="Selected color scheme for image generation"
+    )
+    design_style: Optional[Dict[str, Any]] = Field(
+        default=None, description="Selected design style for image generation"
     )
     
     # Inspiration-based image generation
@@ -457,12 +511,16 @@ class ProductSelectionRequest(BaseModel):
         product_title (str): Title of the selected product
         product_image_url (str): Image URL of the selected product
         generation_prompt (str): Custom prompt for image generation (optional)
+        color_scheme (dict): Color scheme selection (optional)
+        design_style (dict): Design style selection (optional)
     """
 
     product_url: str
     product_title: str
     product_image_url: str
     generation_prompt: Optional[str] = None
+    color_scheme: Optional[Dict[str, Any]] = None
+    design_style: Optional[Dict[str, Any]] = None
 
 
 class ProductSelectionResponse(BaseModel):

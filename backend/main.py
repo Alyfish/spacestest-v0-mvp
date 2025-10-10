@@ -625,11 +625,8 @@ async def select_product_for_generation(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if project["status"] != "PRODUCT_SEARCH_COMPLETE":
-        raise HTTPException(
-            status_code=400,
-            detail="Project must have completed product search first",
-        )
+    # Do not hard-block on project status here; the data manager will validate
+    # that the context is ready for product selection (has search results, etc.).
 
     try:
         selected = data_manager.select_product_for_generation(
@@ -638,6 +635,8 @@ async def select_product_for_generation(
             selection_request.product_title,
             selection_request.product_image_url,
             selection_request.generation_prompt,
+            selection_request.color_scheme,
+            selection_request.design_style,
         )
 
         return ProductSelectionResponse(
@@ -822,6 +821,36 @@ async def reverse_search_batch(project_id: str, req: ReverseSearchBatchRequest):
     except Exception as e:
         logger.error(f"Failed reverse-search-batch: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed reverse-search: {str(e)}")
+
+
+@app.get("/projects/{project_id}/auto-detect")
+async def auto_detect(project_id: str, image_type: str = "product"):
+    """Auto-detect furniture objects (YOLO if available)."""
+    project = data_manager.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        result = data_manager.auto_detect_furniture(project_id, image_type=image_type)
+        return {"project_id": project_id, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Auto-detect failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Auto-detect failed: {str(e)}")
+
+
+@app.get("/projects/{project_id}/replicate-segment")
+async def replicate_segment(project_id: str, image_type: str = "product", image_url: str | None = None):
+    """Segment with Replicate (Mask2Former). If image_url is None, fallback to YOLO."""
+    try:
+        result = data_manager.replicate_segment(project_id, image_type=image_type, public_image_url=image_url)
+        return {"project_id": project_id, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Replicate segment failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Replicate segment failed: {str(e)}")
 
 
 if __name__ == "__main__":

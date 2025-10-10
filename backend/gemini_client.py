@@ -7,7 +7,7 @@ import base64
 import os
 from io import BytesIO
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -46,6 +46,8 @@ class GeminiImageClient:
         marker_locations: list = None,
         custom_prompt: Optional[str] = None,
         project_data_dir: Path = None,
+        color_scheme: Dict[str, Any] = None,
+        design_style: Dict[str, Any] = None,
     ) -> Tuple[str, str]:
         """
         Generate a new image showing the product integrated into the original room
@@ -97,6 +99,8 @@ class GeminiImageClient:
                 inspiration_recommendations=inspiration_recommendations or [],
                 marker_locations=marker_locations or [],
                 custom_prompt=custom_prompt,
+                color_scheme=color_scheme,
+                design_style=design_style,
             )
 
             print(f"🎨 Integration prompt: {generation_prompt}")
@@ -403,6 +407,8 @@ class GeminiImageClient:
         inspiration_recommendations: list,
         marker_locations: list,
         custom_prompt: Optional[str] = None,
+        color_scheme: Dict[str, Any] = None,
+        design_style: Dict[str, Any] = None,
     ) -> str:
         """Create a comprehensive prompt for integrating product into the original room"""
 
@@ -432,6 +438,76 @@ class GeminiImageClient:
         if custom_prompt:
             user_context = f"\n\nUser's Specific Request:\n{custom_prompt}\n"
 
+        # Color scheme context
+        color_context = ""
+        if color_scheme:
+            if color_scheme.get("keep_original"):
+                color_context = "\n\nColor Scheme: Keep the original room colors and maintain existing color harmony.\n"
+            elif color_scheme.get("palette_name") == "Let AI Decide":
+                color_context = "\n\nColor Scheme: Choose colors that best complement the product and room.\n"
+            else:
+                colors = color_scheme.get("colors", [])
+                palette_name = color_scheme.get("palette_name", "Custom")
+                color_context = f"\n\nColor Palette Instructions - '{palette_name}':\n"
+                color_context += f"Selected Colors: {', '.join(colors)}\n\n"
+                color_context += "CRITICAL COLOR GUIDANCE:\n"
+                color_context += f"- MAINTAIN the exact shape, form, and design of '{product_title}' - do NOT change the product itself\n"
+                color_context += f"- The product's core structure and style MUST remain identical\n"
+                color_context += f"- Apply subtle, professional color adjustments ONLY if the product allows (e.g., colored fabric, cushions, upholstery)\n"
+                color_context += f"- For products with customizable elements (sofas, chairs, curtains, bedding), thoughtfully adjust fabric/textile colors to incorporate the palette\n"
+                color_context += f"- For fixed-color products (wood furniture, metal fixtures), keep them as-is and integrate the palette through:\n"
+                color_context += f"  • Surrounding decor elements (pillows, throws, artwork, vases)\n"
+                color_context += f"  • Complementary accent pieces\n"
+                color_context += f"  • Wall colors or textures that harmonize with the palette\n"
+                color_context += f"  • Decorative accessories that echo the chosen colors\n"
+                color_context += f"- Think like a professional interior designer: use the palette to create cohesion without forcing it onto inappropriate surfaces\n"
+                color_context += f"- The result should feel intentional, sophisticated, and naturally integrated\n"
+
+        # Design style context
+        style_context = ""
+        if design_style:
+            if design_style.get("keep_original"):
+                style_context = "\n\nDesign Style: Maintain the original room's existing design style and aesthetic.\n"
+            else:
+                style_name = design_style.get("style_name", "Custom")
+                style_context = f"\n\nDesign Style Instructions - '{style_name}':\n\n"
+                
+                # Define style characteristics
+                style_guides = {
+                    "bohemian": "Eclectic, layered textures, rich colors, global influences, plants, vintage elements, relaxed vibe",
+                    "scandinavian": "Minimalist, light colors (whites, grays), natural materials, clean lines, functional, cozy hygge elements",
+                    "contemporary": "Clean lines, neutral palette with bold accents, minimal ornamentation, sleek furniture, modern materials",
+                    "coastal": "Light and airy, whites and blues, natural textures (rope, wicker), beach-inspired, relaxed elegance",
+                    "modern": "Geometric shapes, monochromatic palette, metallic accents, glass and steel, minimalist, cutting-edge",
+                    "art deco": "Luxurious, geometric patterns, rich jewel tones, gold accents, vintage glamour, bold symmetry",
+                }
+                
+                style_description = style_guides.get(style_name.lower(), "sophisticated, well-designed aesthetic")
+                
+                style_context += f"STYLE CHARACTERISTICS: {style_description}\n\n"
+                
+                # Coastal-specific emphasis
+                if style_name.lower() == "coastal":
+                    style_context += (
+                        "COASTAL FOCUS:\n"
+                        "- Add coastal features and give the room a coastal look and feel\n"
+                        "- Favor light woods, woven textures (rattan, jute), linen and cotton fabrics\n"
+                        "- Use whites and layered blues; keep the palette airy and sun-washed\n"
+                        "- Bring in ocean-inspired decor (shells, coral, seascape art) with restraint\n"
+                        "- Consider nautical touches (rope, stripes, brass) in a subtle, sophisticated way\n\n"
+                    )
+                style_context += "CRITICAL STYLE GUIDANCE:\n"
+                style_context += f"- The product '{product_title}' should be integrated to match the '{style_name}' aesthetic\n"
+                style_context += f"- Apply style through: furniture forms, decorative accessories, materials, textures, and overall ambiance\n"
+                style_context += f"- Surrounding decor elements should reinforce the {style_name} style:\n"
+                style_context += f"  • Furniture pieces with appropriate design language\n"
+                style_context += f"  • Textiles and fabrics that match the style period/mood\n"
+                style_context += f"  • Decorative objects (art, lighting, accessories) aligned with {style_name} principles\n"
+                style_context += f"  • Architectural details or treatments appropriate to the style\n"
+                style_context += f"- Maintain the product's core function while adapting its presentation to fit the {style_name} aesthetic\n"
+                style_context += f"- Think like a professional interior designer specializing in {style_name} design\n"
+                style_context += f"- The final result should feel cohesive, authentic to the {style_name} style, and professionally executed\n"
+
         # Main integration prompt
         base_prompt = f"""
 CRITICAL INSTRUCTIONS - ROOM STRUCTURE PRESERVATION:
@@ -451,6 +527,8 @@ INTEGRATION REQUIREMENTS:
 5. **Style Harmony**: Make the product fit the existing room's aesthetic
 {inspiration_context}
 {marker_context}
+{color_context}
+{style_context}
 {user_context}
 
 OUTPUT: Generate a new image that shows the exact same room with the product seamlessly integrated. 

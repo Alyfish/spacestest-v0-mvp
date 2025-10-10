@@ -585,3 +585,13 @@ export const useClipSearch = () => {
     },
   });
 };
+
+// Auto detection (YOLO when available)
+export const useAutoDetect = () => {
+  return useMutation({
+    mutationFn: ({ projectId, imageType = "product" }: { projectId: string; imageType?: "product" | "inspiration" }) =>
+      apiClient.get<{ project_id: string; detections: Array<{ label: string; rect: { x: number; y: number; width: number; height: number }; center: { x: number; y: number } }> }>(
+        `/projects/${projectId}/auto-detect?image_type=${imageType}`
+      ),
+  });
+};
