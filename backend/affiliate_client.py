@@ -49,8 +49,8 @@ class AffiliateClient:
             # Remove www. prefix
             domain = domain.replace("www.", "")
             
-            # Map domains to retailer names
-            if "amazon.com" in domain or "amzn.to" in domain:
+            # Map domains to retailer names (support regional TLDs)
+            if ("amazon." in domain) or ("amzn.to" in domain):
                 return "amazon"
             elif "ikea.com" in domain:
                 return "ikea"
@@ -90,9 +90,25 @@ class AffiliateClient:
         """
         try:
             if retailer == "amazon":
-                # Amazon ASIN pattern: /dp/ASIN or /gp/product/ASIN
-                match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url)
-                return match.group(1) if match else None
+                # Amazon ASIN patterns:
+                #  - /dp/ASIN
+                #  - /gp/product/ASIN
+                #  - /gp/aw/d/ASIN
+                #  - query params: asin=ASIN or ASIN=ASIN
+                patterns = [
+                    r'/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?:[/?]|$)',
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, url, flags=re.IGNORECASE)
+                    if match:
+                        return match.group(1).upper()
+                # Check query params
+                parsed = urlparse(url)
+                qs = parse_qs(parsed.query)
+                for key in ("asin", "ASIN"):
+                    if key in qs and len(qs[key]) > 0 and re.fullmatch(r'[A-Za-z0-9]{10}', qs[key][0]):
+                        return qs[key][0].upper()
+                return None
                 
             elif retailer == "ikea":
                 # IKEA product number pattern
@@ -147,16 +163,18 @@ class AffiliateClient:
             affiliate_id = self.AFFILIATE_IDS.get(retailer, "")
             
             if retailer == "amazon":
+                # Keep the original Amazon domain (supports .com, .ca, etc.)
+                parsed = urlparse(url)
+                amazon_domain = parsed.netloc or "www.amazon.com"
                 # Amazon affiliate link format
                 if product_id:
-                    return f"https://www.amazon.com/dp/{product_id}?tag={affiliate_id}"
+                    return f"https://{amazon_domain}/dp/{product_id}?tag={affiliate_id}"
                 else:
                     # Add tag to existing URL
-                    parsed = urlparse(url)
                     params = parse_qs(parsed.query)
                     params['tag'] = [affiliate_id]
                     new_query = urlencode(params, doseq=True)
-                    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, 
+                    return urlunparse((parsed.scheme or 'https', amazon_domain, parsed.path, 
                                      parsed.params, new_query, parsed.fragment))
             
             elif retailer == "ikea":
@@ -205,6 +223,7 @@ class AffiliateClient:
             for i, asin in enumerate(product_ids, 1):
                 asin_params.append(f"ASIN.{i}={asin}&Quantity.{i}=1")
             params_str = "&".join(asin_params)
+            # Default to .com for cart URL; most affiliates accept .com
             return f"https://www.amazon.com/gp/aws/cart/add.html?{params_str}&tag={affiliate_id}"
         
         elif retailer == "ikea":
