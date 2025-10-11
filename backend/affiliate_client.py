@@ -203,7 +203,7 @@ class AffiliateClient:
             logger.error(f"Error converting to affiliate link: {e}")
             return url  # Return original URL if conversion fails
     
-    def generate_cart_url(self, retailer: str, product_ids: List[str]) -> str:
+    def generate_cart_url(self, retailer: str, product_ids: List[str], *, domain: Optional[str] = None) -> str:
         """
         Generate a single cart URL that adds all products at once.
         
@@ -223,8 +223,9 @@ class AffiliateClient:
             for i, asin in enumerate(product_ids, 1):
                 asin_params.append(f"ASIN.{i}={asin}&Quantity.{i}=1")
             params_str = "&".join(asin_params)
-            # Default to .com for cart URL; most affiliates accept .com
-            return f"https://www.amazon.com/gp/aws/cart/add.html?{params_str}&tag={affiliate_id}"
+            # Use provided domain if available (e.g., www.amazon.ca), otherwise default to .com
+            base_domain = domain or "www.amazon.com"
+            return f"https://{base_domain}/gp/aws/cart/add.html?{params_str}&tag={affiliate_id}"
         
         elif retailer == "ikea":
             # IKEA cart URL (simplified - actual implementation may vary)

@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api";
+import { useState } from "react";
 
 interface AffiliateProduct {
   original_url: string;

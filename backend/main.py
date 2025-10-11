@@ -895,7 +895,21 @@ async def generate_affiliate_cart(request: AffiliateCartRequest):
             
             # Generate cart URL for all products from this retailer
             product_ids = [p["product_id"] for p in products if p["product_id"] != "unknown"]
-            cart_url = affiliate_client.generate_cart_url(retailer, product_ids)
+
+            # For Amazon, preserve original regional domain per group (e.g., amazon.ca vs amazon.com)
+            cart_domain = None
+            if retailer == "amazon":
+                try:
+                    # Extract domain from the first product's original URL
+                    from urllib.parse import urlparse
+                    first_url = products[0]["original_url"]
+                    parsed = urlparse(first_url)
+                    if parsed.netloc and "amazon." in parsed.netloc:
+                        cart_domain = parsed.netloc
+                except Exception:
+                    cart_domain = None
+
+            cart_url = affiliate_client.generate_cart_url(retailer, product_ids, domain=cart_domain)
             
             # Create retailer cart
             retailer_cart = RetailerCart(
