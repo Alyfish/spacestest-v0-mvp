@@ -47,11 +47,11 @@ class CustomOutlinedButton extends StatelessWidget {
     return OutlinedButton(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
-        side: BorderSide(color: borderColor, width: 1.5),
+        side: borderColor != AppTheme.transparent ? BorderSide(color: borderColor, width: 1.5) : BorderSide.none,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(25),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: text != '' ?const EdgeInsets.symmetric(horizontal: 20, vertical: 12): EdgeInsets.zero,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

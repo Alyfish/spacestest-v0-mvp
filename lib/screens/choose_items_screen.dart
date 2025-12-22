@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:spaces/utils/logger.dart';
+import 'package:spaces/widgets/icon_button.dart';
 import '../providers/project_provider.dart';
 import '../providers/user_provider.dart';
 import '../models/marker.dart';
@@ -108,7 +109,6 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
   @override
   void initState() {
     super.initState();
-    print('ChooseItemsScreen: initState called');
 
     // Trigger a rebuild to ensure markers are displayed when screen loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -215,8 +215,8 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 36.0, vertical: 24.0),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
       child: Column(
         children: [
           // Title and subtitle section
@@ -247,7 +247,9 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
           const SizedBox(height: 20),
 
           // Image section with markers
-          Expanded(
+          SizedBox(
+            width: MediaQuery.of(context).size.width,
+            height: MediaQuery.of(context).size.height * 0.5,
             child: Consumer<ProjectProvider>(
               builder: (context, projectProvider, child) {
                 final imageProvider = projectProvider.getProjectImageProvider();
@@ -310,20 +312,16 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
             ),
           ),
 
-          const SizedBox(height: 40),
+          const SizedBox(height: 20),
 
           // Action buttons
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               // Back button
-              CustomOutlinedButton(
-                text: '',
-                icon: IconsaxPlusLinear.arrow_left_2,
+              IconButtonWidget(
                 onPressed: widget.onBack ?? () => Navigator.pop(context),
-                textColor: AppTheme.bodyTextColor,
-                borderColor: AppTheme.transparent,
-                iconColor: AppTheme.bodyTextColor,
+                icon: IconsaxPlusLinear.arrow_left_2,
               ),
 
               const SizedBox(width: 16),

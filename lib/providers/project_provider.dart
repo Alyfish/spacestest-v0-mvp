@@ -16,7 +16,7 @@ class ProjectProvider extends ChangeNotifier {
   String? _errorMessage;
   final List<ImprovementMarker> _markers = [];
   final Uuid _uuid = const Uuid();
-  
+
   // Room dimensions
   double? _roomWidth;
   double? _roomHeight;
@@ -31,14 +31,18 @@ class ProjectProvider extends ChangeNotifier {
       _status == ProjectStatus.loading || _status == ProjectStatus.creating;
   bool get hasProjectImage => _currentProject?.hasProjectImage ?? false;
   bool get hasInspirationImage => _currentProject?.hasInspirationImage ?? false;
-  bool get hasMultipleInspirationImages => _currentProject?.hasMultipleInspirationImages ?? false;
+  bool get hasMultipleInspirationImages =>
+      _currentProject?.hasMultipleInspirationImages ?? false;
   List<File> get inspirationImages => _currentProject?.inspirationImages ?? [];
   List<ImprovementMarker> get markers => List.unmodifiable(_markers);
   bool get hasMarkers => _markers.isNotEmpty;
   double? get roomWidth => _roomWidth;
   double? get roomHeight => _roomHeight;
   double? get roomLength => _roomLength;
-  bool get hasRoomDimensions => _roomWidth != null && _roomHeight != null && _roomLength != null;
+  bool get hasRoomDimensions =>
+      _roomWidth != null && _roomHeight != null && _roomLength != null;
+  List<String> get preferredStores => _currentProject?.preferredStores ?? [];
+  String? get approach => _currentProject?.approach;
 
   void _setStatus(ProjectStatus status) {
     _status = status;
@@ -167,7 +171,9 @@ class ProjectProvider extends ChangeNotifier {
       updatedAt: DateTime.now(),
     );
 
-    AppLogger.info('Added ${imageFiles.length} inspiration images (total: ${updatedImages.length})');
+    AppLogger.info(
+      'Added ${imageFiles.length} inspiration images (total: ${updatedImages.length})',
+    );
     notifyListeners();
   }
 
@@ -244,8 +250,6 @@ class ProjectProvider extends ChangeNotifier {
     }
   }
 
-
-
   // Update project properties
   Future<bool> updateProject(
     BuildContext context,
@@ -286,6 +290,91 @@ class ProjectProvider extends ChangeNotifier {
     }
   }
 
+  /// Save chosen approach (mocked API call)
+  Future<bool> saveApproach(BuildContext context, String approach) async {
+    if (_currentProject == null) {
+      _setError('No active project to update');
+      return false;
+    }
+
+    try {
+      _setStatus(ProjectStatus.uploading);
+
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final authToken = userProvider.user.token;
+
+      if (authToken == null) {
+        _setError('Authentication token not available');
+        return false;
+      }
+
+      await ApiService.submitApproach(_currentProject!.id, authToken, approach);
+
+      _currentProject = _currentProject!.copyWith(
+        approach: approach,
+        designPreferences: {
+          ..._currentProject!.designPreferences,
+          'approach': approach,
+        },
+        updatedAt: DateTime.now(),
+      );
+
+      _setStatus(ProjectStatus.ready);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to save approach', e);
+      _setError('Failed to save approach: ${e.toString()}');
+      return false;
+    }
+  }
+
+  /// Save preferred stores selection (mocked API call)
+  Future<bool> savePreferredStores(
+    BuildContext context,
+    List<String> storeIds,
+  ) async {
+    if (_currentProject == null) {
+      _setError('No active project to update');
+      return false;
+    }
+
+    try {
+      _setStatus(ProjectStatus.uploading);
+
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final authToken = userProvider.user.token;
+
+      if (authToken == null) {
+        _setError('Authentication token not available');
+        return false;
+      }
+
+      await ApiService.submitPreferredStores(
+        _currentProject!.id,
+        authToken,
+        storeIds,
+      );
+
+      _currentProject = _currentProject!.copyWith(
+        preferredStores: storeIds,
+        designPreferences: {
+          ..._currentProject!.designPreferences,
+          'preferredStores': storeIds,
+        },
+        updatedAt: DateTime.now(),
+      );
+
+      _setStatus(ProjectStatus.ready);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to save preferred stores', e);
+      _setError('Failed to save preferred stores: ${e.toString()}');
+      return false;
+    }
+  }
+
   // Clear current project
   void clearProject() {
     _currentProject = null;
@@ -303,7 +392,13 @@ class ProjectProvider extends ChangeNotifier {
     return null;
   }
 
-
+  ImageProvider? getInspirationImageProvider() {
+    final images = _currentProject?.localInspirationImages;
+    if (images != null && images.isNotEmpty) {
+      return FileImage(images.first);
+    }
+    return null;
+  }
 
   // Marker management methods
   void addMarker(double x, double y, String description) {

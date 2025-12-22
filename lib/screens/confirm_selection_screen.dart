@@ -86,8 +86,8 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
           );
         }
 
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 36.0, vertical: 24.0),
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
           child: Column(
             children: [
               // Title section
@@ -99,118 +99,105 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
                   ),
                 ],
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 8),
               // Image preview
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppTheme.bodyTextColor.withValues(
-                                alpha: 0.2,
-                              ),
-                              blurRadius: 30,
-                              spreadRadius: 5,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child:
-                              projectProvider.getProjectImageProvider() != null
-                              ? Image(
-                                  image: projectProvider
-                                      .getProjectImageProvider()!,
-                                  fit: BoxFit.cover,
-                                )
-                              : Container(
-                                  decoration: BoxDecoration(
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: MediaQuery.of(context).size.width,
+                    height: MediaQuery.of(context).size.height * 0.52,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: projectProvider.getProjectImageProvider() != null
+                          ? Image(
+                              image: projectProvider.getProjectImageProvider()!,
+                              fit: BoxFit.cover,
+                            )
+                          : Container(
+                              decoration: BoxDecoration(
+                                boxShadow: [
+                                  BoxShadow(
                                     color: AppTheme.grayColor.withValues(
-                                      alpha: 0.3,
+                                      alpha: 0.2,
                                     ),
-                                    borderRadius: BorderRadius.circular(20),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
                                   ),
-                                  child: const Center(
-                                    child: Icon(
-                                      IconsaxPlusLinear.image,
-                                      size: 48,
-                                      color: AppTheme.grayColor,
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 40),
-
-                    // Action buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // Retake button
-                        CustomOutlinedButton(
-                          onPressed: () => _retakePhoto(),
-                          text: 'Retake',
-                          icon: IconsaxPlusLinear.camera,
-                        ),
-
-                        const SizedBox(width: 20),
-
-                        // Upload button
-                        _isUploading
-                            ? Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.primaryColor,
-                                  borderRadius: BorderRadius.circular(25),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              AppTheme.backgroundColor,
-                                            ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    const Text(
-                                      'Uploading...',
-                                      style: TextStyle(
-                                        color: AppTheme.backgroundColor,
-                                        fontSize: 16,
-                                        fontFamily: AppTheme.secondaryFont,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : CustomOutlinedButton(
-                                onPressed: () => _confirmSelection(),
-                                text: 'Upload',
-                                icon: IconsaxPlusLinear.arrow_up,
-                                borderColor: AppTheme.primaryColor,
+                                ],
+                                borderRadius: BorderRadius.circular(20),
                               ),
-                      ],
+                              child: const Center(
+                                child: Icon(
+                                  IconsaxPlusLinear.image,
+                                  size: 48,
+                                  color: AppTheme.grayColor,
+                                ),
+                              ),
+                            ),
                     ),
-                  ],
-                ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Action buttons
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Retake button
+                      CustomOutlinedButton(
+                        onPressed: () => _retakePhoto(),
+                        text: 'Retake',
+                        icon: IconsaxPlusLinear.camera,
+                      ),
+
+                      const SizedBox(width: 20),
+
+                      // Upload button
+                      _isUploading
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.primaryColor,
+                                borderRadius: BorderRadius.circular(25),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        AppTheme.backgroundColor,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    'Uploading...',
+                                    style: TextStyle(
+                                      color: AppTheme.backgroundColor,
+                                      fontSize: 16,
+                                      fontFamily: AppTheme.secondaryFont,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : CustomOutlinedButton(
+                              onPressed: () => _confirmSelection(),
+                              text: 'Upload',
+                              icon: IconsaxPlusLinear.arrow_up,
+                              borderColor: AppTheme.primaryColor,
+                            ),
+                    ],
+                  ),
+                ],
               ),
             ],
           ),

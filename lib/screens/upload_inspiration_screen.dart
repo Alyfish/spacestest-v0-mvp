@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:spaces/widgets/custom_outlined_button.dart';
+import 'package:spaces/widgets/icon_button.dart';
 import '../providers/project_provider.dart';
 import '../theme.dart';
 import '../utils/logger.dart';
@@ -11,11 +13,13 @@ import '../utils/logger.dart';
 class UploadInspirationContent extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onConfirmSelection;
+  final VoidCallback? onSkipToApproach;
 
   const UploadInspirationContent({
     super.key,
     this.onBack,
     this.onConfirmSelection,
+    this.onSkipToApproach,
   });
 
   @override
@@ -32,7 +36,32 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
     // Permissions will be requested when upload button is pressed
   }
 
+  void _onContinue() {
+    if (!mounted) return;
 
+    final projectProvider = Provider.of<ProjectProvider>(
+      context,
+      listen: false,
+    );
+
+    final hasInspiration = projectProvider.inspirationImages.isNotEmpty;
+
+    if (hasInspiration) {
+      if (widget.onConfirmSelection != null) {
+        widget.onConfirmSelection!();
+      } else {
+        AppLogger.error('Confirm Screen is not passed.');
+      }
+      return;
+    }
+
+    // Skip confirm step when nothing was uploaded
+    if (widget.onSkipToApproach != null) {
+      widget.onSkipToApproach!();
+    } else {
+      AppLogger.error('Skip-to-approach callback is not provided.');
+    }
+  }
 
   Future<void> _pickMultipleFromGallery() async {
     setState(() {
@@ -78,14 +107,6 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
         projectProvider.setInspirationImages(imageFiles);
 
         AppLogger.info('${images.length} inspiration images selected and set');
-         if (mounted) {
-          if (widget.onConfirmSelection != null) {
-            widget.onConfirmSelection!();
-          } else {
-            // Log that confirm screen navigation is not working
-            AppLogger.error('Confirm Screen is not passed.');
-          }
-        }
       }
     } catch (e) {
       if (mounted) {
@@ -110,40 +131,30 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
       builder: (context, projectProvider, child) {
         final selectedImages = projectProvider.inspirationImages;
 
-        return Column(
-          children: [
-            // Title section
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  const Text(
-                    'Upload Inspiration',
-                    style: AppTheme.sectionTitleStyle,
-                  ),
-                ],
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
+          child: Column(
+            children: [
+              // Title section
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    const Text(
+                      'Upload Inspiration',
+                      style: AppTheme.sectionTitleStyle,
+                    ),
+                  ],
+                ),
               ),
-            ),
 
-            // Main content area
-            Expanded(
-              child: Column(
+              // Main content area
+              Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   // Center inspiration image (always shows the same image)
-                  Container(
-                    width: 280,
-                    height: 280,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTheme.bodyTextColor.withValues(alpha: 0.1),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
+                  SizedBox(
+                    width: MediaQuery.of(context).size.width,
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(20),
                       child: Image.asset(
@@ -168,7 +179,7 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
                     ),
                   ),
 
-                  const SizedBox(height: 32),
+                  // const SizedBox(height: 12),
 
                   // Show count if images are selected
                   if (selectedImages.isNotEmpty) ...[
@@ -181,7 +192,7 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
                         color: AppTheme.bodyTextColor.withValues(alpha: 0.7),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 12),
                   ],
 
                   // Upload button
@@ -215,29 +226,28 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
                   ),
                 ],
               ),
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Back button at bottom
-                if (widget.onBack != null)
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: IconButton(
-                        onPressed: widget.onBack,
-                        icon: const Icon(
-                          IconsaxPlusLinear.arrow_left_2,
-                          color: AppTheme.bodyTextColor,
-                          size: 32,
-                        ),
-                      ),
-                    ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Back button at bottom
+                  IconButtonWidget(
+                    icon: IconsaxPlusLinear.arrow_left_2,
+                    onPressed: widget.onBack ?? () => Navigator.pop(context),
                   ),
-              ],
-            ),
-          ],
+
+                  const SizedBox(width: 16),
+                  CustomOutlinedButton(
+                    text: 'Continue',
+                    icon: IconsaxPlusLinear.arrow_right_2,
+                    onPressed: _onContinue,
+                    textColor: AppTheme.primaryColor,
+                    borderColor: AppTheme.bodyTextColor,
+                    iconColor: AppTheme.primaryColor,
+                  ),
+                ],
+              ),
+            ],
+          ),
         );
       },
     );

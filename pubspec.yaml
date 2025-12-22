@@ -21,6 +21,7 @@ dependencies:
   logger: ^2.0.2+1
   http: ^1.1.0
   uuid: ^4.3.3
+  video_player: ^2.9.1
   # ar_flutter_plugin: ^0.7.3
   vector_math: ^2.1.4
 
@@ -43,6 +44,7 @@ flutter:
     - assets/images/extras/
     - assets/images/choose_space/
     - assets/logo/
+    - assets/animations/analyzing/
 
   # fonts
   fonts:

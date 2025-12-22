@@ -10,7 +10,7 @@ class CartScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -23,7 +23,8 @@ class CartScreen extends StatelessWidget {
               const SizedBox(height: 24),
               
               // Content placeholder
-              Expanded(
+              SizedBox(
+                height: MediaQuery.of(context).size.height - 200,
                 child: Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,

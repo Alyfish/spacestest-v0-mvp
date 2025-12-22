@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../constants/api_constants.dart';
+import '../models/preferred_store.dart';
 import '../utils/logger.dart';
 
 class ApiService {
@@ -98,6 +99,89 @@ class ApiService {
       AppLogger.error('Error updating project', e);
       rethrow;
     }
+  }
+
+  /// Mocked fetch of preferred stores list
+  static Future<List<PreferredStore>> fetchPreferredStores() async {
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    const mockResponse = [
+      {
+        'id': 'walmart',
+        'name': 'walmart',
+        'logoUrl':
+            'https://upload.wikimedia.org/wikipedia/commons/5/5f/Walmart_logo.png',
+      },
+      {
+        'id': 'amazon',
+        'name': 'amazon',
+        'logoUrl':
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Amazon_logo.svg/512px-Amazon_logo.svg.png',
+      },
+      {
+        'id': 'ikea',
+        'name': 'ikea',
+        'logoUrl':
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/IKEA_Logo.svg/512px-IKEA_Logo.svg.png',
+      },
+      {
+        'id': 'ashley',
+        'name': 'ashley',
+        'logoUrl':
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Ashley_Furniture_logo.svg/512px-Ashley_Furniture_logo.svg.png',
+      },
+      {
+        'id': 'target',
+        'name': 'target',
+        'logoUrl':
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Target_logo.svg/512px-Target_logo.svg.png',
+      },
+      {
+        'id': 'wayfair',
+        'name': 'wayfair',
+        'logoUrl':
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Wayfair_logo.svg/512px-Wayfair_logo.svg.png',
+      },
+    ];
+
+    AppLogger.info('Fetched ${mockResponse.length} preferred stores (mock)');
+    return mockResponse
+        .map((storeJson) => PreferredStore.fromJson(storeJson))
+        .toList();
+  }
+
+  /// Mocked submission of design approach selection
+  static Future<Map<String, dynamic>> submitApproach(
+    String projectId,
+    String _authToken,
+    String approach,
+  ) async {
+    await Future.delayed(const Duration(milliseconds: 400));
+
+    AppLogger.info('Submitting approach for $projectId: $approach');
+
+    return {
+      'projectId': projectId,
+      'approach': approach,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+  }
+
+  /// Mocked submission of preferred stores selection
+  static Future<Map<String, dynamic>> submitPreferredStores(
+    String projectId,
+    String _authToken,
+    List<String> storeIds,
+  ) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    AppLogger.info('Submitting preferred stores for $projectId: $storeIds');
+
+    return {
+      'projectId': projectId,
+      'preferredStores': storeIds,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
   }
 
   static Future<bool> uploadProjectImage(

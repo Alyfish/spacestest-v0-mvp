@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:spaces/providers/project_provider.dart';
+import 'package:spaces/widgets/icon_button.dart';
 import '../theme.dart';
 import '../widgets/custom_outlined_button.dart';
 
@@ -127,12 +128,15 @@ class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
   void initState() {
     super.initState();
     _pageController = PageController(viewportFraction: 1.2);
-    
+
     // Initialize the current index based on existing selection from ProjectProvider
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final projectProvider = Provider.of<ProjectProvider>(
+        context,
+        listen: false,
+      );
       final existingSpaceChosen = projectProvider.currentProject?.spaceChosen;
-      
+
       if (existingSpaceChosen != null) {
         // Find the index of the existing selection
         for (int i = 0; i < _spaceTypes.length; i++) {
@@ -178,8 +182,8 @@ class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 36.0, vertical: 24.0),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
       child: Column(
         children: [
           // Title section
@@ -192,116 +196,108 @@ class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
           const SizedBox(height: 20),
 
           // Carousel section
-          Expanded(
-            child: Column(
-              children: [
-                // Space carousel
-                Expanded(
-                  flex: 6,
-                  child: PageView.builder(
-                    controller: _pageController,
-                    onPageChanged: _onPageChanged,
-                    itemCount: _spaceTypes.length,
-                    itemBuilder: (context, index) {
-                      final space = _spaceTypes[index];
-                      final isActive = index == _currentIndex;
+          Column(
+            children: [
+              // Space carousel
+              SizedBox(
+                height:
+                    MediaQuery.of(context).size.height *
+                    0.52, // Fixed height for PageView
+                child: PageView.builder(
+                  controller: _pageController,
+                  onPageChanged: _onPageChanged,
+                  itemCount: _spaceTypes.length,
+                  itemBuilder: (context, index) {
+                    final space = _spaceTypes[index];
+                    final isActive = index == _currentIndex;
 
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            // Space image container
-                            Expanded(
-
-                              child: Transform.scale(
-                                scaleX: index >= 1
-                                    ? -1
-                                    : 1, // Mirror every other item
-                                child: Image.asset(
-                                  space['image']!,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    // Fallback if image doesn't exist
-                                    return Container(
-                                      decoration: BoxDecoration(
-                                        color: AppTheme.grayColor.withValues(
-                                          alpha: 0.3,
-                                        ),
-                                        borderRadius: BorderRadius.circular(24),
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Space image container
+                          SizedBox(
+                            width: MediaQuery.of(context).size.width * 0.5,
+                            height: MediaQuery.of(context).size.height * 0.35,
+                            child: Transform.scale(
+                              scaleX: index >= 1
+                                  ? -1
+                                  : 1, // Mirror every other item
+                              child: Image.asset(
+                                space['image']!,
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) {
+                                  // Fallback if image doesn't exist
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.grayColor.withValues(
+                                        alpha: 0.3,
                                       ),
-                                      child: const Center(
-                                        child: Icon(
-                                          IconsaxPlusLinear.home_2,
-                                          size: 48,
-                                          color: AppTheme.grayColor,
-                                        ),
+                                      borderRadius: BorderRadius.circular(24),
+                                    ),
+                                    child: const Center(
+                                      child: Icon(
+                                        IconsaxPlusLinear.home_2,
+                                        size: 48,
+                                        color: AppTheme.grayColor,
                                       ),
-                                    );
-                                  },
-                                ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
+                          ),
 
-                            const SizedBox(height: 8),
+                          const SizedBox(height: 8),
 
-                            // Space title
-                            Text(
-                              space['title']!,
-                              style: TextStyle(
-                                fontFamily: AppTheme.secondaryFont,
-                                fontSize: isActive ? 40 : 32,
-                                fontWeight: FontWeight.w100,
-                                color: AppTheme.bodyTextColor,
-                              ),
-                              textAlign: TextAlign.center,
+                          // Space title
+                          Text(
+                            space['title']!,
+                            style: TextStyle(
+                              fontFamily: AppTheme.secondaryFont,
+                              fontSize: isActive ? 40 : 32,
+                              fontWeight: FontWeight.w100,
+                              color: AppTheme.bodyTextColor,
                             ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Page indicators
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(
-                    _spaceTypes.length,
-                    (index) => Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      width: _currentIndex == index ? 12 : 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: _currentIndex == index
-                            ? AppTheme.primaryColor
-                            : AppTheme.grayColor.withValues(alpha: 0.4),
-                        borderRadius: BorderRadius.circular(4),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
+                    );
+                  },
+                ),
+              ),
+
+              // Page indicators
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(
+                  _spaceTypes.length,
+                  (index) => Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    width: _currentIndex == index ? 12 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _currentIndex == index
+                          ? AppTheme.primaryColor
+                          : AppTheme.grayColor.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(4),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-
-          const SizedBox(height: 40),
 
           // Action buttons
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               // Back button
-              CustomOutlinedButton(
-                text: '',
-                onPressed: widget.onBack ?? () => Navigator.pop(context),
-                textColor: AppTheme.bodyTextColor,
-                borderColor: Colors.transparent,
-                iconColor: AppTheme.bodyTextColor,
-                iconAfterText: false,
+              IconButtonWidget(
                 icon: IconsaxPlusLinear.arrow_left_2,
+                onPressed: widget.onBack ?? () => Navigator.pop(context),
               ),
 
               const SizedBox(width: 16),

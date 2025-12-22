@@ -14,17 +14,15 @@ class ProfileScreen extends StatelessWidget {
       body: SafeArea(
         child: Consumer<UserProvider>(
           builder: (context, userProvider, child) {
-            return Padding(
+            return SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Title
-                  Text(
-                    'Profile.',
-                    style: AppTheme.sectionTitleStyle,),
+                  Text('Profile.', style: AppTheme.sectionTitleStyle),
                   const SizedBox(height: 24),
-                  
+
                   // User Info
                   if (userProvider.isAuthenticated) ...[
                     Container(
@@ -39,7 +37,10 @@ class ProfileScreen extends StatelessWidget {
                                 radius: 30,
                                 backgroundColor: AppTheme.primaryColor,
                                 child: Text(
-                                  userProvider.user.name?.substring(0, 1).toUpperCase() ?? 'U',
+                                  userProvider.user.name
+                                          ?.substring(0, 1)
+                                          .toUpperCase() ??
+                                      'U',
                                   style: const TextStyle(
                                     fontSize: 24,
                                     fontWeight: FontWeight.bold,
@@ -63,7 +64,8 @@ class ProfileScreen extends StatelessWidget {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      userProvider.user.email ?? 'user@example.com',
+                                      userProvider.user.email ??
+                                          'user@example.com',
                                       style: const TextStyle(
                                         fontFamily: AppTheme.secondaryFont,
                                         fontSize: 14,

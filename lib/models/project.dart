@@ -16,8 +16,10 @@ class Project {
   final String? name;
   final String? description;
   final String? spaceChosen;
+  final String? approach;
   final List<String> tags;
   final Map<String, dynamic> designPreferences;
+  final List<String> preferredStores;
 
   const Project({
     required this.id,
@@ -31,8 +33,10 @@ class Project {
     this.name,
     this.description,
     this.spaceChosen,
+    this.approach,
     this.tags = const [],
     this.designPreferences = const {},
+    this.preferredStores = const [],
   });
 
   factory Project.fromJson(Map<String, dynamic> json) {
@@ -50,8 +54,19 @@ class Project {
       name: json['name'],
       description: json['description'],
       spaceChosen: json['spaceChosen'],
+      approach:
+          json['approach'] ??
+          (json['designPreferences'] != null
+              ? json['designPreferences']['approach']
+              : null),
       tags: List<String>.from(json['tags'] ?? []),
       designPreferences: json['designPreferences'] ?? {},
+      preferredStores: List<String>.from(
+        json['preferredStores'] ??
+            (json['designPreferences'] != null
+                ? json['designPreferences']['preferredStores'] ?? []
+                : []),
+      ),
     );
   }
 
@@ -65,8 +80,11 @@ class Project {
       'metadata': metadata,
       'name': name,
       'description': description,
+      'spaceChosen': spaceChosen,
+      'approach': approach,
       'tags': tags,
       'designPreferences': designPreferences,
+      'preferredStores': preferredStores,
     };
   }
 
@@ -82,8 +100,10 @@ class Project {
     String? name,
     String? description,
     String? spaceChosen,
+    String? approach,
     List<String>? tags,
     Map<String, dynamic>? designPreferences,
+    List<String>? preferredStores,
   }) {
     return Project(
       id: id ?? this.id,
@@ -98,8 +118,10 @@ class Project {
       name: name ?? this.name,
       description: description ?? this.description,
       spaceChosen: spaceChosen ?? this.spaceChosen,
+      approach: approach ?? this.approach,
       tags: tags ?? this.tags,
       designPreferences: designPreferences ?? this.designPreferences,
+      preferredStores: preferredStores ?? this.preferredStores,
     );
   }
 

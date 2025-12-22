@@ -11,7 +11,7 @@ import '../utils/logger.dart';
 class UploadPhotoContent extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onConfirmSelection;
-  
+
   const UploadPhotoContent({super.key, this.onBack, this.onConfirmSelection});
 
   @override
@@ -40,7 +40,9 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Photo access permission is required to select images'),
+              content: Text(
+                'Photo access permission is required to select images',
+              ),
               backgroundColor: AppTheme.errorColor,
               duration: Duration(seconds: 3),
             ),
@@ -58,14 +60,17 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
       );
 
       if (image != null && mounted) {
-        final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+        final projectProvider = Provider.of<ProjectProvider>(
+          context,
+          listen: false,
+        );
         final File imageFile = File(image.path);
-        
+
         // Store the selected image only in project provider
         projectProvider.setProjectImage(imageFile);
-        
+
         AppLogger.info('Gallery image selected and set as project image');
-        
+
         // Navigate to confirm selection screen
         if (mounted) {
           if (widget.onConfirmSelection != null) {
@@ -95,39 +100,24 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // Title section
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
+      child: Column(
+        children: [
+          // Title section
+          Row(
             children: [
-              const Text(
-                'Upload Photo',
-                style: AppTheme.sectionTitleStyle,),
+              const Text('Upload Photo', style: AppTheme.sectionTitleStyle),
             ],
           ),
-        ),
-        
-        // Main content area
-        Expanded(
-          child: Column(
+
+          // Main content area
+          Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               // Center image
-              Container(
-                width: 280,
-                height: 280,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.bodyTextColor.withValues(alpha:0.1),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
+              SizedBox(
+                width: MediaQuery.of(context).size.width * 0.9,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(20),
                   child: Image.asset(
@@ -136,7 +126,7 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
                     errorBuilder: (context, error, stackTrace) {
                       return Container(
                         decoration: BoxDecoration(
-                          color: AppTheme.grayColor.withValues(alpha:0.2),
+                          color: AppTheme.grayColor.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: const Center(
@@ -151,8 +141,7 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
                   ),
                 ),
               ),
-              
-              
+
               // Upload button
               GestureDetector(
                 onTap: _isLoading ? null : _pickFromGallery,
@@ -184,25 +173,25 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
               ),
             ],
           ),
-        ),
-        
-        // Back button at bottom
-        if (widget.onBack != null)
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: IconButton(
-                onPressed: widget.onBack,
-                icon: const Icon(
-                  IconsaxPlusLinear.arrow_left_2,
-                  color: AppTheme.bodyTextColor,
-                  size: 32,
+
+          // Back button at bottom
+          if (widget.onBack != null)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  onPressed: widget.onBack,
+                  icon: const Icon(
+                    IconsaxPlusLinear.arrow_left_2,
+                    color: AppTheme.bodyTextColor,
+                    size: 32,
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }

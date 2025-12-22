@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:spaces/widgets/icon_button.dart';
 import '../providers/project_provider.dart';
 import '../providers/user_provider.dart';
 // import '../services/api_service.dart'; // Keep for when API is uncommented
@@ -119,93 +121,123 @@ class _ConfirmInspirationContentState extends State<ConfirmInspirationContent> {
   }
 
   Widget _buildCarousel(List<File> images) {
-    return Column(
-      children: [
-        // Main carousel
-        Expanded(
-          child: PageView.builder(
-            controller: _pageController,
-            onPageChanged: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
-            },
-            itemCount: images.length,
-            itemBuilder: (context, index) {
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
+    return SizedBox(
+      width: MediaQuery.of(context).size.width,
+      child: Column(
+        children: [
+          // Main carousel with blurred background
+          Stack(
+            children: [
+              // Blurred background image
+              if (images.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  height: MediaQuery.of(context).size.height * 0.45,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: ImageFiltered(
+                      imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: Image.file(
+                        images[_currentIndex % images.length],
+                        fit: BoxFit.cover,
+                        color: Colors.black.withValues(alpha: 0.2),
+                        colorBlendMode: BlendMode.darken,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: AppTheme.grayColor.withValues(alpha: 0.3),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+
+              // Main carousel
+              Container(
+                height: MediaQuery.of(context).size.height * 0.45,
                 decoration: BoxDecoration(
+                  color: AppTheme.transparent,
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: AppTheme.bodyTextColor.withValues(alpha: 0.1),
+                      color: Colors.black.withValues(alpha: 0.2),
                       blurRadius: 20,
+                      spreadRadius: 5,
                       offset: const Offset(0, 10),
                     ),
                   ],
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: Image.file(
-                    images[index],
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: AppTheme.grayColor.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(20),
+                child: PageView.builder(
+                  controller: _pageController,
+                  onPageChanged: (index) {
+                    setState(() {
+                      _currentIndex = index;
+                    });
+                  },
+                  itemCount: images.length,
+                  itemBuilder: (context, index) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4.0,
+                      ), // Gap between images
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Image.file(
+                          images[index],
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: AppTheme.grayColor.withValues(
+                                  alpha: 0.2,
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Center(
+                                child: Icon(
+                                  IconsaxPlusLinear.gallery,
+                                  size: 80,
+                                  color: AppTheme.grayColor,
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                        child: const Center(
-                          child: Icon(
-                            IconsaxPlusLinear.gallery,
-                            size: 80,
-                            color: AppTheme.grayColor,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ],
           ),
-        ),
 
-        const SizedBox(height: 24),
+          const SizedBox(height: 16),
 
-        // Image counter
-        Text(
-          '${_currentIndex + 1} of ${images.length}',
-          style: TextStyle(
-            fontFamily: AppTheme.secondaryFont,
-            fontSize: 16,
-            fontWeight: FontWeight.w300,
-            color: AppTheme.bodyTextColor.withValues(alpha: 0.7),
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        // Page indicators (dots)
-        if (images.length > 1)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-              images.length,
-              (index) => Container(
-                width: 8,
-                height: 8,
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _currentIndex == index
-                      ? AppTheme.bodyTextColor
-                      : AppTheme.bodyTextColor.withValues(alpha: 0.3),
+          // Page indicators (dots)
+          if (images.length > 1)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                images.length,
+                (index) => Container(
+                  width: 8,
+                  height: 8,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _currentIndex == index
+                        ? AppTheme.primaryColor
+                        : AppTheme.primaryColor.withValues(alpha: 0.1),
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -216,142 +248,82 @@ class _ConfirmInspirationContentState extends State<ConfirmInspirationContent> {
         final images = projectProvider.inspirationImages;
 
         if (images.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  IconsaxPlusLinear.gallery,
-                  size: 80,
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                IconsaxPlusLinear.gallery,
+                size: 80,
+                color: AppTheme.grayColor,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'No inspiration images selected',
+                style: TextStyle(
+                  fontFamily: AppTheme.secondaryFont,
+                  fontSize: 16,
                   color: AppTheme.grayColor,
                 ),
-                const SizedBox(height: 16),
-                const Text(
-                  'No inspiration images selected',
-                  style: TextStyle(
-                    fontFamily: AppTheme.secondaryFont,
-                    fontSize: 16,
-                    color: AppTheme.grayColor,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                CustomOutlinedButton(
-                  text: 'Add Images',
-                  onPressed: _addMoreImages,
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 24),
+              CustomOutlinedButton(
+                text: 'Add Images',
+                onPressed: _addMoreImages,
+              ),
+            ],
           );
         }
 
-        return Column(
-          children: [
-            // Title section
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12),
+          child: Column(
+            children: [
+              // Title section
+              Row(
                 children: [
-                  const Text(
-                    'Confirm Selection',
-                    style: AppTheme.sectionTitleStyle,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: const Text(
+                      'Confirm Selection',
+                      style: AppTheme.sectionTitleStyle,
+                    ),
                   ),
                 ],
               ),
-            ),
 
-            // Carousel section
-            Expanded(child: _buildCarousel(images)),
+              const SizedBox(height: 16),
+              // Carousel section
+              SizedBox(
+                height: MediaQuery.of(context).size.height * 0.52,
+                child: _buildCarousel(images),
+              ),
 
-            // Action buttons
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  // Add More button
-                  Expanded(
-                    child: _isUploading
-                        ? OutlinedButton(
-                            onPressed: null,
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              'Add More',
-                              style: TextStyle(
-                                fontFamily: AppTheme.primaryFont,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.grayColor,
-                              ),
-                            ),
-                          )
-                        : CustomOutlinedButton(
-                            text: 'Add More',
-                            onPressed: _addMoreImages,
-                          ),
-                  ),
-
-                  const SizedBox(width: 16),
-
-                  // Confirm button
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _isUploading ? null : _confirmSelection,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+              // Back button at bottom (optional, for consistency)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    if (widget.onBack != null) ...[
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: IconButtonWidget(
+                          icon: IconsaxPlusLinear.arrow_left_2,
+                          onPressed: widget.onBack!,
                         ),
                       ),
-                      child: _isUploading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text(
-                              'Confirm',
-                              style: TextStyle(
-                                fontFamily: AppTheme.primaryFont,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Back button at bottom (optional, for consistency)
-            if (widget.onBack != null)
-              Padding(
-                padding: const EdgeInsets.only(
-                  left: 16.0,
-                  right: 16.0,
-                  bottom: 16.0,
-                ),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: IconButton(
-                    onPressed: _isUploading ? null : widget.onBack,
-                    icon: const Icon(
-                      IconsaxPlusLinear.arrow_left_2,
-                      color: AppTheme.bodyTextColor,
-                      size: 32,
-                    ),
-                  ),
+                    ],
+                    if (widget.onSuccess != null) ...[
+                      CustomOutlinedButton(
+                        text: _isUploading ? 'Uploading...' : 'Continue',
+                        onPressed: _confirmSelection,
+                      ),
+                    ],
+                  ],
                 ),
               ),
-          ],
+            ],
+          ),
         );
       },
     );

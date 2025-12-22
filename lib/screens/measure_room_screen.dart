@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:spaces/widgets/icon_button.dart';
 import '../providers/project_provider.dart';
 import '../theme.dart';
 import '../widgets/custom_outlined_button.dart';
@@ -18,7 +19,6 @@ class _MeasureRoomScreenState extends State<MeasureRoomScreen> {
   final TextEditingController _widthController = TextEditingController();
   final TextEditingController _heightController = TextEditingController();
   final TextEditingController _lengthController = TextEditingController();
-  
 
   bool _isFormValid = false;
   final String _imagePath =
@@ -27,11 +27,11 @@ class _MeasureRoomScreenState extends State<MeasureRoomScreen> {
   @override
   void initState() {
     super.initState();
-    
+
     // Initialize controllers with existing room dimensions from ProjectProvider
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = Provider.of<ProjectProvider>(context, listen: false);
-      
+
       if (provider.roomWidth != null) {
         _widthController.text = provider.roomWidth!.toString();
       }
@@ -41,11 +41,11 @@ class _MeasureRoomScreenState extends State<MeasureRoomScreen> {
       if (provider.roomLength != null) {
         _lengthController.text = provider.roomLength!.toString();
       }
-      
+
       // Validate form after setting initial values
       _validateForm();
     });
-    
+
     _widthController.addListener(_validateForm);
     _heightController.addListener(_validateForm);
     _lengthController.addListener(_validateForm);
@@ -132,119 +132,111 @@ class _MeasureRoomScreenState extends State<MeasureRoomScreen> {
       backgroundColor: AppTheme.backgroundColor,
       body: SafeArea(
         child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header
-                const Text('Measure Room.', style: AppTheme.sectionTitleStyle),
-
-                const SizedBox(height: 12),
-
-                // 3D Room Image
-                Center(
-                  child: SizedBox(
-                    width: 200,
-                    height: 200,
-                    child: Image.asset(
-                      _imagePath,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        // Fallback if image doesn't exist
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: AppTheme.grayColor.withValues(alpha: 0.3),
-                            borderRadius: BorderRadius.circular(24),
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              const Text('Measure Room.', style: AppTheme.sectionTitleStyle),
+          
+              const SizedBox(height: 12),
+          
+              // 3D Room Image
+              Center(
+                child: SizedBox(
+                  width: 200,
+                  height: 200,
+                  child: Image.asset(
+                    _imagePath,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) {
+                      // Fallback if image doesn't exist
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: AppTheme.grayColor.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            IconsaxPlusLinear.home_2,
+                            size: 48,
+                            color: AppTheme.grayColor,
                           ),
-                          child: const Center(
-                            child: Icon(
-                              IconsaxPlusLinear.home_2,
-                              size: 48,
-                              color: AppTheme.grayColor,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                        ),
+                      );
+                    },
                   ),
                 ),
-
-                // Use Camera Button
-                // Center(
-                //   child: GestureDetector(
-                //     onTap: _openCameraMode,
-                //     child: const Text(
-                //       'use camera',
-                //       style: TextStyle(
-                //         fontFamily: AppTheme.secondaryFont,
-                //         fontSize: 30,
-                //         fontWeight: FontWeight.w100,
-                //         color: AppTheme.bodyTextColor,
-                //       ),
-                //     ),
-                //   ),
-                // ),
-
-                const SizedBox(height: 12),
-
-                // Manual Entry Section
-                Text(
-                  'Enter:',
-                  style: AppTheme.sectionTitleStyle.copyWith(fontSize: 25),
-                ),
-
-                const SizedBox(height: 20),
-
-                // Input Fields
-                _buildInputField(
-                  controller: _widthController,
-                  hint: 'Width (ft)',
-                ),
-
-                const SizedBox(height: 16),
-
-                _buildInputField(
-                  controller: _heightController,
-                  hint: 'Height (ft)',
-                ),
-
-                const SizedBox(height: 16),
-
-                _buildInputField(
-                  controller: _lengthController,
-                  hint: 'Length (ft)',
-                ),
-                const SizedBox(height: 25),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
+              ),
+          
+              // Use Camera Button
+              // Center(
+              //   child: GestureDetector(
+              //     onTap: _openCameraMode,
+              //     child: const Text(
+              //       'use camera',
+              //       style: TextStyle(
+              //         fontFamily: AppTheme.secondaryFont,
+              //         fontSize: 30,
+              //         fontWeight: FontWeight.w100,
+              //         color: AppTheme.bodyTextColor,
+              //       ),
+              //     ),
+              //   ),
+              // ),
+              const SizedBox(height: 12),
+          
+              // Manual Entry Section
+              Text(
+                'Enter:',
+                style: AppTheme.sectionTitleStyle.copyWith(fontSize: 25),
+              ),
+          
+              const SizedBox(height: 20),
+          
+              // Input Fields
+              _buildInputField(
+                controller: _widthController,
+                hint: 'Width (ft)',
+              ),
+          
+              const SizedBox(height: 16),
+          
+              _buildInputField(
+                controller: _heightController,
+                hint: 'Height (ft)',
+              ),
+          
+              const SizedBox(height: 16),
+          
+              _buildInputField(
+                controller: _lengthController,
+                hint: 'Length (ft)',
+              ),
+              const SizedBox(height: 25),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButtonWidget(
+                    icon: IconsaxPlusLinear.arrow_left_2,
+                    onPressed: widget.onBack ?? () => Navigator.pop(context),
+                  ),
+                  if (_isFormValid) ...[
+                    const SizedBox(height: 20),
                     CustomOutlinedButton(
-                      text: '',
-                      onPressed: widget.onBack ?? () => Navigator.pop(context),
-                      textColor: AppTheme.bodyTextColor,
-                      borderColor: Colors.transparent,
-                      iconColor: AppTheme.bodyTextColor,
-                      iconAfterText: false,
-                      icon: IconsaxPlusLinear.arrow_left_2,
+                      text: 'Continue',
+                      icon: IconsaxPlusLinear.arrow_right_2,
+                      onPressed: _handleContinue,
+                      textColor: AppTheme.primaryColor,
+                      borderColor: AppTheme.bodyTextColor,
+                      iconColor: AppTheme.primaryColor,
                     ),
-                    if (_isFormValid) ...[
-                      const SizedBox(height: 20),
-                      CustomOutlinedButton(
-                        text: 'Continue',
-                        icon: IconsaxPlusLinear.arrow_right_2,
-                        onPressed: _handleContinue,
-                        textColor: AppTheme.primaryColor,
-                        borderColor: AppTheme.bodyTextColor,
-                        iconColor: AppTheme.primaryColor,
-                      ),
-                    ],
                   ],
-                ),
-
-                // Continue Button (only visible when form is valid)
-              ],
-            ),
+                ],
+              ),
+          
+              // Continue Button (only visible when form is valid)
+            ],
           ),
         ),
       ),
