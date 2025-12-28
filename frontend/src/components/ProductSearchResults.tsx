@@ -1,6 +1,7 @@
 "use client";
 
 import { useSearchProducts, useSelectProduct } from "@/lib/api";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import React, { useState } from "react";
 import ColorSchemeSelector from "./ColorSchemeSelector";
 import { StyleSelector } from "./StyleSelector";
@@ -52,6 +53,10 @@ export function ProductSearchResults({
   const [showStyleSelector, setShowStyleSelector] = useState(false);
   const [pendingProductIndex, setPendingProductIndex] = useState<number | null>(null);
   const [selectedColorScheme, setSelectedColorScheme] = useState<any>(null);
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
 
   // Debug logging for pendingProductIndex changes
   React.useEffect(() => {
@@ -244,7 +249,7 @@ export function ProductSearchResults({
                 <img
                   src={product.images[0]}
                   alt={product.title}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover cursor-zoom-in"
                   loading="lazy"
                   onError={(e) => {
                     // Try image proxy if direct URL fails (fixes CAPTCHA issues)
@@ -266,6 +271,12 @@ export function ProductSearchResults({
                       e.currentTarget.style.display = "none";
                     }
                   }}
+                  onClick={(event) =>
+                    setLightboxImage({
+                      src: event.currentTarget.src,
+                      alt: product.title,
+                    })
+                  }
                 />
                 <div className="absolute top-2 right-2">
                   <span className="text-xs bg-white/90 dark:bg-gray-800/90 text-gray-800 dark:text-gray-200 px-2 py-1 rounded-full">
@@ -568,6 +579,12 @@ export function ProductSearchResults({
           onConfirm={handleStyleConfirm}
         />
       )}
+      <ImageLightbox
+        isOpen={Boolean(lightboxImage)}
+        src={lightboxImage?.src || ""}
+        alt={lightboxImage?.alt || "Image preview"}
+        onClose={() => setLightboxImage(null)}
+      />
     </div>
   );
 }

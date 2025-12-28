@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class ColorPalette(BaseModel):
@@ -49,6 +49,231 @@ class GenerateWithProductRequest(BaseModel):
     product_title: str
     color_scheme: Optional[ColorSchemeRequest] = None
     use_original_colors: bool = False
+
+
+class ColorAssignment(BaseModel):
+    """
+    Model for assigning a color to a specific element in the room
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    element: str = Field(..., description="Element name (e.g., 'Walls', 'Sofa', 'Curtains')")
+    color_hex: str = Field(..., description="HEX color code to apply")
+    color_name: str = Field(..., description="Human-readable color name")
+    finish: Optional[str] = Field(None, description="Finish type (e.g., 'matte', 'satin', 'glossy')")
+    notes: Optional[str] = Field(None, description="Additional application notes")
+
+
+class ColorSwatch(BaseModel):
+    """Structured color swatch definition for schema-safe responses."""
+    model_config = ConfigDict(extra="forbid")
+
+    hex: str = Field(..., description="HEX color code")
+    description: Optional[str] = Field(None, description="Short description of the color usage")
+
+
+class ColorAnalysis(BaseModel):
+    """
+    Model for the Color Agent's structured analysis output.
+    Provides comprehensive color application guidance following design principles.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    # Summary
+    space_summary: str = Field(..., description="Brief summary of the space, style, and desired mood")
+    
+    # Color selections with 60-30-10 rule
+    primary_colors: List[ColorSwatch] = Field(
+        ..., 
+        description="Primary colors (60%) with hex codes and descriptions"
+    )
+    secondary_colors: List[ColorSwatch] = Field(
+        ..., 
+        description="Secondary colors (30%) with hex codes and descriptions"
+    )
+    accent_colors: List[ColorSwatch] = Field(
+        ..., 
+        description="Accent colors (10%) with hex codes and descriptions"
+    )
+    
+    # Color theory approach
+    color_theory_approach: str = Field(
+        ..., 
+        description="Color theory used: Monochromatic, Analogous, Complementary, or Triadic"
+    )
+    color_theory_rationale: str = Field(
+        ..., 
+        description="Explanation of why this approach supports the desired style and mood"
+    )
+    
+    # Element assignments
+    color_assignments: List[ColorAssignment] = Field(
+        ..., 
+        description="Specific color assignments for each room element"
+    )
+    
+    # Light and texture
+    lighting_notes: str = Field(
+        ..., 
+        description="How colors will look in daylight vs evening, and texture considerations"
+    )
+    
+    # Cohesion and personalization
+    cohesion_tips: str = Field(
+        ..., 
+        description="Tips for maintaining flow with adjacent rooms"
+    )
+    personalization_suggestions: str = Field(
+        ..., 
+        description="Seasonal accent swaps and personalization ideas"
+    )
+    
+    # Agent decision notes
+    palette_adaptations: Optional[str] = Field(
+        None,
+        description="Notes on any adaptations made to the selected palette for better fit"
+    )
+
+
+class ApplyColorRequest(BaseModel):
+    """
+    Request model for applying a color scheme to a project with AI analysis
+    """
+    palette_name: str = Field(..., description="Name of the selected palette")
+    colors: List[str] = Field(..., description="List of HEX color codes in the palette")
+    let_ai_decide: bool = Field(
+        default=False, 
+        description="If true, AI will choose optimal colors regardless of palette selection"
+    )
+
+
+class ApplyColorResponse(BaseModel):
+    """
+    Response model for color scheme application
+    """
+    project_id: str
+    palette_name: str
+    color_analysis: ColorAnalysis
+    status: str
+    message: str = "Color analysis generated successfully"
+
+
+class SkipStepResponse(BaseModel):
+    """
+    Response model for skipping an optional analysis step
+    """
+    project_id: str
+    status: str
+    skipped_step: str
+    message: str
+
+
+# ==================== Style Agent Models ====================
+
+class FurnitureRecommendation(BaseModel):
+    """
+    Model for a furniture or decor recommendation in the style analysis
+    """
+    item_type: str = Field(..., description="Type of furniture/decor (e.g., 'Sofa', 'Coffee Table', 'Rug')")
+    description: str = Field(..., description="Specific style description for this item")
+    materials: List[str] = Field(default_factory=list, description="Recommended materials")
+    colors: List[str] = Field(default_factory=list, description="Recommended colors for this item")
+    placement_notes: Optional[str] = Field(None, description="Where and how to position this item")
+
+
+class StyleAnalysis(BaseModel):
+    """
+    Model for the Style Agent's structured analysis output.
+    Provides comprehensive style application guidance following interior design principles.
+    """
+    # 1. Overview
+    style_name: str = Field(..., description="Name of the selected interior design style")
+    style_overview: str = Field(..., description="Brief description of the style, its roots, mood and atmosphere")
+    
+    # 2. Defining Characteristics
+    materials: List[str] = Field(..., description="Key materials for this style")
+    color_palette: List[str] = Field(..., description="Characteristic colors with hex codes")
+    furniture_characteristics: str = Field(..., description="Furniture style and key pieces")
+    patterns_textures: str = Field(..., description="Patterns and textures used")
+    lighting_style: str = Field(..., description="Lighting fixtures and approach")
+    decor_accessories: str = Field(..., description="Decor items and accessories")
+    
+    # 3. Layout & Spatial Principles
+    layout_principles: str = Field(..., description="Flow, zoning, symmetry, and balance of space")
+    
+    # 4. Signature Styling Tips
+    styling_tips: List[str] = Field(..., description="Practical advice and pro designer insights")
+    common_mistakes: List[str] = Field(..., description="Common mistakes to avoid")
+    
+    # 5. Furniture Recommendations (specific to user's space)
+    furniture_recommendations: List[FurnitureRecommendation] = Field(
+        ..., 
+        description="Specific furniture and decor recommendations for the user's space"
+    )
+    anchor_pieces: List[str] = Field(
+        ..., 
+        description="1-2 key anchor furniture items that define the style"
+    )
+    statement_accessory: str = Field(..., description="A statement accessory to complete the look")
+    
+    # 6. Application Scenario
+    room_transformation: str = Field(
+        ..., 
+        description="Detailed description of how to transform the specific room in the image"
+    )
+    
+    # 7. Related Styles
+    related_styles: List[str] = Field(
+        ..., 
+        description="Related or hybrid styles and what distinguishes them"
+    )
+    
+    # Agent notes
+    style_adaptations: Optional[str] = Field(
+        None,
+        description="Notes on adaptations made to fit the user's specific space"
+    )
+
+
+class ApplyStyleRequest(BaseModel):
+    """
+    Request model for applying a design style to a project with AI analysis
+    """
+    style_name: str = Field(..., description="Name of the selected design style")
+    let_ai_decide: bool = Field(
+        default=False, 
+        description="If true, AI will choose the optimal style for the space"
+    )
+
+
+class ApplyStyleResponse(BaseModel):
+    """
+    Response model for style application
+    """
+    project_id: str
+    style_name: str
+    style_analysis: StyleAnalysis
+    status: str
+    message: str = "Style analysis generated successfully"
+
+
+# ==================== Preferred Stores Models ====================
+
+class PreferredStoresRequest(BaseModel):
+    """
+    Request model for updating preferred stores
+    """
+    stores: List[str] = Field(..., description="List of preferred store names")
+
+
+class PreferredStoresResponse(BaseModel):
+    """
+    Response model for preferred stores update
+    """
+    project_id: str
+    stores: List[str]
+    status: str
+    message: str = "Preferred stores updated successfully"
 
 
 class ProjectCreateResponse(BaseModel):
@@ -223,6 +448,9 @@ class ProjectContext(BaseModel):
     inspiration_images: List[str] = Field(
         default_factory=list, description="Paths to uploaded inspiration images"
     )
+    inspiration_images_skipped: bool = Field(
+        default=False, description="Whether the user skipped inspiration images"
+    )
     inspiration_recommendations: List[str] = Field(
         default_factory=list,
         description="AI recommendations based on inspiration images",
@@ -233,16 +461,16 @@ class ProjectContext(BaseModel):
         default_factory=list,
         description="AI-generated product recommendations (e.g., 'change sofa', 'add photo frame')",
     )
-    selected_product_recommendation: Optional[str] = Field(
-        default=None, description="The product recommendation selected by the user"
+    selected_product_recommendations: List[str] = Field(
+        default_factory=list, description="The product recommendations selected by the user"
     )
     product_search_results: List[Dict[str, Any]] = Field(
         default_factory=list,
-        description="Exa search results for products matching the selected recommendation",
+        description="Exa search results for products matching the selected recommendations",
     )
-    selected_product: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="The specific product selected by the user for image generation",
+    selected_products: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="The specific products selected by the user for image generation",
     )
     generated_image_base64: Optional[str] = Field(
         default=None, description="Base64 encoded Gemini-generated image"
@@ -263,6 +491,27 @@ class ProjectContext(BaseModel):
     )
     inspiration_generation_prompt: Optional[str] = Field(
         default=None, description="The prompt used for inspiration-based generation"
+    )
+    
+    # Color Agent analysis
+    color_analysis: Optional[Dict[str, Any]] = Field(
+        default=None, description="Color Agent's structured analysis with color assignments and recommendations"
+    )
+    color_analysis_skipped: bool = Field(
+        default=False, description="Whether the user skipped color analysis"
+    )
+    
+    # Style Agent analysis
+    style_analysis: Optional[Dict[str, Any]] = Field(
+        default=None, description="Style Agent's structured analysis with furniture and decor recommendations"
+    )
+    style_analysis_skipped: bool = Field(
+        default=False, description="Whether the user skipped style analysis"
+    )
+
+    # User preferences
+    preferred_stores: List[str] = Field(
+        default_factory=list, description="List of user's preferred retail stores"
     )
 
     def is_ready_for_markers(self) -> bool:
@@ -296,7 +545,10 @@ class ProjectContext(BaseModel):
         return (
             self.base_image is not None
             and self.space_type is not None
-            and len(self.inspiration_recommendations) > 0
+            and (
+                len(self.inspiration_recommendations) > 0
+                or self.inspiration_images_skipped
+            )
         )
 
     def is_ready_for_product_search(self) -> bool:
@@ -304,7 +556,7 @@ class ProjectContext(BaseModel):
         return (
             self.is_ready_for_product_recommendations()
             and len(self.product_recommendations) > 0
-            and self.selected_product_recommendation is not None
+            and len(self.selected_product_recommendations) > 0
         )
 
     def is_ready_for_product_selection(self) -> bool:
@@ -316,7 +568,7 @@ class ProjectContext(BaseModel):
     def is_ready_for_image_generation(self) -> bool:
         """Check if ready for Gemini image generation."""
         return (
-            self.is_ready_for_product_selection() and self.selected_product is not None
+            self.is_ready_for_product_selection() and len(self.selected_products) > 0
         )
     
     def is_ready_for_inspiration_redesign(self) -> bool:
@@ -456,7 +708,7 @@ class ProductRecommendationSelectionRequest(BaseModel):
     Request model for selecting a product recommendation.
 
     Attributes:
-        selected_recommendation (str): The product recommendation selected by the user
+        selected_recommendation (str): The product recommendation to toggle
     """
 
     selected_recommendation: str
@@ -468,13 +720,13 @@ class ProductRecommendationSelectionResponse(BaseModel):
 
     Attributes:
         project_id (str): ID of the project
-        selected_recommendation (str): The selected recommendation
+        selected_recommendations (List[str]): The current list of selected recommendations
         status (str): Status of the selection operation
         message (str): Human-readable message describing the operation result
     """
 
     project_id: str
-    selected_recommendation: str
+    selected_recommendations: List[str]
     status: str
     message: str = "Product recommendation selected successfully"
 
@@ -494,7 +746,7 @@ class ProductSearchResponse(BaseModel):
     """
 
     project_id: str
-    selected_recommendation: str
+    selected_recommendations: List[str]
     search_query: str
     products: List[Dict[str, Any]]
     total_found: int
@@ -535,7 +787,7 @@ class ProductSelectionResponse(BaseModel):
     """
 
     project_id: str
-    selected_product: Dict[str, Any]
+    selected_products: List[Dict[str, Any]]
     status: str
     message: str
 
@@ -554,7 +806,7 @@ class ImageGenerationResponse(BaseModel):
     """
 
     project_id: str
-    selected_product: Dict[str, Any]
+    selected_products: List[Dict[str, Any]]
     generated_image_base64: str  # Return base64 string instead of URL
     generation_prompt: str
     status: str
@@ -717,6 +969,10 @@ class ClipSearchResponse(BaseModel):
     )
     clip_analysis: Optional[ClipAnalysisInfo] = Field(
         default=None, description="CLIP-based analysis results if available"
+    )
+    agent_notes: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Metadata about scoring/filtering (e.g., thresholds, counts)",
     )
 
 

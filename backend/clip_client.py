@@ -6,7 +6,7 @@ for enhanced image-to-product matching and reverse image search.
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Type
 from pathlib import Path
 import base64
 from io import BytesIO
@@ -319,49 +319,90 @@ class CLIPClient:
             self.logger.error(f"Failed to rank products: {e}")
             return products
     
-    def generate_enhanced_search_query(self, image_input, context: Optional[str] = None) -> str:
+    def generate_enhanced_search_query(
+        self,
+        image_input,
+        vision_client=None,
+        context: Optional[str] = None,
+        max_len: int = 80,
+        negative_keywords: Optional[List[str]] = None,
+    ) -> str:
         """
-        Generate an enhanced search query using CLIP analysis
-        
-        Args:
-            image_input: Image to analyze
-            context: Optional additional context (room type, style preferences, etc.)
-            
-        Returns:
-            Enhanced search query string
+        Generate a concise search query with negatives: {Color} {Material} {Style} {Type} -decor -ideas.
+
+        - Primary: use provided vision_client (e.g., Gemini/OpenAI) to extract keywords.
+        - Fallback: use CLIP attribute analysis.
         """
+        def truncate(q: str) -> str:
+            return q[:max_len]
+
+        neg_suffix = ""
+        if negative_keywords:
+            neg_suffix = " " + " ".join(f"-{k}" for k in negative_keywords)
+
+        # Primary: structured extraction via vision client if provided
+        if vision_client:
+            try:
+                from pydantic import BaseModel
+
+                class ClipQueryParts(BaseModel):
+                    color: str
+                    material: str
+                    item_type: str
+                    style: Optional[str] = ""
+
+                prompt = (
+                    "Extract four concise keywords from this product crop: color, material, style, item type. "
+                    "Keep each to 1-2 words. Return JSON with color, material, style, item_type."
+                )
+
+                parsed = vision_client.analyze_image_with_vision(  # type: ignore[attr-defined]
+                    prompt=prompt,
+                    pydantic_model=ClipQueryParts,
+                    image_path=image_input if isinstance(image_input, (str, Path)) else None,
+                    image=image_input if not isinstance(image_input, (str, Path)) else None,
+                )
+
+                parts = [
+                    parsed.color.strip(),
+                    parsed.material.strip(),
+                    (parsed.style or "").strip(),
+                    parsed.item_type.strip(),
+                ]
+                if context:
+                    parts.insert(0, context)
+                return truncate(" ".join([p for p in parts if p]) + neg_suffix or "furniture")
+            except Exception as e:
+                self.logger.warning(f"Vision query extraction failed, fallback to CLIP: {e}")
+
+        # Fallback: CLIP attribute analysis
         if not self.is_available():
             return "furniture"
-        
+
         try:
             analysis = self.analyze_furniture_region(image_input)
-            
+
             if "error" in analysis:
                 return "furniture"
-            
-            # Build query from analysis
+
             query_parts = []
-            
-            # Add high-confidence attributes
+
             if analysis["color"]["confidence"] > 0.6:
                 query_parts.append(analysis["color"]["name"])
-            
+
             if analysis["material"]["confidence"] > 0.6:
                 query_parts.append(analysis["material"]["name"])
-            
+
             if analysis["style"]["confidence"] > 0.5:
                 query_parts.append(analysis["style"]["name"])
-            
-            # Always add furniture type
+
             query_parts.append(analysis["furniture_type"]["name"])
-            
-            # Add context if provided
+
             if context:
                 query_parts.insert(0, context)
-            
-            return " ".join(query_parts)
-        
+
+            return truncate(" ".join(query_parts) + neg_suffix) or "furniture"
+
         except Exception as e:
             self.logger.error(f"Failed to generate enhanced query: {e}")
             return "furniture"
-

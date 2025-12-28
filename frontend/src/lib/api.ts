@@ -40,7 +40,7 @@ export const apiClient = {
         if (err && (err.detail || err.message)) {
           message = err.detail || err.message;
         }
-      } catch {}
+      } catch { }
       throw new Error(`(${response.status}) ${message}`);
     }
     return response.json();
@@ -75,7 +75,32 @@ export const apiClient = {
     }
     return response.json();
   },
+
+  async delete(endpoint: string): Promise<void> {
+    console.log(`Deleting endpoint: ${API_BASE_URL}${endpoint}`);
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      let message = response.statusText;
+      try {
+        const err = await response.json();
+        if (err && (err.detail || err.message)) {
+          message = err.detail || err.message;
+        }
+      } catch { }
+      throw new Error(`(${response.status}) ${message}`);
+    }
+    // Attempt to parse JSON response but don't fail if void is expected
+    try {
+      await response.json();
+    } catch { }
+  },
 };
+
+
+
+
 
 // API response types
 export interface HealthResponse {
@@ -194,7 +219,7 @@ export interface ProductRecommendationSelectionRequest {
 
 export interface ProductRecommendationSelectionResponse {
   project_id: string;
-  selected_recommendation: string;
+  selected_recommendations: string[];
   status: string;
   message: string;
 }
@@ -239,24 +264,24 @@ export interface ProductSelectionRequest {
 
 export interface ProductSelectionResponse {
   project_id: string;
-  selected_product: {
+  selected_products: Array<{
     url: string;
     title: string;
     image_url: string;
     selected_at: string;
-  };
+  }>;
   status: string;
   message: string;
 }
 
 export interface ImageGenerationResponse {
   project_id: string;
-  selected_product: {
+  selected_products: Array<{
     url: string;
     title: string;
     image_url: string;
     selected_at: string;
-  };
+  }>;
   generated_image_base64: string; // Changed from URL to base64
   generation_prompt: string;
   status: string;
@@ -282,6 +307,7 @@ export interface ClipSearchResponse {
   total_found: number;
   status: string;
   message: string;
+  agent_notes?: Record<string, any>;
 }
 
 export interface InspirationImageGenerationResponse {
@@ -289,6 +315,103 @@ export interface InspirationImageGenerationResponse {
   generated_image_base64: string;
   inspiration_prompt: string;
   inspiration_recommendations: string[];
+  status: string;
+  message: string;
+}
+
+// Color Agent types
+export interface ColorAssignment {
+  element: string;
+  color_hex: string;
+  color_name: string;
+  finish?: string;
+  notes?: string;
+}
+
+export interface ColorAnalysis {
+  space_summary: string;
+  primary_colors: Array<{ hex: string; description: string }>;
+  secondary_colors: Array<{ hex: string; description: string }>;
+  accent_colors: Array<{ hex: string; description: string }>;
+  color_theory_approach: string;
+  color_theory_rationale: string;
+  color_assignments: ColorAssignment[];
+  lighting_notes: string;
+  cohesion_tips: string;
+  personalization_suggestions: string;
+  palette_adaptations?: string;
+}
+
+export interface ApplyColorRequest {
+  palette_name: string;
+  colors: string[];
+  let_ai_decide: boolean;
+}
+
+export interface ApplyColorResponse {
+  project_id: string;
+  palette_name: string;
+  color_analysis: ColorAnalysis;
+  status: string;
+  message: string;
+}
+
+// Style Agent types
+export interface FurnitureRecommendation {
+  item_type: string;
+  description: string;
+  materials: string[];
+  colors: string[];
+  placement_notes?: string;
+}
+
+export interface StyleAnalysis {
+  style_name: string;
+  style_overview: string;
+  materials: string[];
+  color_palette: string[];
+  furniture_characteristics: string;
+  patterns_textures: string;
+  lighting_style: string;
+  decor_accessories: string;
+  layout_principles: string;
+  styling_tips: string[];
+  common_mistakes: string[];
+  furniture_recommendations: FurnitureRecommendation[];
+  anchor_pieces: string[];
+  statement_accessory: string;
+  room_transformation: string;
+  related_styles: string[];
+  style_adaptations?: string;
+}
+
+export interface ApplyStyleRequest {
+  style_name: string;
+  let_ai_decide: boolean;
+}
+export interface ApplyStyleResponse {
+  project_id: string;
+  style_name: string;
+  style_analysis: StyleAnalysis;
+  status: string;
+  message: string;
+}
+
+export interface SkipStepResponse {
+  project_id: string;
+  status: string;
+  skipped_step: string;
+  message: string;
+}
+
+// User Preference types
+export interface PreferredStoresRequest {
+  stores: string[];
+}
+
+export interface PreferredStoresResponse {
+  project_id: string;
+  stores: string[];
   status: string;
   message: string;
 }
@@ -338,6 +461,24 @@ export const useGetAllProjects = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 };
+
+export const useDeleteProject = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) => apiClient.delete(`/projects/${projectId}`),
+    onSuccess: async () => {
+      console.log("Delete successful, invalidating queries...");
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      console.log("Queries invalidated.");
+    },
+    onError: (error) => {
+      console.error("Delete project failed:", error);
+      alert(`Failed to delete project: ${error.message}`);
+    },
+  });
+};
+
 
 export const useUploadProjectImage = () => {
   const queryClient = useQueryClient();
@@ -398,15 +539,30 @@ export const useSaveImprovementMarkers = () => {
   });
 };
 
-export const useGetMarkerRecommendations = (projectId: string) => {
+export const useGetMarkerRecommendations = (projectId: string, enabled: boolean) => {
   return useQuery({
     queryKey: ["marker-recommendations", projectId],
     queryFn: () =>
       apiClient.get<MarkerRecommendationsResponse>(
         `/projects/${projectId}/marker-recommendations`
       ),
-    enabled: !!projectId,
+    enabled: !!projectId && enabled,
     staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+};
+
+export const useGenerateMarkerRecommendations = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<MarkerRecommendationsResponse>(
+        `/projects/${projectId}/marker-recommendations`
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+      queryClient.invalidateQueries({ queryKey: ["marker-recommendations", data.project_id] });
+    },
   });
 };
 
@@ -593,5 +749,126 @@ export const useAutoDetect = () => {
       apiClient.get<{ project_id: string; detections: Array<{ label: string; rect: { x: number; y: number; width: number; height: number }; center: { x: number; y: number } }> }>(
         `/projects/${projectId}/auto-detect?image_type=${imageType}`
       ),
+  });
+};
+
+// Color Agent - Apply color scheme with AI analysis
+export const useApplyColorScheme = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      paletteName,
+      colors,
+      letAiDecide = false,
+    }: {
+      projectId: string;
+      paletteName: string;
+      colors: string[];
+      letAiDecide?: boolean;
+    }) =>
+      apiClient.post<ApplyColorResponse>(
+        `/projects/${projectId}/apply-color-scheme`,
+        {
+          palette_name: paletteName,
+          colors: colors,
+          let_ai_decide: letAiDecide,
+        }
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+// Style Agent - Apply design style with AI analysis
+export const useApplyStyle = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      styleName,
+      letAiDecide = false,
+    }: {
+      projectId: string;
+      styleName: string;
+      letAiDecide?: boolean;
+    }) =>
+      apiClient.post<ApplyStyleResponse>(
+        `/projects/${projectId}/apply-style`,
+        {
+          style_name: styleName,
+          let_ai_decide: letAiDecide,
+        }
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSkipColorAnalysis = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<SkipStepResponse>(
+        `/projects/${projectId}/skip-color-analysis`
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSkipStyleAnalysis = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<SkipStepResponse>(
+        `/projects/${projectId}/skip-style-analysis`
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+export const useSkipInspirationImages = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiClient.post<SkipStepResponse>(
+        `/projects/${projectId}/skip-inspiration-images`
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
+  });
+};
+
+// User Preference - Update preferred stores
+export const useUpdatePreferredStores = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      stores,
+    }: {
+      projectId: string;
+      stores: string[];
+    }) =>
+      apiClient.post<PreferredStoresResponse>(
+        `/projects/${projectId}/preferred-stores`,
+        { stores }
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["project", data.project_id] });
+    },
   });
 };

@@ -4,12 +4,17 @@ import { useGetMarkerRecommendations } from "@/lib/api";
 
 interface MarkerRecommendationsProps {
   projectId: string;
+  enabled: boolean;
 }
 
 export function MarkerRecommendations({
   projectId,
+  enabled,
 }: MarkerRecommendationsProps) {
-  const recommendationsQuery = useGetMarkerRecommendations(projectId);
+  const recommendationsQuery = useGetMarkerRecommendations(
+    projectId,
+    enabled
+  );
 
   if (recommendationsQuery.isLoading) {
     return (

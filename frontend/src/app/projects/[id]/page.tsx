@@ -1,6 +1,9 @@
 "use client";
 
+import { ColorPaletteScreen } from "@/components/ColorPaletteScreen";
 import { GeneratedImageDisplay } from "@/components/GeneratedImageDisplay";
+import { PreferredStoresScreen } from "@/components/PreferredStoresScreen";
+import { StyleSelectionScreen } from "@/components/StyleSelectionScreen";
 import { ImageMarkerInterface } from "@/components/ImageMarkerInterface";
 import { ImageUploadSection } from "@/components/ImageUploadSection";
 import { InspirationImageUpload } from "@/components/InspirationImageUpload";
@@ -15,14 +18,21 @@ import { ProjectDetails } from "@/components/ProjectDetails";
 import { ProjectHeader } from "@/components/ProjectHeader";
 import { SpaceTypeDisplay } from "@/components/SpaceTypeDisplay";
 import { SpaceTypeSelection } from "@/components/SpaceTypeSelection";
-import { useGetProject } from "@/lib/api";
+import {
+  useGenerateMarkerRecommendations,
+  useGenerateInspirationRecommendations,
+  useGetProject,
+} from "@/lib/api";
 import Link from "next/link";
+import { useState } from "react";
 import { useParams } from "next/navigation";
 
 export default function ProjectPage() {
   const params = useParams();
   const projectId = params.id as string;
   const projectQuery = useGetProject(projectId);
+  const generateMarkerRecs = useGenerateMarkerRecommendations();
+  const generateInspirationRecs = useGenerateInspirationRecommendations();
 
   // Helper function to determine if we've reached or passed a certain status
   const hasReachedStatus = (targetStatus: string, currentStatus: string) => {
@@ -30,6 +40,7 @@ export default function ProjectPage() {
       "NEW",
       "BASE_IMAGE_UPLOADED",
       "SPACE_TYPE_SELECTED",
+      "IMPROVEMENT_MARKERS_SAVED",
       "MARKER_RECOMMENDATIONS_READY",
       "INSPIRATION_IMAGES_UPLOADED",
       "INSPIRATION_RECOMMENDATIONS_READY",
@@ -105,6 +116,26 @@ export default function ProjectPage() {
 
   const project = projectQuery.data;
   const isRoomEmpty = project.context.is_base_image_empty_room === true;
+  const colorSkipped = Boolean(project.context.color_analysis_skipped);
+  const styleSkipped = Boolean(project.context.style_analysis_skipped);
+  const inspirationSkipped = Boolean(project.context.inspiration_images_skipped);
+  const hasColorContext = Boolean(project.context.color_analysis) || colorSkipped;
+  const hasStyleContext = Boolean(project.context.style_analysis) || styleSkipped;
+  const hasInspirationContext =
+    (project.context.inspiration_recommendations || []).length > 0 ||
+    inspirationSkipped;
+  const canGenerateMarkerRecs =
+    hasColorContext &&
+    hasStyleContext &&
+    Boolean(project.context.preferred_stores && project.context.preferred_stores.length);
+  const canGenerateInspirationRecs =
+    project.status === "INSPIRATION_IMAGES_UPLOADED" &&
+    hasColorContext &&
+    hasStyleContext &&
+    (project.context.inspiration_images || []).length > 0;
+  const selectedRecommendations = project.context.selected_product_recommendations || [];
+  const selectedProducts = project.context.selected_products || [];
+  const primaryRecommendation = selectedRecommendations[0] || "";
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
@@ -176,20 +207,52 @@ export default function ProjectPage() {
             <ImageMarkerInterface projectId={project.project_id} />
           )}
 
-          {hasReachedStatus("MARKER_RECOMMENDATIONS_READY", project.status) && (
+          {hasReachedStatus("IMPROVEMENT_MARKERS_SAVED", project.status) && (
             <>
               <LabelledImageDisplay
                 projectId={project.project_id}
                 markers={project.context.improvement_markers || []}
               />
-              <MarkerRecommendations projectId={project.project_id} />
+              {project.status === "MARKER_RECOMMENDATIONS_READY" ? (
+                <MarkerRecommendations projectId={project.project_id} enabled />
+              ) : (
+                <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                    Complete or skip color/style, and set preferred stores
+                  </h3>
+                  <p className="text-gray-600 dark:text-gray-300">
+                    AI design recommendations will appear after you select or skip
+                    color and style, and choose preferred stores.
+                  </p>
+                  <div className="mt-4">
+                    <button
+                      disabled={!canGenerateMarkerRecs || generateMarkerRecs.isPending}
+                      onClick={() => generateMarkerRecs.mutate(project.project_id)}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition-colors"
+                    >
+                      {generateMarkerRecs.isPending ? "Generating..." : "Generate Marker Recommendations"}
+                    </button>
+                    {!canGenerateMarkerRecs && (
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                        Select or skip color and style, and choose preferred stores to enable generation.
+                      </p>
+                    )}
+                    {generateMarkerRecs.isError && (
+                      <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                        {generateMarkerRecs.error?.message || "Failed to generate recommendations."}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
 
-          {hasReachedStatus("MARKER_RECOMMENDATIONS_READY", project.status) && (
+          {hasReachedStatus("SPACE_TYPE_SELECTED", project.status) && (
             <InspirationImageUpload
               projectId={project.project_id}
               inspirationImages={project.context.inspiration_images || []}
+              inspirationSkipped={inspirationSkipped}
             />
           )}
 
@@ -200,41 +263,98 @@ export default function ProjectPage() {
                 project.context.inspiration_recommendations || []
               }
               spaceType={project.context.space_type || "unknown"}
+              colorAnalysis={project.context.color_analysis}
+              styleAnalysis={project.context.style_analysis}
+              colorAnalysisSkipped={colorSkipped}
+              styleAnalysisSkipped={styleSkipped}
+              onGenerate={() => generateInspirationRecs.mutate(project.project_id)}
+              canGenerate={canGenerateInspirationRecs}
+              isGenerating={generateInspirationRecs.isPending}
+              errorMessage={
+                generateInspirationRecs.isError
+                  ? generateInspirationRecs.error?.message || "Failed to generate inspiration recommendations"
+                  : undefined
+              }
+            />
+          )}
+
+          {/* Color Palette Selection */}
+          {hasReachedStatus("SPACE_TYPE_SELECTED", project.status) && (
+            <ColorPaletteScreen
+              projectId={project.project_id}
+              currentColorScheme={project.context.color_scheme}
+              colorAnalysis={project.context.color_analysis}
+              colorAnalysisSkipped={colorSkipped}
+            />
+          )}
+
+          {/* Style Selection */}
+          {hasReachedStatus("SPACE_TYPE_SELECTED", project.status) && (
+            <StyleSelectionScreen
+              projectId={project.project_id}
+              currentDesignStyle={project.context.design_style}
+              styleAnalysis={project.context.style_analysis}
+              styleAnalysisSkipped={styleSkipped}
+            />
+          )}
+
+          {/* Preferred Stores Selection */}
+          {hasReachedStatus("SPACE_TYPE_SELECTED", project.status) && (
+            <PreferredStoresScreen
+              projectId={project.project_id}
+              currentPreferredStores={project.context.preferred_stores}
             />
           )}
 
           {/* Product Recommendations Section */}
-          {hasReachedStatus(
+          {(hasReachedStatus(
             "INSPIRATION_RECOMMENDATIONS_READY",
             project.status
-          ) && (
-            <ProductRecommendations
-              projectId={project.project_id}
-              recommendations={project.context.product_recommendations || []}
-              spaceType={project.context.space_type || "unknown"}
-            />
-          )}
+          ) || hasInspirationContext) && (
+              <ProductRecommendations
+                projectId={project.project_id}
+                recommendations={project.context.product_recommendations || []}
+                spaceType={project.context.space_type || "unknown"}
+                selectedRecommendations={selectedRecommendations}
+              />
+            )}
 
-          {/* Product Search Results Section */}
+          {/* AI Visualization - Generate room redesign based on recommendations */}
           {hasReachedStatus(
             "PRODUCT_RECOMMENDATION_SELECTED",
             project.status
           ) && (
-            <ProductSearchResults
-              projectId={project.project_id}
-              selectedRecommendation={
-                project.context.selected_product_recommendation || ""
-              }
-              products={project.context.product_search_results || []}
-            />
-          )}
+              <InspirationRedesignDisplay
+                projectId={project.project_id}
+                generatedImageBase64={
+                  project.context.inspiration_generated_image_base64
+                }
+                inspirationPrompt={
+                  project.context.inspiration_generation_prompt
+                }
+                hasRecommendations={
+                  selectedRecommendations.length > 0 ||
+                  (project.context.inspiration_recommendations || []).length > 0
+                }
+              />
+            )}
 
-          {/* Generated Image Display Section */}
+          {/* Product Search Results Section - AFTER visualization is generated */}
+          {(project.status === "INSPIRATION_REDESIGN_COMPLETE" ||
+            hasReachedStatus("PRODUCT_SEARCH_COMPLETE", project.status)) && (
+              <ProductSearchResults
+                projectId={project.project_id}
+                selectedRecommendation={primaryRecommendation}
+                products={project.context.product_search_results || []}
+              />
+            )}
+
+          {/* Generated Image Display Section - After selecting a product */}
           {hasReachedStatus("PRODUCT_SELECTED", project.status) &&
-            project.context.selected_product && (
+            selectedProducts.length > 0 && (
               <GeneratedImageDisplay
                 projectId={project.project_id}
-                selectedProduct={project.context.selected_product}
+                selectedProduct={selectedProducts[0]}
                 generatedImageBase64={
                   project.status === "IMAGE_GENERATED"
                     ? project.context.generated_image_base64
@@ -245,27 +365,6 @@ export default function ProjectPage() {
                 designStyle={project.context.design_style}
               />
             )}
-
-          {/* Inspiration-based Redesign Section */}
-          {hasReachedStatus(
-            "INSPIRATION_RECOMMENDATIONS_READY",
-            project.status
-          ) && (
-            <InspirationRedesignDisplay
-              projectId={project.project_id}
-              generatedImageBase64={
-                project.status === "INSPIRATION_REDESIGN_COMPLETE"
-                  ? project.context.inspiration_generated_image_base64
-                  : undefined
-              }
-              inspirationPrompt={
-                project.context.inspiration_generation_prompt
-              }
-              hasRecommendations={
-                (project.context.inspiration_recommendations || []).length > 0
-              }
-            />
-          )}
 
           {/* Project Completion */}
           {project.status === "IMAGE_GENERATED" && (

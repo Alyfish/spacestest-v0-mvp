@@ -5,9 +5,13 @@ Optimized for furniture and home decor product search with direct product links 
 
 import os
 from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
 
 from dotenv import load_dotenv
 from serpapi import GoogleSearch
+import requests
+from PIL import Image
 
 load_dotenv()
 
@@ -213,6 +217,149 @@ class SerpClient:
         print(f"✅ Returning {len(products)} real products (no mocks)")
         return products
 
+    # --- CLIP-based thumbnail scoring ---
+    def score_products_with_clip(
+        self,
+        products: List[Dict[str, Any]],
+        clip_client,
+        query_image,
+        drop_threshold: float = 0.70,
+        boost_threshold: float = 0.85,
+        timeout: float = 1.5,
+        max_workers: int = 8,
+        max_fetch: int = 10,
+    ) -> Dict[str, Any]:
+        """Download SERP thumbnails in parallel and re-rank using CLIP similarity.
+
+        Args:
+            products: SERP-shaped product dictionaries.
+            clip_client: CLIPClient instance (must support encode_image/compute_similarity).
+            query_image: PIL image or path for the cropped query region.
+            drop_threshold: Similarity below which items are discarded.
+            boost_threshold: Similarity above which items are prioritized.
+            timeout: Per-thumbnail fetch timeout in seconds.
+            max_workers: Thread pool size for concurrent fetches.
+            max_fetch: Max number of products to fetch/score (rest keep order).
+
+        Returns:
+            Dict with products (reordered/filtered) and scoring metadata.
+        """
+        if not clip_client or not getattr(clip_client, "is_available", lambda: False)():
+            return {
+                "products": products,
+                "meta": {"scoring": "skipped", "reason": "clip_unavailable"},
+            }
+
+        try:
+            query_embedding = clip_client.encode_image(query_image)
+            if query_embedding is None:
+                return {
+                    "products": products,
+                    "meta": {"scoring": "skipped", "reason": "no_query_embedding"},
+                }
+        except Exception:
+            return {
+                "products": products,
+                "meta": {"scoring": "skipped", "reason": "encode_query_failed"},
+            }
+
+        def pick_thumbnail(prod: Dict[str, Any]) -> Optional[str]:
+            if prod.get("thumbnail"):
+                return prod["thumbnail"]
+            if prod.get("thumbnails"):
+                # thumbnails may be list of strings or dicts
+                first = prod["thumbnails"][0]
+                if isinstance(first, str):
+                    return first
+                if isinstance(first, dict):
+                    return first.get("link") or first.get("thumbnail")
+            images = prod.get("images") or []
+            if images:
+                return images[0]
+            if prod.get("image"):
+                return prod.get("image")
+            return None
+
+        def fetch_image(url: str):
+            try:
+                resp = requests.get(url, timeout=timeout)
+                if resp.status_code != 200:
+                    return None
+                return Image.open(BytesIO(resp.content)).convert("RGB")
+            except Exception:
+                return None
+
+        # Fetch thumbnails concurrently
+        scored: List[Dict[str, Any]] = []
+        download_jobs = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for idx, prod in enumerate(products[:max_fetch]):
+                url = pick_thumbnail(prod)
+                if not url:
+                    continue
+                download_jobs[executor.submit(fetch_image, url)] = (idx, prod, url)
+
+            for future in as_completed(download_jobs):
+                idx, prod, url = download_jobs[future]
+                image = future.result()
+                if image is None:
+                    prod["similarity_score"] = 0.0
+                    prod["filter_reason"] = "thumb_fetch_failed"
+                    prod["thumbnail_used"] = url
+                    scored.append((idx, prod))
+                    continue
+
+                try:
+                    thumb_embedding = clip_client.encode_image(image)
+                    if thumb_embedding is None:
+                        prod["similarity_score"] = 0.0
+                        prod["filter_reason"] = "thumb_encode_failed"
+                    else:
+                        sim = clip_client.compute_similarity(query_embedding, thumb_embedding)
+                        prod["similarity_score"] = sim
+                        if sim < drop_threshold:
+                            prod["filter_reason"] = "dropped_low_similarity"
+                        elif sim > boost_threshold:
+                            prod["filter_reason"] = "boosted_high_similarity"
+                        else:
+                            prod["filter_reason"] = "kept_neutral"
+                    prod["thumbnail_used"] = url
+                except Exception:
+                    prod["similarity_score"] = 0.0
+                    prod["filter_reason"] = "scoring_failed"
+                    prod["thumbnail_used"] = url
+
+                scored.append((idx, prod))
+
+        # Merge scored results with unscored tail (keep original order for tail)
+        scored_indices = {idx for idx, _ in scored}
+        unscored = [prod for i, prod in enumerate(products) if i not in scored_indices]
+
+        # Apply drop/boost logic
+        kept = [p for _, p in scored if p.get("similarity_score", 0) >= drop_threshold]
+        dropped = [p for _, p in scored if p.get("similarity_score", 0) < drop_threshold]
+
+        # Sort kept by similarity desc, then original order
+        kept.sort(key=lambda p: p.get("similarity_score", 0), reverse=True)
+        boosted = [p for p in kept if p.get("similarity_score", 0) > boost_threshold]
+
+        # Append unscored items after scored ones to preserve some completeness
+        final_products = kept + unscored
+
+        meta = {
+            "scoring": "completed",
+            "thresholds": {"drop": drop_threshold, "boost": boost_threshold},
+            "counts": {
+                "input": len(products),
+                "scored": len(scored),
+                "kept": len(kept),
+                "dropped": len(dropped),
+                "boosted": len(boosted),
+            },
+        }
+
+        return {"products": final_products, "meta": meta}
+
     # --- Google Lens reverse image search support ---
     def reverse_image_search_google_lens(self, image_path: str) -> List[Dict[str, Any]]:
         """Perform Google Lens reverse image search via SerpAPI.
@@ -347,8 +494,12 @@ class SerpClient:
         try:
             url = search_result.get("url", "")
             title = search_result.get("title", "")
+            # Basic shopping signals: price or rating or source
+            has_price = bool(search_result.get("price"))
+            has_source = bool(search_result.get("source"))
+            has_thumb = bool(search_result.get("thumbnail"))
 
-            if not url or not title:
+            if not url or not title or not (has_price or has_source or has_thumb):
                 return None
 
             # SerpAPI provides store name directly in 'source' field

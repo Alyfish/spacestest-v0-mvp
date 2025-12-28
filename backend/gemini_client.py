@@ -1,101 +1,744 @@
 """
-OpenRouter AI Image Generation Client for product visualization
-Uses FLUX and other image generation models via OpenRouter API
+Gemini AI Client for Text, Vision, and Image Generation
+Uses Google GenAI SDK (v1.40.0+)
 """
 
 import base64
 import os
+import json
+import traceback
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, TypeVar, Union, Type, List
 
 import requests
 from dotenv import load_dotenv
-from openai import OpenAI
 from PIL import Image
+from pydantic import BaseModel
+
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
+T = TypeVar("T", bound=BaseModel)
 
-class GeminiImageClient:
-    """Client for AI image generation through OpenRouter"""
+class GeminiClient:
+    """Client for Google Gemini API (Text, Vision, Image)"""
 
     def __init__(self, api_key: str = None):
-        """Initialize OpenRouter client with API key"""
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        """Initialize Google GenAI client with API key"""
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+            # Fallback for systems where GOOGLE_API_KEY might be named differently
+            self.api_key = os.getenv("GEMINI_API_KEY")
+            
+        if not self.api_key:
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
 
-        # Configure OpenRouter client
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=self.api_key,
-        )
+        # Initialize the client
+        self.client = genai.Client(api_key=self.api_key)
 
-        print(
-            f"🔧 OpenRouter Gemini Client initialized with API key: {self.api_key[:10]}..."
-        )
+        print(f"🔧 Google GenAI Gemini Client initialized")
 
+    def get_structured_completion(
+        self,
+        prompt: str,
+        pydantic_model: Type[T],
+        model: str = "gemini-2.5-flash",
+        max_tokens: Optional[int] = None,
+        system_message: Optional[str] = None,
+    ) -> T:
+        """
+        Get a structured response from Gemini using JSON schema enforcement
+
+        Args:
+            prompt: The input prompt
+            pydantic_model: Pydantic model class for structured output
+            model: The model to use (default: gemini-2.5-flash)
+            max_tokens: Maximum tokens in response
+            system_message: Optional system message
+        """
+        try:
+            # Construct the full prompt
+            full_prompt = prompt
+            
+            config = types.GenerateContentConfig(
+                response_modalities=["TEXT"],
+                response_mime_type="application/json",
+                response_schema=pydantic_model,
+                temperature=0.1,  # Low temperature for structural reliability
+            )
+            
+            if max_tokens:
+                config.max_output_tokens = max_tokens
+                
+            if system_message:
+                config.system_instruction = system_message
+
+            response = self.client.models.generate_content(
+                model=model,
+                contents=full_prompt,
+                config=config,
+            )
+
+            # Parse the response
+            if response.text:
+                return pydantic_model.model_validate_json(response.text)
+            else:
+                raise ValueError("Empty response from Gemini API")
+
+        except Exception as e:
+            print(f"❌ Error in get_structured_completion: {e}")
+            raise e
+
+    def analyze_image_with_vision(
+        self,
+        prompt: str,
+        pydantic_model: Type[T],
+        image_path: str,
+        model: str = "gemini-2.5-flash",
+        max_tokens: Optional[int] = None,
+        system_message: Optional[str] = None,
+        additional_image_paths: Optional[List[str]] = None,
+    ) -> T:
+        """
+        Analyze an image using Vision API with structured output
+
+        Args:
+            prompt: The prompt describing what to analyze
+            pydantic_model: Pydantic model class for structured output
+            image_path: Path to the image file
+            model: The vision model to use (default: gemini-2.5-flash)
+            max_tokens: Maximum tokens
+            system_message: Optional system message
+        """
+        try:
+            # Build contents list: prompt + main image + optional extra images for context
+            contents: List[Any] = [prompt]
+            pil_image = Image.open(image_path)
+            contents.append(pil_image)
+
+            if additional_image_paths:
+                for extra_path in additional_image_paths:
+                    try:
+                        contents.append(Image.open(extra_path))
+                    except Exception as extra_err:
+                        print(f"⚠️ Skipping additional image {extra_path}: {extra_err}")
+            
+            config = types.GenerateContentConfig(
+                response_modalities=["TEXT"],
+                response_mime_type="application/json",
+                response_schema=pydantic_model,
+                temperature=0.2, # Slightly higher for vision creativity/inference
+            )
+
+            if max_tokens:
+                config.max_output_tokens = max_tokens
+                
+            if system_message:
+                config.system_instruction = system_message
+
+            response = self.client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+
+            if response.text:
+                return pydantic_model.model_validate_json(response.text)
+            else:
+                raise ValueError("Empty response from Gemini Vision")
+
+        except Exception as e:
+            print(f"❌ Error in analyze_image_with_vision: {e}")
+            raise e
+
+    def analyze_color_application(
+        self,
+        image_path: str,
+        palette_name: str,
+        palette_colors: list,
+        space_type: str,
+        let_ai_decide: bool = False,
+        model: str = "gemini-2.5-flash",
+    ) -> Dict[str, Any]:
+        """
+        Color Agent: Analyze how to apply a color palette to a space.
+        Uses a comprehensive 10-step design process to provide professional guidance.
+        
+        Args:
+            image_path: Path to the original room image
+            palette_name: Name of the selected palette
+            palette_colors: List of HEX color codes
+            space_type: Type of space (bedroom, living room, etc.)
+            let_ai_decide: If true, AI optimizes colors regardless of palette
+            model: The vision model to use
+        """
+        from models import ColorAnalysis
+        
+        try:
+            print(f"🎨 Color Agent analyzing color application for {space_type}...")
+            
+            # Load the image
+            pil_image = Image.open(image_path)
+            
+            # Build the Color Agent system prompt
+            system_prompt = """You are an expert Color Agent specializing in interior design color application.
+You are a design professional with deep expertise in color theory, interior design, and spatial aesthetics.
+Your role is to provide detailed, professional guidance on how to apply colors to a space.
+
+IMPORTANT: You are the design expert. Even when a user selects a specific color palette, you should:
+- Adapt colors if they don't work well for the space
+- Suggest better alternatives when needed
+- Always prioritize what looks BEST for the room over strict palette adherence
+- Note any adaptations you make in the palette_adaptations field"""
+
+            # Build the user prompt with the 10-step process
+            if let_ai_decide:
+                color_context = "The user wants you to choose the BEST colors for this space. Analyze the room and select an optimal color palette."
+            else:
+                color_context = f"""The user has selected the "{palette_name}" palette with colors: {', '.join(palette_colors)}.
+Use these colors as a starting point, but adapt as needed for the best result.
+If certain colors don't work well for this space, feel free to suggest alternatives."""
+
+            prompt = f"""Analyze this {space_type} image and provide comprehensive color application guidance.
+
+{color_context}
+
+Follow this 10-step professional design process:
+
+1️⃣ UNDERSTAND THE SPACE
+- Identify the space type and function
+- Note if the space is empty or furnished
+- List existing elements (flooring, walls, large furniture)
+
+2️⃣ DEFINE MOOD AND ATMOSPHERE
+- Describe the mood this space should evoke
+- Explain how this mood guides color selection
+
+3️⃣ ASSESS LIGHT CONDITIONS
+- Describe natural lighting (windows, direction, intensity)
+- Note artificial lighting considerations
+
+4️⃣ SELECT AND JUSTIFY COLORS
+Apply the 60-30-10 rule:
+- 60% Primary colors for dominant surfaces
+- 30% Secondary colors to complement
+- 10% Accent colors for visual interest
+Include HEX codes for each color.
+
+5️⃣ COLOR THEORY APPROACH
+Choose and explain your approach:
+- Monochromatic: Variations of one hue
+- Analogous: Neighboring hues
+- Complementary: Opposite hues
+- Triadic: Three evenly spaced hues
+
+6️⃣ ASSIGN COLORS TO ELEMENTS
+Specify exactly which colors go where:
+- Walls and ceiling (with finish: matte, satin, etc.)
+- Trim and doors
+- Large furniture
+- Textiles (rugs, curtains, bedding)
+- Decor and accessories
+
+7️⃣ LIGHT AND TEXTURE INTERACTION
+- How colors look in daylight vs evening
+- How finishes (matte, glossy, textured) affect perception
+
+8️⃣ MAINTAIN COHESION
+- Tips for flow with adjacent rooms
+- Color transition recommendations
+
+9️⃣ PERSONALIZATION TIPS
+- Seasonal accent swaps
+- Easy ways to refresh the look
+
+🔟 PROVIDE STRUCTURED OUTPUT
+Follow the required JSON schema exactly."""
+
+            # Gemini API currently does not support additionalProperties in schemas reliably.
+            # Request JSON text and validate locally with Pydantic for strict structure.
+            response = self.client.models.generate_content(
+                model=model,
+                contents=[prompt, pil_image],
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT"],
+                    response_mime_type="application/json",
+                    temperature=0.3,
+                    system_instruction=system_prompt,
+                ),
+            )
+
+            if not response.text:
+                raise ValueError("Empty response from Color Agent")
+
+            def load_json_payload(text: str) -> Dict[str, Any]:
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    start = text.find("{")
+                    end = text.rfind("}")
+                    if start == -1 or end == -1:
+                        raise
+                    return json.loads(text[start : end + 1])
+
+            def normalize_swatch_list(value: Any) -> list[dict]:
+                swatches: list[dict] = []
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str):
+                            swatches.append({"hex": item, "description": ""})
+                        elif isinstance(item, dict):
+                            hex_val = item.get("hex") or item.get("color_hex") or item.get("color")
+                            if not hex_val:
+                                continue
+                            swatches.append(
+                                {
+                                    "hex": hex_val,
+                                    "description": item.get("description") or item.get("notes") or "",
+                                }
+                            )
+                return swatches
+
+            def normalize_color_assignments(
+                value: Any, fallback_hex: Optional[str], fallback_name: str
+            ) -> list[dict]:
+                assignments: list[dict] = []
+                if isinstance(value, list):
+                    assignments = value
+                elif isinstance(value, dict):
+                    for key, details in value.items():
+                        if not isinstance(details, dict):
+                            continue
+                        element_name = key.replace("_", " ").title()
+                        color_hex = details.get("color_hex") or details.get("hex") or fallback_hex or "#000000"
+                        color_name = details.get("color_name") or details.get("name") or fallback_name
+                        assignments.append(
+                            {
+                                "element": element_name,
+                                "color_hex": color_hex,
+                                "color_name": color_name,
+                                "finish": details.get("finish"),
+                                "notes": details.get("notes") or details.get("description"),
+                            }
+                        )
+                return assignments
+
+            def normalize_color_analysis_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+                expected_keys = {
+                    "space_summary",
+                    "primary_colors",
+                    "secondary_colors",
+                    "accent_colors",
+                    "color_theory_approach",
+                    "color_theory_rationale",
+                    "color_assignments",
+                    "lighting_notes",
+                    "cohesion_tips",
+                    "personalization_suggestions",
+                    "palette_adaptations",
+                }
+                if expected_keys.issubset(set(payload.keys())):
+                    return payload
+
+                space_analysis = payload.get("space_analysis") or {}
+                mood = payload.get("mood_atmosphere") or {}
+                space_summary = payload.get("space_summary") or " ".join(
+                    part
+                    for part in [
+                        space_analysis.get("space_type_function"),
+                        mood.get("desired_mood"),
+                        mood.get("mood_guidance"),
+                    ]
+                    if part
+                ).strip()
+
+                color_selection = payload.get("color_selection") or {}
+                primary_colors = normalize_swatch_list(
+                    payload.get("primary_colors") or color_selection.get("primary_colors")
+                )
+                secondary_colors = normalize_swatch_list(
+                    payload.get("secondary_colors") or color_selection.get("secondary_colors")
+                )
+                accent_colors = normalize_swatch_list(
+                    payload.get("accent_colors") or color_selection.get("accent_colors")
+                )
+
+                fallback_hex = primary_colors[0]["hex"] if primary_colors else None
+                fallback_name = primary_colors[0].get("description", "Primary color") if primary_colors else "Primary color"
+
+                color_theory = color_selection.get("color_theory_approach") or payload.get(
+                    "color_theory_approach"
+                )
+                color_theory_rationale = (
+                    payload.get("color_theory_rationale")
+                    or color_selection.get("color_theory_rationale")
+                )
+                if isinstance(color_theory, dict):
+                    color_theory_rationale = color_theory_rationale or color_theory.get("rationale")
+                    color_theory = color_theory.get("approach") or color_theory.get("name")
+
+                assignments_src = payload.get("color_assignments") or payload.get(
+                    "color_assignment_to_elements"
+                )
+                color_assignments = normalize_color_assignments(
+                    assignments_src or {}, fallback_hex, fallback_name
+                )
+
+                light_conditions = payload.get("light_conditions") or {}
+                light_texture = payload.get("light_texture_interaction") or {}
+                lighting_notes = payload.get("lighting_notes") or " ".join(
+                    part
+                    for part in [
+                        light_conditions.get("natural_lighting"),
+                        light_conditions.get("artificial_lighting"),
+                        light_texture.get("daylight_perception"),
+                        light_texture.get("evening_perception"),
+                        light_texture.get("finish_notes"),
+                    ]
+                    if part
+                ).strip()
+
+                maintain_cohesion = payload.get("maintain_cohesion") or {}
+                cohesion_tips = payload.get("cohesion_tips") or " ".join(
+                    part
+                    for part in [
+                        maintain_cohesion.get("adjacent_rooms_flow"),
+                        maintain_cohesion.get("transition_tips"),
+                    ]
+                    if part
+                ).strip()
+
+                personalization = payload.get("personalization_tips") or {}
+                personalization_suggestions = payload.get("personalization_suggestions") or " ".join(
+                    part
+                    for part in [
+                        personalization.get("seasonal_accent_swaps"),
+                        personalization.get("refresh_ideas"),
+                    ]
+                    if part
+                ).strip()
+
+                palette_adaptations = payload.get("palette_adaptations") or color_selection.get(
+                    "palette_adaptations"
+                )
+
+                return {
+                    "space_summary": space_summary or "Summary not provided",
+                    "primary_colors": primary_colors,
+                    "secondary_colors": secondary_colors,
+                    "accent_colors": accent_colors,
+                    "color_theory_approach": color_theory or "Unknown",
+                    "color_theory_rationale": color_theory_rationale or "Not provided",
+                    "color_assignments": color_assignments,
+                    "lighting_notes": lighting_notes or "Not provided",
+                    "cohesion_tips": cohesion_tips or "Not provided",
+                    "personalization_suggestions": personalization_suggestions or "Not provided",
+                    "palette_adaptations": palette_adaptations,
+                }
+
+            def build_fallback_color_analysis() -> Dict[str, Any]:
+                swatches = [{"hex": c, "description": "Palette color"} for c in palette_colors]
+                primary = swatches[:2] or [{"hex": "#DDDDDD", "description": "Primary neutral"}]
+                secondary = swatches[2:4]
+                accent = swatches[4:5]
+                assignments = [
+                    {
+                        "element": "Walls",
+                        "color_hex": primary[0]["hex"],
+                        "color_name": "Primary wall color",
+                        "finish": "matte",
+                        "notes": "Use for dominant wall surfaces.",
+                    },
+                    {
+                        "element": "Textiles",
+                        "color_hex": (secondary[0]["hex"] if secondary else primary[0]["hex"]),
+                        "color_name": "Secondary textile color",
+                        "finish": None,
+                        "notes": "Apply to curtains, bedding, or rugs.",
+                    },
+                    {
+                        "element": "Accents",
+                        "color_hex": (accent[0]["hex"] if accent else primary[0]["hex"]),
+                        "color_name": "Accent color",
+                        "finish": None,
+                        "notes": "Use for decor and small accessories.",
+                    },
+                ]
+                return {
+                    "space_summary": f"Color guidance for a {space_type} based on the selected palette.",
+                    "primary_colors": primary,
+                    "secondary_colors": secondary,
+                    "accent_colors": accent,
+                    "color_theory_approach": "Analogous",
+                    "color_theory_rationale": "Palette tones are adjacent and cohesive.",
+                    "color_assignments": assignments,
+                    "lighting_notes": "Consider lighting temperature when evaluating final tones.",
+                    "cohesion_tips": "Repeat key hues across adjacent spaces for continuity.",
+                    "personalization_suggestions": "Rotate accent textiles seasonally for variety.",
+                    "palette_adaptations": None,
+                }
+
+            try:
+                payload = load_json_payload(response.text)
+                try:
+                    result = ColorAnalysis.model_validate(payload)
+                except Exception:
+                    normalized = normalize_color_analysis_payload(payload)
+                    result = ColorAnalysis.model_validate(normalized)
+                print(f"✅ Color Agent analysis complete")
+                return result.model_dump()
+            except Exception as parse_err:
+                print(f"❌ Failed to parse Color Agent response: {parse_err}")
+                print(f"Raw response: {response.text}")
+                fallback = build_fallback_color_analysis()
+                result = ColorAnalysis.model_validate(fallback)
+                return result.model_dump()
+
+        except Exception as e:
+            print(f"❌ Error in analyze_color_application: {e}")
+            traceback.print_exc()
+            raise e
+
+    def analyze_style_application(
+        self,
+        image_path: str,
+        style_name: str,
+        space_type: str,
+        color_scheme: Dict[str, Any] = None,
+        let_ai_decide: bool = False,
+        model: str = "gemini-2.5-flash",
+    ) -> Dict[str, Any]:
+        """
+        Style Agent: Analyze how to apply an interior design style to a space.
+        Uses comprehensive design principles and the 10 major interior style definitions.
+        
+        Args:
+            image_path: Path to the original room image
+            style_name: Name of the selected style
+            space_type: Type of space (bedroom, living room, etc.)
+            color_scheme: Optional color scheme to coordinate with
+            let_ai_decide: If true, AI chooses the optimal style
+            model: The vision model to use
+        """
+        from models import StyleAnalysis
+        
+        try:
+            print(f"🎨 Style Agent analyzing style application for {space_type}...")
+            
+            # Load the image
+            pil_image = Image.open(image_path)
+            
+            # Build the comprehensive Style Agent system prompt
+            system_prompt = """You are an expert interior designer and design historian.
+Your role is to explain in detail how to design a space in a specific interior design style.
+
+🧠 CONTEXT & DEFINITIONS OF MAJOR STYLES:
+
+1️⃣ Art Deco - 1920s–1940s France/US. Glamorous, sleek, urban. Lacquered wood, chrome, glass, mirrored surfaces. Black, white, jewel tones, metallics. Geometric patterns, sunbursts, bold chandeliers.
+
+2️⃣ Mid-Century Modern - 1940s–1970s America. Functional, warm, nature-connected. Teak, walnut, molded plastic, leather. Earthy neutrals + mustard, avocado. Low-slung profiles, tapered legs, Eames-style icons.
+
+3️⃣ Scandinavian - Nordic origins. Bright, airy, calm (hygge). Pale woods, wool, linen. White, soft neutrals, muted pastels. Simple, functional, clutter-free.
+
+4️⃣ Industrial - Converted factories/lofts. Raw, masculine, urban. Exposed brick, concrete, steel. Grays, blacks, browns. Vintage factory pieces, Edison bulbs.
+
+5️⃣ Bohemian - 20th-century counterculture. Eclectic, free-spirited, global. Rattan, vintage textiles. Rich jewel tones, layered patterns. Mismatched pieces, string lights.
+
+6️⃣ Contemporary - Always evolving. Clean, light, sophisticated. Glass, metals, stone. Neutrals with contrast. Low-profile, open layouts.
+
+7️⃣ Traditional - 18th–19th century Europe. Formal, elegant, classic. Mahogany, silk, velvet. Rich warm palettes. Symmetrical, ornate, antiques.
+
+8️⃣ Minimalist - 20th-century modernism. Serene, uncluttered. Matte finishes, smooth surfaces. White and neutral. Negative space is essential.
+
+9️⃣ Farmhouse / Modern Farmhouse - Rural America. Cozy, rustic-modern. Shiplap, reclaimed wood. Soft neutrals, sage green. Slipcovered sofas, barn doors.
+
+🔟 French Country - Rural France. Romantic, soft, vintage. Wrought iron, distressed wood. Cream, sage, lavender. Curved legs, weathered elegance.
+
+IMPORTANT DESIGN PRINCIPLE: Keep ALL STRUCTURAL ASPECTS CONSTANT (walls, doors, flooring, ceiling). Only recommend changes to furniture, decor, and accessories.
+
+You are the design expert. Tailor all recommendations specifically to the room shown in the image."""
+
+            # Build the user prompt
+            if let_ai_decide:
+                style_context = "Analyze this room and recommend the BEST interior design style for it. Consider the room's architecture, lighting, and existing elements."
+            else:
+                style_context = f"""The user has selected the "{style_name}" style.
+Provide detailed guidance on how to transform this room into that style."""
+
+            color_context = ""
+            if color_scheme:
+                colors = color_scheme.get("colors", [])
+                if colors:
+                    color_context = f"\nCoordinate with the selected color palette: {', '.join(colors)}"
+
+            prompt = f"""Analyze this {space_type} image and provide comprehensive style application guidance.
+
+{style_context}{color_context}
+
+Structure your response in these 6 sections:
+
+1️⃣ OVERVIEW
+- Brief description of the style
+- Historical/cultural roots
+- Mood and atmosphere this style creates
+
+2️⃣ DEFINING CHARACTERISTICS
+For this style, detail:
+- Materials to use
+- Color palette (with hex codes)
+- Furniture characteristics and key pieces
+- Patterns & textures
+- Lighting fixtures and approach
+- Decor & accessories
+
+3️⃣ LAYOUT & SPATIAL PRINCIPLES
+- Flow and zoning for this room
+- Symmetry or asymmetry approach
+- Balance of negative and positive space
+
+4️⃣ SIGNATURE STYLING TIPS
+- Practical advice for this room
+- Common mistakes to avoid
+- Pro designer insights
+
+5️⃣ SPECIFIC RECOMMENDATIONS
+For THIS room, recommend:
+- 3-5 specific furniture pieces with descriptions
+- 1-2 anchor furniture items that define the style
+- A statement accessory
+- Detailed transformation scenario
+
+6️⃣ RELATED STYLES
+- Similar styles and what distinguishes them
+
+REMEMBER: Keep walls, doors, flooring, ceiling unchanged. Focus on furniture, decor, and styling."""
+
+            config = types.GenerateContentConfig(
+                response_modalities=["TEXT"],
+                response_mime_type="application/json",
+                response_schema=StyleAnalysis,
+                temperature=0.3,
+                system_instruction=system_prompt,
+            )
+
+            response = self.client.models.generate_content(
+                model=model,
+                contents=[prompt, pil_image],
+                config=config,
+            )
+
+            if response.text:
+                result = StyleAnalysis.model_validate_json(response.text)
+                print(f"✅ Style Agent analysis complete")
+                return result.model_dump()
+            else:
+                raise ValueError("Empty response from Style Agent")
+
+        except Exception as e:
+            print(f"❌ Error in analyze_style_application: {e}")
+            traceback.print_exc()
+            raise e
+
+    def generate_room_redesign(
+        self,
+        original_room_image_path: str,
+        prompt: str,
+    ) -> str:
+        """
+        Generate a redesigned room image based on inspiration
+        using Gemini 3 Pro Image (Nano Banana Pro)
+        """
+        try:
+            print(f"🎨 Generating room redesign...")
+            
+            # Load images
+            original_room_image = Image.open(original_room_image_path)
+            
+            # Use 'gemini-3-pro-image-preview'
+            model_name = "gemini-3-pro-image-preview" 
+            
+            config = types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+            )
+
+            # Add technical requirement for aspect ratio
+            final_prompt = f"{prompt}\n\nTechnical Requirement: Generate the image with a 1:1 Square Aspect Ratio."
+
+            # Prepare the contents: text prompt + input image
+            contents = [
+                final_prompt,
+                original_room_image
+            ]
+
+            print(f"🚀 Sending request to {model_name}...")
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+
+            generated_image_b64 = None
+            
+            # Extract image from response
+            for part in response.parts:
+                if part.inline_data:
+                    generated_image_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
+                    print("✅ Successfully generated redesign image")
+                    break
+            
+            if not generated_image_b64:
+                 raise ValueError("No image generated in response")
+
+            return generated_image_b64
+
+        except Exception as e:
+            print(f"❌ Error generating room redesign: {e}")
+            traceback.print_exc()
+            raise e
     def generate_product_visualization(
         self,
         original_room_image_path: str,
-        product_image_url: str,
+        selected_products: list,
         space_type: str,
-        product_title: str,
-        inspiration_recommendations: list = None,
-        marker_locations: list = None,
+        inspiration_recommendations: list,
+        marker_locations: list,
         custom_prompt: Optional[str] = None,
-        project_data_dir: Path = None,
+        project_data_dir: Optional[Path] = None,
         color_scheme: Dict[str, Any] = None,
         design_style: Dict[str, Any] = None,
     ) -> Tuple[str, str]:
         """
-        Generate a new image showing the product integrated into the original room
-
-        Args:
-            original_room_image_path: Path to the user's original room image (base)
-            product_image_url: URL of the product image to integrate
-            space_type: Type of space (bedroom, living room, etc.)
-            product_title: Title of the product for context
-            inspiration_recommendations: List of inspiration analysis recommendations
-            marker_locations: List of marker locations where improvements are needed
-            custom_prompt: Optional custom prompt from user
-            project_data_dir: Directory to save the generated image
-
-        Returns:
-            Tuple of (generated_image_path, generation_prompt)
+        Generate a new image showing multiple products integrated into the original room
+        using Gemini 3 Pro Image (Nano Banana Pro)
         """
         try:
-            print(f"🎨 Generating visualization for product: {product_title[:50]}...")
-            print(f"   Space type: {space_type}")
-            print(f"   Original room image: {original_room_image_path}")
-            print(f"   Product image URL: {product_image_url}")
-
-            # Load the original room image
+            print(f"🎨 Generating visualization for {len(selected_products)} products...")
+            
+            # Load room image
             original_room_image = Image.open(original_room_image_path)
-            print(f"✅ Loaded original room image: {original_room_image.size}")
-
-            # Download the product image for reference
-            product_image = self._download_image(product_image_url)
-            if not product_image:
-                raise Exception("Failed to download product image")
-
-            # Convert images to base64 for OpenRouter
-            def image_to_base64(img):
-                buffer = BytesIO()
-                img.save(buffer, format="PNG")
-                return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-            original_image_b64 = image_to_base64(original_room_image)
-            product_image_b64 = image_to_base64(product_image)
-
-            original_image_url = f"data:image/png;base64,{original_image_b64}"
-            product_image_url_b64 = f"data:image/png;base64,{product_image_b64}"
-
-            # Create comprehensive prompt with all context
+            
+            # Download all product images
+            product_images = []
+            product_titles = []
+            for product in selected_products:
+                img = self._download_image(product["image_url"])
+                if img:
+                    product_images.append(img)
+                    product_titles.append(product["title"])
+            
+            if not product_images:
+                raise Exception("Failed to download any product images")
+            
+            # Create aggregate product title for the prompt
+            all_titles = ", ".join(product_titles)
+            
+            # Create prompt
             generation_prompt = self._create_integration_prompt(
                 space_type=space_type,
-                product_title=product_title,
+                product_titles=product_titles,
                 inspiration_recommendations=inspiration_recommendations or [],
                 marker_locations=marker_locations or [],
                 custom_prompt=custom_prompt,
@@ -103,657 +746,117 @@ class GeminiImageClient:
                 design_style=design_style,
             )
 
-            print(f"🎨 Integration prompt: {generation_prompt}")
-
-            # Use FLUX for image-to-image generation
-            response = self.client.chat.completions.create(
-                extra_headers={
-                    "HTTP-Referer": "https://spaces-ai.com",
-                    "X-Title": "Spaces AI - Interior Design Tool",
-                },
-                model="google/gemini-2.5-flash-image-preview",  # Gemini for image analysis and generation
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": generation_prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": original_image_url,
-                                    "detail": "high",
-                                },
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": product_image_url_b64,
-                                    "detail": "high",
-                                },
-                            },
-                        ],
-                    }
-                ],
-                max_tokens=1024,
-                temperature=0.4,  # Lower temperature for more consistent results
+            # Configure for Image Generation
+            model_name = "gemini-3-pro-image-preview" 
+            
+            config = types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
             )
 
-            # DEBUG: Print the ENTIRE response structure
-            print("🔍 FULL OPENROUTER RESPONSE DEBUG:")
-            print("=" * 80)
+            # Add aspect ratio instruction
+            final_prompt = f"{generation_prompt}\n\nTechnical Requirement: Generate the image with a 1:1 Square Aspect Ratio."
 
-            # Print the raw response object
-            import json
+            # Prepare contents: prompt + original room + product images
+            contents = [final_prompt, original_room_image] + product_images
 
-            print("📦 RAW RESPONSE:")
-            if hasattr(response, "model_dump"):
-                try:
-                    response_dict = response.model_dump()
-                    print(json.dumps(response_dict, indent=2, default=str))
-                except Exception as e:
-                    print(f"Error dumping model: {e}")
-                    print(f"Response dict: {response.__dict__}")
-            else:
-                print(f"Response dict: {response.__dict__}")
-
-            print("=" * 80)
-            print("🔍 RESPONSE ANALYSIS:")
-            print(f"Response type: {type(response)}")
-            print(
-                f"Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}"
+            print(f"🚀 Sending request to {model_name} with {len(product_images)} product images...")
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
             )
 
-            # Check every attribute of the response
-            for attr in ["choices", "usage", "id", "created", "model", "object"]:
-                if hasattr(response, attr):
-                    value = getattr(response, attr)
-                    print(f"Response.{attr}: {type(value)} = {value}")
+            generated_image_b64 = None
+            
+            # Extract image from response
+            for part in response.parts:
+                if part.inline_data:
+                    generated_image_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
+                    print("✅ Successfully generated image")
+                    break
+            
+            if not generated_image_b64:
+                 raise ValueError("No image generated in response")
 
-            print("=" * 80)
-            print("🔍 CHOICES ANALYSIS:")
-            if hasattr(response, "choices") and response.choices:
-                for i, choice in enumerate(response.choices):
-                    print(f"Choice {i}:")
-                    print(f"  Type: {type(choice)}")
-                    print(
-                        f"  Attributes: {[attr for attr in dir(choice) if not attr.startswith('_')]}"
-                    )
-
-                    # Check every attribute of the choice
-                    for attr in ["message", "finish_reason", "index", "delta"]:
-                        if hasattr(choice, attr):
-                            value = getattr(choice, attr)
-                            print(f"  choice.{attr}: {type(value)} = {value}")
-
-                    # Deep dive into message
-                    if hasattr(choice, "message"):
-                        message = choice.message
-                        print("  MESSAGE ANALYSIS:")
-                        print(f"    Type: {type(message)}")
-                        print(
-                            f"    Attributes: {[attr for attr in dir(message) if not attr.startswith('_')]}"
-                        )
-
-                        # Check every attribute of the message
-                        for attr in [
-                            "role",
-                            "content",
-                            "tool_calls",
-                            "function_call",
-                            "images",
-                        ]:
-                            if hasattr(message, attr):
-                                value = getattr(message, attr)
-                                if (
-                                    attr == "content"
-                                    and isinstance(value, str)
-                                    and len(value) > 200
-                                ):
-                                    print(
-                                        f"    message.{attr}: {type(value)} = {value[:200]}...[{len(value)} chars total]"
-                                    )
-                                elif attr == "images" and value:
-                                    print(
-                                        f"    message.{attr}: {type(value)} = Found {len(value)} images"
-                                    )
-                                    for i, img in enumerate(value):
-                                        if hasattr(img, "image_url") and hasattr(
-                                            img.image_url, "url"
-                                        ):
-                                            url_preview = (
-                                                img.image_url.url[:100]
-                                                if len(img.image_url.url) > 100
-                                                else img.image_url.url
-                                            )
-                                            print(f"      Image {i}: {url_preview}...")
-                                else:
-                                    print(
-                                        f"    message.{attr}: {type(value)} = {value}"
-                                    )
-
-            print("=" * 80)
-
-            response_content = (
-                response.choices[0].message.content if response.choices else None
-            )
-
-            # Look for generated image in the correct location
-            generated_image = None
-
-            # Check if there are images in the message (Gemini format)
-            if (
-                response.choices
-                and hasattr(response.choices[0].message, "images")
-                and response.choices[0].message.images
-                and len(response.choices[0].message.images) > 0
-            ):
-                print("🎨 Found images in message.images!")
-
-                # Access as dictionary since images come back as dicts, not objects
-                first_image = response.choices[0].message.images[0]
-                print(f"First image structure: {first_image}")
-
-                if isinstance(first_image, dict) and "image_url" in first_image:
-                    image_data_url = first_image["image_url"]["url"]
-                    print(f"Image data URL preview: {image_data_url[:100]}...")
-
-                    # Extract base64 data from data URL
-                    if image_data_url.startswith("data:image/"):
-                        import re
-
-                        base64_match = re.search(
-                            r"data:image/[^;]+;base64,(.+)", image_data_url
-                        )
-                        if base64_match:
-                            image_data = base64_match.group(1)
-                            generated_image = Image.open(
-                                BytesIO(base64.b64decode(image_data))
-                            )
-                            print(
-                                "✅ Successfully extracted generated image from message.images"
-                            )
-                        else:
-                            print("❌ Could not extract base64 from image data URL")
-                    else:
-                        print(
-                            f"❌ Image URL doesn't start with data:image/, got: {image_data_url[:50]}"
-                        )
-                else:
-                    print(
-                        f"❌ Unexpected image structure: {type(first_image)} = {first_image}"
-                    )
-
-            # Fallback: Check if image is in response content (old method)
-            elif response_content and "data:image" in response_content:
-                import re
-
-                base64_match = re.search(
-                    r'data:image/[^;]+;base64,([^"\'>\s]+)', response_content
-                )
-                if base64_match:
-                    image_data = base64_match.group(1)
-                    generated_image = Image.open(BytesIO(base64.b64decode(image_data)))
-                    print(
-                        "✅ Successfully extracted generated image from response content"
-                    )
-                else:
-                    print("⚠️ No base64 image found in content")
-
-            # If no image found, create preview
-            if generated_image is None:
-                print("⚠️ No generated image found, creating preview")
-                generated_image = self._create_integration_preview(
-                    original_room_image, product_image, generation_prompt
-                )
-
-            # Convert generated image to base64 string
-            buffer = BytesIO()
-            generated_image.save(buffer, format="PNG")
-            image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-            print(f"✅ Generated image converted to base64 ({len(image_base64)} chars)")
-
-            return image_base64, generation_prompt
+            return generated_image_b64, generation_prompt
 
         except Exception as e:
             print(f"❌ Error generating product visualization: {e}")
+            traceback.print_exc()
             raise e
 
     def _download_image(self, image_url: str) -> Optional[Image.Image]:
         """Download and return a PIL Image from a URL"""
         try:
             print(f"📥 Downloading product image from: {image_url}")
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            }
 
             # Try direct download first
-            response = requests.get(
-                image_url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-                },
-                timeout=10,
-            )
+            response = requests.get(image_url, headers=headers, timeout=10)
 
             if response.status_code == 200:
-                # Check if it's actually an image
-                content_type = response.headers.get("content-type", "")
-                if content_type.startswith("image/"):
-                    image = Image.open(BytesIO(response.content))
-                    print(f"✅ Successfully downloaded image: {image.size}")
-                    return image
-                else:
-                    print(f"⚠️ Content-Type is not an image: {content_type}")
+                return Image.open(BytesIO(response.content))
 
             # Try with proxy if direct fails
             print("🔄 Trying with image proxy...")
             proxy_url = f"https://images.weserv.nl/?url={requests.utils.quote(image_url, safe='')}&w=1024&h=1024&fit=cover"
-
+            
             response = requests.get(proxy_url, timeout=15)
             if response.status_code == 200:
-                image = Image.open(BytesIO(response.content))
-                print(f"✅ Successfully downloaded via proxy: {image.size}")
-                return image
+                return Image.open(BytesIO(response.content))
 
-            print(f"❌ Failed to download image. Status: {response.status_code}")
             return None
 
         except Exception as e:
             print(f"❌ Error downloading image: {e}")
             return None
 
-    def _create_visualization_prompt(
-        self, space_type: str, product_title: str, custom_prompt: Optional[str] = None
-    ) -> str:
-        """Create a detailed prompt for product visualization"""
-
-        if custom_prompt:
-            base_prompt = custom_prompt
-        else:
-            # Generate context-aware prompt based on space type
-            space_contexts = {
-                "bedroom": "a cozy, modern bedroom with soft lighting and neutral tones",
-                "living_room": "a stylish living room with comfortable seating and warm ambiance",
-                "kitchen": "a clean, modern kitchen with natural lighting and organized space",
-                "dining_room": "an elegant dining area with good lighting and sophisticated decor",
-                "office": "a productive home office space with clean lines and organized setup",
-                "bathroom": "a spa-like bathroom with clean, minimal design and good lighting",
-                "outdoor": "an outdoor patio or deck area with natural elements and comfortable setting",
-            }
-
-            space_context = space_contexts.get(
-                space_type.lower(), f"a well-designed {space_type}"
-            )
-
-            base_prompt = f"""
-            Create a realistic, high-quality interior design visualization showing this product 
-            beautifully integrated into {space_context}. 
-            
-            The product should be the focal point and look natural in the space. 
-            Use professional interior design principles with:
-            - Proper scale and proportions
-            - Complementary colors and textures  
-            - Good lighting that highlights the product
-            - A cohesive, sophisticated style
-            - High-end, magazine-quality aesthetic
-            
-            Product: {product_title}
-            """
-
-        return base_prompt.strip()
-
     def _create_integration_prompt(
         self,
         space_type: str,
-        product_title: str,
+        product_titles: list,
         inspiration_recommendations: list,
         marker_locations: list,
         custom_prompt: Optional[str] = None,
         color_scheme: Dict[str, Any] = None,
         design_style: Dict[str, Any] = None,
     ) -> str:
-        """Create a comprehensive prompt for integrating product into the original room"""
-
-        # Build context from inspiration recommendations
-        inspiration_context = ""
-        if inspiration_recommendations:
-            inspiration_context = "\n\nInspiration Style Guide:\n"
-            for i, rec in enumerate(inspiration_recommendations[:3], 1):
-                inspiration_context += f"{i}. {rec}\n"
-
-        # Build context from marker locations
-        marker_context = ""
-        if marker_locations:
-            marker_context = "\n\nImprovement Areas Marked by User:\n"
-            for i, marker in enumerate(marker_locations[:5], 1):
-                # Assuming markers have x, y coordinates and maybe a description
-                marker_info = f"Area {i}"
-                if isinstance(marker, dict):
-                    if "x" in marker and "y" in marker:
-                        marker_info += f" at position ({marker['x']}, {marker['y']})"
-                    if "description" in marker:
-                        marker_info += f": {marker['description']}"
-                marker_context += f"- {marker_info}\n"
-
-        # Custom user prompt
-        user_context = ""
+        """Create a comprehensive prompt for integrating multiple products into the original room"""
+        
+        # Build context
+        context_parts = []
+        
+        titles_str = "', '".join(product_titles)
+        context_parts.append(f"Task: Integrate the following products into this {space_type} image: '{titles_str}'.")
+        
         if custom_prompt:
-            user_context = f"\n\nUser's Specific Request:\n{custom_prompt}\n"
+             context_parts.append(f"User Request: {custom_prompt}")
 
-        # Color scheme context
-        color_context = ""
+        if inspiration_recommendations:
+            context_parts.append("Style Guide:\n" + "\n".join(f"- {rec}" for rec in inspiration_recommendations[:3]))
+
+        if marker_locations:
+             context_parts.append("Placement Areas:\n" + "\n".join(f"- Marker {i+1}: {m.description}" for i, m in enumerate(marker_locations) if hasattr(m, 'description')))
+
         if color_scheme:
-            if color_scheme.get("keep_original"):
-                color_context = "\n\nColor Scheme: Keep the original room colors and maintain existing color harmony.\n"
-            elif color_scheme.get("palette_name") == "Let AI Decide":
-                color_context = "\n\nColor Scheme: Choose colors that best complement the product and room.\n"
-            else:
-                colors = color_scheme.get("colors", [])
-                palette_name = color_scheme.get("palette_name", "Custom")
-                color_context = f"\n\nColor Palette Instructions - '{palette_name}':\n"
-                color_context += f"Selected Colors: {', '.join(colors)}\n\n"
-                color_context += "CRITICAL COLOR GUIDANCE:\n"
-                color_context += f"- MAINTAIN the exact shape, form, and design of '{product_title}' - do NOT change the product itself\n"
-                color_context += f"- The product's core structure and style MUST remain identical\n"
-                color_context += f"- Apply subtle, professional color adjustments ONLY if the product allows (e.g., colored fabric, cushions, upholstery)\n"
-                color_context += f"- For products with customizable elements (sofas, chairs, curtains, bedding), thoughtfully adjust fabric/textile colors to incorporate the palette\n"
-                color_context += f"- For fixed-color products (wood furniture, metal fixtures), keep them as-is and integrate the palette through:\n"
-                color_context += f"  • Surrounding decor elements (pillows, throws, artwork, vases)\n"
-                color_context += f"  • Complementary accent pieces\n"
-                color_context += f"  • Wall colors or textures that harmonize with the palette\n"
-                color_context += f"  • Decorative accessories that echo the chosen colors\n"
-                color_context += f"- Think like a professional interior designer: use the palette to create cohesion without forcing it onto inappropriate surfaces\n"
-                color_context += f"- The result should feel intentional, sophisticated, and naturally integrated\n"
-
-        # Design style context
-        style_context = ""
+             palette = color_scheme.get("colors", [])
+             if palette:
+                 context_parts.append(f"Color Palette: {', '.join(palette)}")
+        
         if design_style:
-            if design_style.get("keep_original"):
-                style_context = "\n\nDesign Style: Maintain the original room's existing design style and aesthetic.\n"
-            else:
-                style_name = design_style.get("style_name", "Custom")
-                style_context = f"\n\nDesign Style Instructions - '{style_name}':\n\n"
-                
-                # Define style characteristics
-                style_guides = {
-                    "bohemian": "Eclectic, layered textures, rich colors, global influences, plants, vintage elements, relaxed vibe",
-                    "scandinavian": "Minimalist, light colors (whites, grays), natural materials, clean lines, functional, cozy hygge elements",
-                    "contemporary": "Clean lines, neutral palette with bold accents, minimal ornamentation, sleek furniture, modern materials",
-                    "coastal": "Light and airy, whites and blues, natural textures (rope, wicker), beach-inspired, relaxed elegance",
-                    "modern": "Geometric shapes, monochromatic palette, metallic accents, glass and steel, minimalist, cutting-edge",
-                    "art deco": "Luxurious, geometric patterns, rich jewel tones, gold accents, vintage glamour, bold symmetry",
-                }
-                
-                style_description = style_guides.get(style_name.lower(), "sophisticated, well-designed aesthetic")
-                
-                style_context += f"STYLE CHARACTERISTICS: {style_description}\n\n"
-                
-                # Coastal-specific emphasis
-                if style_name.lower() == "coastal":
-                    style_context += (
-                        "COASTAL FOCUS:\n"
-                        "- Add coastal features and give the room a coastal look and feel\n"
-                        "- Favor light woods, woven textures (rattan, jute), linen and cotton fabrics\n"
-                        "- Use whites and layered blues; keep the palette airy and sun-washed\n"
-                        "- Bring in ocean-inspired decor (shells, coral, seascape art) with restraint\n"
-                        "- Consider nautical touches (rope, stripes, brass) in a subtle, sophisticated way\n\n"
-                    )
-                style_context += "CRITICAL STYLE GUIDANCE:\n"
-                style_context += f"- The product '{product_title}' should be integrated to match the '{style_name}' aesthetic\n"
-                style_context += f"- Apply style through: furniture forms, decorative accessories, materials, textures, and overall ambiance\n"
-                style_context += f"- Surrounding decor elements should reinforce the {style_name} style:\n"
-                style_context += f"  • Furniture pieces with appropriate design language\n"
-                style_context += f"  • Textiles and fabrics that match the style period/mood\n"
-                style_context += f"  • Decorative objects (art, lighting, accessories) aligned with {style_name} principles\n"
-                style_context += f"  • Architectural details or treatments appropriate to the style\n"
-                style_context += f"- Maintain the product's core function while adapting its presentation to fit the {style_name} aesthetic\n"
-                style_context += f"- Think like a professional interior designer specializing in {style_name} design\n"
-                style_context += f"- The final result should feel cohesive, authentic to the {style_name} style, and professionally executed\n"
+             style = design_style.get("style_name")
+             if style:
+                 context_parts.append(f"Design Style: {style}")
 
-        # Main integration prompt
-        base_prompt = f"""
-CRITICAL INSTRUCTIONS - ROOM STRUCTURE PRESERVATION:
-- The original room's walls, ceiling, flooring, windows, and doors MUST remain exactly identical
-- Only add/integrate the new product into the existing space  
-- Do NOT change room dimensions, architectural elements, or structural features
-- Do NOT move or remove existing furniture unless specifically marked for improvement
-- Preserve all lighting, textures, and spatial relationships
+        context_parts.append("""
+        Instructions:
+        - seamlessly composite the product into the room
+        - match lighting, shadows, and perspective
+        - preserve the original room structure (walls, floor, windows)
+        - make it look photorealistic and high-design
+        """)
 
-TASK: Integrate the product "{product_title}" into the original {space_type} image.
-
-INTEGRATION REQUIREMENTS:
-1. **Preserve Original Room**: Keep walls, ceiling, floor, windows exactly as shown in the original image
-2. **Natural Placement**: Position the product where it would logically belong in this space type
-3. **Scale Accuracy**: Ensure the product is properly sized for the room
-4. **Lighting Consistency**: Match the lighting and shadows of the original room
-5. **Style Harmony**: Make the product fit the existing room's aesthetic
-{inspiration_context}
-{marker_context}
-{color_context}
-{style_context}
-{user_context}
-
-OUTPUT: Generate a new image that shows the exact same room with the product seamlessly integrated. 
-The result should look like the product was always meant to be in that space.
-
-EMPHASIS: The room structure, walls, layout, and architectural features must be IDENTICAL to the original image.
-Only the product should be added - everything else stays exactly the same.
-"""
-
-        return base_prompt.strip()
-
-    def _create_integration_preview(
-        self, original_room_image: Image.Image, product_image: Image.Image, prompt: str
-    ) -> Image.Image:
-        """Create a side-by-side preview when actual generation fails"""
-        try:
-            # Create a larger canvas to show both images side by side
-            room_width, room_height = original_room_image.size
-            product_width, product_height = product_image.size
-
-            # Scale product image to match room height if needed
-            if product_height > room_height:
-                ratio = room_height / product_height
-                new_product_width = int(product_width * ratio)
-                product_image = product_image.resize(
-                    (new_product_width, room_height), Image.Resampling.LANCZOS
-                )
-                product_width = new_product_width
-
-            # Create canvas
-            canvas_width = (
-                room_width + product_width + 60
-            )  # 60px for spacing and labels
-            canvas_height = (
-                max(room_height, product_height) + 120
-            )  # Extra space for text
-
-            canvas = Image.new("RGB", (canvas_width, canvas_height), color="#f8f9fa")
-
-            # Paste original room image
-            canvas.paste(original_room_image, (20, 60))
-
-            # Paste product image
-            canvas.paste(product_image, (room_width + 40, 60))
-
-            # Add text labels
-            from PIL import ImageDraw, ImageFont
-
-            draw = ImageDraw.Draw(canvas)
-
-            try:
-                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 24)
-                small_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 18)
-            except (IOError, OSError):
-                font = ImageFont.load_default()
-                small_font = ImageFont.load_default()
-
-            # Labels
-            draw.text((20, 20), "Original Room", fill="#2d3748", font=font)
-            draw.text(
-                (room_width + 40, 20), "Product to Integrate", fill="#2d3748", font=font
-            )
-
-            # Arrow indicating integration
-            arrow_y = 60 + room_height // 2
-            arrow_x = room_width + 20
-            draw.text((arrow_x - 10, arrow_y), "→", fill="#4299e1", font=font)
-
-            # Instructions at bottom
-            instruction = (
-                "Preview: Product will be integrated into the original room structure"
-            )
-            draw.text(
-                (20, canvas_height - 40), instruction, fill="#718096", font=small_font
-            )
-
-            return canvas
-
-        except Exception as e:
-            print(f"⚠️ Error creating integration preview: {e}")
-            return original_room_image
-
-    def _create_professional_visualization(
-        self, description: str, product_title: str, space_type: str
-    ) -> Image.Image:
-        """Create a professional visualization report image"""
-        try:
-            from PIL import Image, ImageDraw, ImageFont
-
-            # Create a canvas with professional colors
-            width, height = 1200, 900
-            image = Image.new("RGB", (width, height), color="#ffffff")
-            draw = ImageDraw.Draw(image)
-
-            # Try to use nice fonts
-            try:
-                title_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 36)
-                subtitle_font = ImageFont.truetype(
-                    "/System/Library/Fonts/Arial.ttf", 28
-                )
-                body_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 22)
-                small_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 18)
-            except (IOError, OSError):
-                try:
-                    title_font = ImageFont.load_default()
-                    subtitle_font = ImageFont.load_default()
-                    body_font = ImageFont.load_default()
-                    small_font = ImageFont.load_default()
-                except Exception:
-                    title_font = subtitle_font = body_font = small_font = None
-
-            # Header section with gradient-like effect
-            for i in range(120):
-                color_val = int(255 - (i * 0.3))
-                draw.rectangle(
-                    [0, i, width, i + 1],
-                    fill=(
-                        min(color_val, 255),
-                        min(color_val + 10, 255),
-                        min(color_val + 20, 255),
-                    ),
-                )
-
-            # Main title
-            title = "🏠 AI Interior Design Visualization"
-            if title_font:
-                title_bbox = draw.textbbox((0, 0), title, font=title_font)
-                title_width = title_bbox[2] - title_bbox[0]
-                draw.text(
-                    ((width - title_width) // 2, 30),
-                    title,
-                    fill="#1a202c",
-                    font=title_font,
-                )
-
-            # Product and space info
-            y_pos = 140
-            product_info = f"Product: {product_title}"
-            space_info = f"Space: {space_type.title()} Design"
-
-            if subtitle_font:
-                draw.text((50, y_pos), product_info, fill="#2d3748", font=subtitle_font)
-                y_pos += 40
-                draw.text((50, y_pos), space_info, fill="#4a5568", font=small_font)
-                y_pos += 60
-
-            # Word wrap the description with better formatting
-            words = description.split()
-            lines = []
-            current_line = ""
-            max_width = width - 100  # Padding on sides
-
-            for word in words:
-                test_line = current_line + (" " if current_line else "") + word
-                if body_font:
-                    bbox = draw.textbbox((0, 0), test_line, font=body_font)
-                    line_width = bbox[2] - bbox[0]
-                else:
-                    line_width = len(test_line) * 12  # rough estimate
-
-                if line_width <= max_width:
-                    current_line = test_line
-                else:
-                    if current_line:
-                        lines.append(current_line)
-                        current_line = word
-                    else:
-                        lines.append(word)
-
-            if current_line:
-                lines.append(current_line)
-
-            # Add section divider
-            draw.rectangle([50, y_pos, width - 50, y_pos + 2], fill="#e2e8f0")
-            y_pos += 20
-
-            # Draw the description text with better spacing
-            line_height = 32
-
-            for i, line in enumerate(lines):
-                if y_pos > height - 100:  # Stop if we run out of space
-                    break
-
-                # Highlight section headers (lines with **text**)
-                if line.strip().startswith("**") and line.strip().endswith("**"):
-                    # Section header
-                    header_text = line.strip().replace("**", "")
-                    if subtitle_font:
-                        draw.text(
-                            (50, y_pos), header_text, fill="#2d3748", font=subtitle_font
-                        )
-                    y_pos += 40
-                else:
-                    # Regular text
-                    if body_font:
-                        draw.text((70, y_pos), line, fill="#4a5568", font=body_font)
-                    else:
-                        draw.text((70, y_pos), line, fill="#4a5568")
-                    y_pos += line_height
-
-            # Add professional footer
-            draw.rectangle([0, height - 80, width, height], fill="#f7fafc")
-            footer_text = "✨ AI-Powered Interior Design Analysis • Spaces AI Platform"
-            if small_font:
-                footer_bbox = draw.textbbox((0, 0), footer_text, font=small_font)
-                footer_width = footer_bbox[2] - footer_bbox[0]
-                draw.text(
-                    ((width - footer_width) // 2, height - 45),
-                    footer_text,
-                    fill="#718096",
-                    font=small_font,
-                )
-
-            return image
-
-        except Exception as e:
-            print(f"⚠️ Error creating professional visualization: {e}")
-            # Return a simple professional fallback
-            fallback = Image.new("RGB", (1200, 900), color="#ffffff")
-            draw = ImageDraw.Draw(fallback)
-            draw.text(
-                (50, 100), f"AI Visualization for: {product_title}", fill="#2d3748"
-            )
-            draw.text((50, 150), f"Space Type: {space_type}", fill="#4a5568")
-            draw.text(
-                (50, 250), "Visualization analysis generated by AI", fill="#718096"
-            )
-            return fallback
+        return "\n\n".join(context_parts)

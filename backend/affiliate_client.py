@@ -111,9 +111,25 @@ class AffiliateClient:
                 return None
                 
             elif retailer == "ikea":
-                # IKEA product number pattern
-                match = re.search(r'/(\d{8,9})/', url)
-                return match.group(1) if match else None
+                # IKEA product number patterns:
+                #  - slug-with-name-80275887/
+                #  - /80275887/
+                #  - ?artnumber=80275887
+                #  - ?sku=80275887
+                patterns = [
+                    r'-([0-9]{6,9})(?:[/?]|$)',
+                    r'/([0-9]{6,9})/',
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, url)
+                    if match:
+                        return match.group(1)
+                parsed = urlparse(url)
+                qs = parse_qs(parsed.query)
+                for key in ("artnumber", "sku", "ARTNUMBER", "Sku"):
+                    if key in qs and len(qs[key]) > 0 and re.fullmatch(r'[0-9]{6,9}', qs[key][0]):
+                        return qs[key][0]
+                return None
                 
             elif retailer == "wayfair":
                 # Wayfair SKU pattern
@@ -178,8 +194,12 @@ class AffiliateClient:
                                      parsed.params, new_query, parsed.fragment))
             
             elif retailer == "ikea":
-                # IKEA affiliate link (simplified)
-                return f"{url}?affiliate_id={affiliate_id}"
+                # IKEA affiliate link (preserve existing query and append param)
+                parsed = urlparse(url)
+                params = parse_qs(parsed.query)
+                params['affiliate_id'] = [affiliate_id]
+                new_query = urlencode(params, doseq=True)
+                return urlunparse((parsed.scheme or 'https', parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
             
             elif retailer == "wayfair":
                 # Wayfair affiliate link
@@ -228,9 +248,13 @@ class AffiliateClient:
             return f"https://{base_domain}/gp/aws/cart/add.html?{params_str}&tag={affiliate_id}"
         
         elif retailer == "ikea":
-            # IKEA cart URL (simplified - actual implementation may vary)
-            items = ",".join(product_ids)
-            return f"https://www.ikea.com/us/en/shoppingcart/?items={items}&affiliate_id={affiliate_id}"
+            # IKEA cart URL:
+            # Best-effort: IKEA often requires session; provide product links instead of cart add.
+            # We'll link to the product page with affiliate params; cart URL remains bag if session not present.
+            if not product_ids:
+                return f"https://www.ikea.com/us/en/shoppingcart/?affiliate_id={affiliate_id}"
+            # Return the shopping cart base, but note: adding items programmatically may require authenticated session.
+            return f"https://www.ikea.com/us/en/shoppingcart/?affiliate_id={affiliate_id}"
         
         elif retailer == "wayfair":
             # Wayfair cart URL

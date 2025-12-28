@@ -30,18 +30,18 @@ class ExaClient:
 
         self.exa = Exa(self.api_key)
 
-    def search_products(self, query: str, num_results: int = 10) -> Dict[str, Any]:
+    def search_products(
+        self,
+        query: str,
+        num_results: int = 10,
+        similar_per_seed: int = 3,
+    ) -> Dict[str, Any]:
         """
-        Search for furniture products based on a text query
-
-        Args:
-            query: Search query (e.g., "modern gray sectional sofa")
-            num_results: Number of results to return
+        Search for furniture products using Exa search + contents, and expand with similar links.
 
         Returns:
-            Search results from Exa
+            Dict with results compatible with downstream parsing.
         """
-        # Focus on trusted furniture retailers
         trusted_domains = [
             "wayfair.com",
             "westelm.com",
@@ -64,91 +64,101 @@ class ExaClient:
         ]
 
         try:
-            print(f"\n🔍 DEBUG: Exa search query: '{query}'")
-            print(
-                f"🔍 DEBUG: Requesting {num_results} results (actual API call: {num_results * 2})"
-            )
+            print(f"\n🔍 EXA: search '{query}' (base={num_results}, similar={similar_per_seed})")
 
-            # Use the official Exa SDK
-            # Note: Can't use both include_domains and exclude_domains with content
-            # Try search without content first to get better URLs
-            basic_result = self.exa.search(
+            base_result = self.exa.search(
                 query=query,
                 num_results=num_results,
                 use_autoprompt=True,
-                type="auto",
+                type="keyword",
                 include_domains=trusted_domains,
             )
+            base_results = list(base_result.results or [])
+            print(f"🔍 EXA: base results {len(base_results)}")
 
-            print(
-                f"🔍 DEBUG: Basic search returned {len(basic_result.results) if basic_result.results else 0} results"
-            )
-
-            # Get content for fewer results to avoid rate limits
-            result = self.exa.get_contents(
-                urls=[
-                    r.url for r in basic_result.results[:5]
-                ],  # Only get content for first 5 URLs
-                text={
-                    "max_characters": 4000,  # Reduced to avoid timeouts
-                    "include_html_tags": True,
-                },
-            )
-
-            print(
-                f"🔍 DEBUG: Got content for {len(result.results) if result.results else 0} results"
-            )
-            if basic_result.results:
-                print("🔍 DEBUG: First basic result:")
-                first = basic_result.results[0]
-                print(f"  - URL: {first.url}")
-                print(f"  - Title: {first.title}")
-                print(f"  - ID: {first.id}")
-
-                # Check if we got content for this result
-                debug_content_by_url = (
-                    {item.url: item for item in result.results}
-                    if result.results
-                    else {}
-                )
-                content_item = debug_content_by_url.get(first.url)
-                if content_item:
-                    print("  - Has content: yes")
-                    print(
-                        f"  - Text length: {len(content_item.text) if hasattr(content_item, 'text') and content_item.text else 0} chars"
+            # Fetch content for a few top results
+            content_map: Dict[str, Any] = {}
+            try:
+                if base_results:
+                    contents = self.exa.get_contents(
+                        urls=[r.url for r in base_results[:5]],
+                        text={"max_characters": 4000, "include_html_tags": True},
                     )
-                    if hasattr(content_item, "text") and content_item.text:
-                        print(f"  - Text preview: {content_item.text[:200]}...")
-                else:
-                    print("  - Has content: no")
+                    if contents and contents.results:
+                        content_map.update({item.url: item for item in contents.results})
+                        print(f"🔍 EXA: contents fetched for {len(contents.results)}")
+            except Exception as e:
+                print(f"⚠️ EXA: get_contents failed: {e}")
 
-            # Convert to our expected format
+            # Expand with find_similar for a couple of seeds (pipeline synergy)
+            expanded_results = list(base_results)
+            seen_urls = {r.url for r in base_results}
+            for seed in base_results[:2]:
+                try:
+                    similar = self.exa.find_similar(
+                        url=seed.url,
+                        num_results=similar_per_seed,
+                        include_domains=trusted_domains,
+                        exclude_source_domain=True,
+                    )
+                    if similar and similar.results:
+                        added = 0
+                        for res in similar.results:
+                            if res.url in seen_urls:
+                                continue
+                            seen_urls.add(res.url)
+                            expanded_results.append(res)
+                            added += 1
+                        print(f"🔍 EXA: similar for {seed.url} added {added}")
+                except Exception as e:
+                    print(f"⚠️ EXA: find_similar failed for {seed.url}: {e}")
+
+            # Fetch content for any new URLs we don't have text for
+            missing_urls = [r.url for r in expanded_results if r.url not in content_map][:5]
+            if missing_urls:
+                try:
+                    contents = self.exa.get_contents(
+                        urls=missing_urls,
+                        text={"max_characters": 3000, "include_html_tags": True},
+                    )
+                    if contents and contents.results:
+                        content_map.update({item.url: item for item in contents.results})
+                        print(f"🔍 EXA: extra contents fetched for {len(contents.results)}")
+                except Exception as e:
+                    print(f"⚠️ EXA: extra get_contents failed: {e}")
+
             converted_results = {"results": []}
+            for item in expanded_results:
+                content_item = content_map.get(item.url)
+                # Drop if no shopping signals in content (price/add-to-cart/stock) within first 1000 chars
+                has_shopping_signals = False
+                if content_item:
+                    text_sample = (getattr(content_item, "text", "") or "")[:1000].lower()
+                    if any(tok in text_sample for tok in ["$", "add to cart", "add-to-cart", "in stock", "buy now"]):
+                        has_shopping_signals = True
 
-            # Create content mapping by URL for all results
-            content_by_url = (
-                {item.url: item for item in result.results} if result.results else {}
-            )
+                converted_results["results"].append(
+                    {
+                        "url": item.url,
+                        "title": item.title,
+                        "id": getattr(item, "id", ""),
+                        "published_date": getattr(item, "published_date", None),
+                        "author": getattr(item, "author", None),
+                        "extract": getattr(content_item, "extract", "")
+                        if content_item
+                        else getattr(item, "text", "") if hasattr(item, "text") else "",
+                        "text": getattr(content_item, "text", "")
+                        if content_item
+                        else getattr(item, "text", "") if hasattr(item, "text") else "",
+                        "highlights": getattr(content_item, "highlights", [])
+                        if content_item
+                        else getattr(item, "highlights", []),
+                        "score": getattr(item, "score", None),
+                        "shopping_signals": has_shopping_signals,
+                    }
+                )
 
-            for basic_item in basic_result.results:
-                content_item = content_by_url.get(basic_item.url)
-                converted_item = {
-                    "url": basic_item.url,
-                    "title": basic_item.title,
-                    "id": basic_item.id,
-                    "published_date": basic_item.published_date,
-                    "author": basic_item.author,
-                    "extract": getattr(content_item, "extract", "")
-                    if content_item
-                    else "",
-                    "text": getattr(content_item, "text", "") if content_item else "",
-                    "highlights": getattr(content_item, "highlights", [])
-                    if content_item
-                    else [],
-                }
-                converted_results["results"].append(converted_item)
-
-            print(f"🔍 DEBUG: Converted to {len(converted_results['results'])} results")
+            print(f"🔍 EXA: converted {len(converted_results['results'])} results")
             return converted_results
 
         except Exception as e:
@@ -180,7 +190,7 @@ class ExaClient:
         return products
 
     def search_and_analyze_products(
-        self, query: str, space_type: str, num_results: int = 15
+        self, query: str, space_type: str, num_results: int = 15, similar_per_seed: int = 3
     ) -> List[Dict[str, Any]]:
         """
         Complete workflow: search for products and analyze them
@@ -194,7 +204,7 @@ class ExaClient:
             List of analyzed products with scores and details
         """
         # Search for products
-        search_results = self.search_products(query, num_results)
+        search_results = self.search_products(query, num_results=num_results, similar_per_seed=similar_per_seed)
 
         if "error" in search_results:
             return []
@@ -217,8 +227,9 @@ class ExaClient:
             url = content_result.get("url", "")
             title = content_result.get("title", "")
             text = content_result.get("text", "")
+            shopping_signals = content_result.get("shopping_signals", False)
 
-            if not text:
+            if not text or not shopping_signals:
                 return None
 
             # Extract store name

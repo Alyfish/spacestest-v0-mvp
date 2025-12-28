@@ -1,6 +1,7 @@
 "use client";
 
 import { useGenerateImage } from "@/lib/api";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { useState } from "react";
 import { FurnitureIdentificationPanel } from "./FurnitureIdentificationPanel";
 
@@ -42,6 +43,10 @@ export function GeneratedImageDisplay({
   const generateImageMutation = useGenerateImage();
   const [imageError, setImageError] = useState(false);
   const [showFurniturePanel, setShowFurniturePanel] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
 
   const handleGenerateImage = () => {
     generateImageMutation.mutate(projectId, {
@@ -68,13 +73,19 @@ export function GeneratedImageDisplay({
             <img
               src={selectedProduct.image_url}
               alt={selectedProduct.title}
-              className="w-16 h-16 object-cover rounded-lg"
+              className="w-16 h-16 object-cover rounded-lg cursor-zoom-in"
               onError={(e) => {
                 const target = e.target as HTMLImageElement;
                 target.src = `https://images.weserv.nl/?url=${encodeURIComponent(
                   selectedProduct.image_url
                 )}&w=64&h=64&fit=cover`;
               }}
+              onClick={(event) =>
+                setLightboxImage({
+                  src: event.currentTarget.src,
+                  alt: selectedProduct.title,
+                })
+              }
             />
             <div className="flex-1">
               <p className="font-medium text-gray-900 dark:text-white">
@@ -196,6 +207,12 @@ export function GeneratedImageDisplay({
             </p>
           )}
         </div>
+        <ImageLightbox
+          isOpen={Boolean(lightboxImage)}
+          src={lightboxImage?.src || ""}
+          alt={lightboxImage?.alt || "Image preview"}
+          onClose={() => setLightboxImage(null)}
+        />
       </div>
     );
   }
@@ -217,13 +234,19 @@ export function GeneratedImageDisplay({
             <img
               src={selectedProduct.image_url}
               alt={selectedProduct.title}
-              className="w-full h-48 object-cover rounded-lg mb-3"
+              className="w-full h-48 object-cover rounded-lg mb-3 cursor-zoom-in"
               onError={(e) => {
                 const target = e.target as HTMLImageElement;
                 target.src = `https://images.weserv.nl/?url=${encodeURIComponent(
                   selectedProduct.image_url
                 )}&w=400&h=300&fit=cover`;
               }}
+              onClick={(event) =>
+                setLightboxImage({
+                  src: event.currentTarget.src,
+                  alt: selectedProduct.title,
+                })
+              }
             />
             <p className="font-medium text-gray-900 dark:text-white text-sm">
               {selectedProduct.title}
@@ -241,8 +264,14 @@ export function GeneratedImageDisplay({
               <img
                 src={`data:image/png;base64,${generatedImageBase64}`}
                 alt="AI Generated Visualization"
-                className="w-full h-48 object-cover rounded-lg mb-3"
+                className="w-full h-48 object-cover rounded-lg mb-3 cursor-zoom-in"
                 onError={() => setImageError(true)}
+                onClick={(event) =>
+                  setLightboxImage({
+                    src: event.currentTarget.src,
+                    alt: "AI Generated Visualization",
+                  })
+                }
               />
             ) : (
               <div className="w-full h-48 bg-gray-200 dark:bg-gray-600 rounded-lg mb-3 flex items-center justify-center">
@@ -330,6 +359,12 @@ export function GeneratedImageDisplay({
           )}
         </button>
       </div>
+      <ImageLightbox
+        isOpen={Boolean(lightboxImage)}
+        src={lightboxImage?.src || ""}
+        alt={lightboxImage?.alt || "Image preview"}
+        onClose={() => setLightboxImage(null)}
+      />
     </div>
   );
 }

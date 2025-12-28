@@ -1,6 +1,7 @@
 import { getProjectImageUrl, useUploadProjectImage } from "@/lib/api";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import Image from "next/image";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 interface ImageUploadSectionProps {
   projectId: string;
@@ -15,6 +16,10 @@ export function ImageUploadSection({
 }: ImageUploadSectionProps) {
   const uploadImageMutation = useUploadProjectImage();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
 
   return (
     <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
@@ -81,7 +86,15 @@ export function ImageUploadSection({
                 Uploaded Image
               </h3>
               <div className="space-y-4">
-                <div className="relative w-full h-64 bg-gray-200 dark:bg-gray-600 rounded-lg overflow-hidden">
+                <div
+                  className="relative w-full h-64 bg-gray-200 dark:bg-gray-600 rounded-lg overflow-hidden cursor-zoom-in"
+                  onClick={() =>
+                    setLightboxImage({
+                      src: getProjectImageUrl(projectId),
+                      alt: "Uploaded room image",
+                    })
+                  }
+                >
                   <Image
                     src={getProjectImageUrl(projectId)}
                     alt="Uploaded room image"
@@ -108,6 +121,12 @@ export function ImageUploadSection({
           )}
         </div>
       )}
+      <ImageLightbox
+        isOpen={Boolean(lightboxImage)}
+        src={lightboxImage?.src || ""}
+        alt={lightboxImage?.alt || "Image preview"}
+        onClose={() => setLightboxImage(null)}
+      />
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { getProjectLabelledImageUrl, ImprovementMarker } from "@/lib/api";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import Image from "next/image";
+import { useState } from "react";
 
 interface LabelledImageDisplayProps {
   projectId: string;
@@ -10,6 +12,11 @@ export function LabelledImageDisplay({
   projectId,
   markers,
 }: LabelledImageDisplayProps) {
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
+
   return (
     <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
       <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
@@ -21,7 +28,15 @@ export function LabelledImageDisplay({
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
             Image with Visual Markers
           </h3>
-          <div className="relative w-full h-96 bg-gray-200 dark:bg-gray-600 rounded-lg overflow-hidden">
+          <div
+            className="relative w-full h-96 bg-gray-200 dark:bg-gray-600 rounded-lg overflow-hidden cursor-zoom-in"
+            onClick={() =>
+              setLightboxImage({
+                src: getProjectLabelledImageUrl(projectId),
+                alt: "Room image with improvement markers",
+              })
+            }
+          >
             <Image
               src={getProjectLabelledImageUrl(projectId)}
               alt="Room image with improvement markers"
@@ -77,6 +92,12 @@ export function LabelledImageDisplay({
           </div>
         )}
       </div>
+      <ImageLightbox
+        isOpen={Boolean(lightboxImage)}
+        src={lightboxImage?.src || ""}
+        alt={lightboxImage?.alt || "Image preview"}
+        onClose={() => setLightboxImage(null)}
+      />
     </div>
   );
 }

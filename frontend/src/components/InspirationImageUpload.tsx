@@ -2,25 +2,34 @@
 
 import {
   getInspirationImageUrl,
+  useSkipInspirationImages,
   useUploadInspirationImagesBatch,
 } from "@/lib/api";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import Image from "next/image";
 import { useRef, useState } from "react";
 
 interface InspirationImageUploadProps {
   projectId: string;
   inspirationImages: string[];
+  inspirationSkipped?: boolean;
 }
 
 export function InspirationImageUpload({
   projectId,
   inspirationImages,
+  inspirationSkipped,
 }: InspirationImageUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadMutation = useUploadInspirationImagesBatch();
+  const skipMutation = useSkipInspirationImages();
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -115,6 +124,30 @@ export function InspirationImageUpload({
           </p>
         </div>
 
+        {!inspirationImages.length && !inspirationSkipped && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Inspiration images are optional. You can skip and continue.
+            </p>
+            <button
+              onClick={() => skipMutation.mutate(projectId)}
+              disabled={skipMutation.isPending}
+              className="px-4 py-2 text-sm text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {skipMutation.isPending ? "Skipping..." : "Skip for now"}
+            </button>
+          </div>
+        )}
+
+        {inspirationSkipped && inspirationImages.length === 0 && (
+          <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Inspiration images skipped. You can upload images anytime to add
+              inspiration guidance.
+            </p>
+          </div>
+        )}
+
         {/* Upload Area */}
         <div
           className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
@@ -189,7 +222,13 @@ export function InspirationImageUpload({
               {previewUrls.map((url, index) => (
                 <div
                   key={index}
-                  className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden group"
+                  className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden group cursor-zoom-in"
+                  onClick={() =>
+                    setLightboxImage({
+                      src: url,
+                      alt: `Preview ${index + 1}`,
+                    })
+                  }
                 >
                   <Image
                     src={url}
@@ -199,7 +238,10 @@ export function InspirationImageUpload({
                     sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw"
                   />
                   <button
-                    onClick={() => removeFile(index)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeFile(index);
+                    }}
                     className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     ×
@@ -236,6 +278,12 @@ export function InspirationImageUpload({
           </div>
         )}
 
+        {skipMutation.isError && (
+          <div className="text-red-600 dark:text-red-400 text-sm text-center">
+            Error: {skipMutation.error?.message}
+          </div>
+        )}
+
         {/* Uploaded Images */}
         {inspirationImages.length > 0 && (
           <div className="space-y-4">
@@ -246,7 +294,13 @@ export function InspirationImageUpload({
               {inspirationImages.map((imagePath, index) => (
                 <div
                   key={index}
-                  className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden"
+                  className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden cursor-zoom-in"
+                  onClick={() =>
+                    setLightboxImage({
+                      src: getInspirationImageUrl(projectId, index),
+                      alt: `Inspiration image ${index + 1}`,
+                    })
+                  }
                 >
                   <Image
                     src={getInspirationImageUrl(projectId, index)}
@@ -264,6 +318,12 @@ export function InspirationImageUpload({
           </div>
         )}
       </div>
+      <ImageLightbox
+        isOpen={Boolean(lightboxImage)}
+        src={lightboxImage?.src || ""}
+        alt={lightboxImage?.alt || "Image preview"}
+        onClose={() => setLightboxImage(null)}
+      />
     </div>
   );
 }

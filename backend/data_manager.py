@@ -17,13 +17,30 @@ from logger_config import (
     log_user_action,
 )
 from models import ImprovementMarker, ProjectContext, ClipRect
-from openai_client import OpenAIClient
+from gemini_client import GeminiClient
 from serp_client import SerpClient
 from exa_client import ExaClient
 from claude_client import claude_client
+from openai_client import OpenAIClient
 
 DATA_FILE = Path("data/projects.json")
 IMAGES_DIR = Path("data/images")
+MARKERS_SAVED_STATUS = "IMPROVEMENT_MARKERS_SAVED"
+STATUS_ORDER = [
+    "NEW",
+    "BASE_IMAGE_UPLOADED",
+    "SPACE_TYPE_SELECTED",
+    MARKERS_SAVED_STATUS,
+    "MARKER_RECOMMENDATIONS_READY",
+    "INSPIRATION_IMAGES_UPLOADED",
+    "INSPIRATION_RECOMMENDATIONS_READY",
+    "PRODUCT_RECOMMENDATIONS_READY",
+    "PRODUCT_RECOMMENDATION_SELECTED",
+    "PRODUCT_SEARCH_COMPLETE",
+    "PRODUCT_SELECTED",
+    "IMAGE_GENERATED",
+    "INSPIRATION_REDESIGN_COMPLETE",
+]
 
 
 class DataManager:
@@ -31,7 +48,7 @@ class DataManager:
         self.logger = logging.getLogger("spaces_ai")
         self._ensure_data_file_exists()
         self._ensure_images_dir_exists()
-        self.openai_client = OpenAIClient()
+        self.gemini_client = GeminiClient()
 
         # Initialize SERP client for product discovery
         try:
@@ -50,16 +67,7 @@ class DataManager:
             self.exa_client = None
 
         # Initialize Gemini client for image generation
-        try:
-            from gemini_client import GeminiImageClient
-
-            self.gemini_client = GeminiImageClient()
-            self.logger.info(
-                "Successfully initialized Gemini client for image generation"
-            )
-        except Exception as e:
-            self.logger.warning(f"Could not initialize Gemini client: {e}")
-            self.gemini_client = None
+        # Gemini client is now the main client, initialized above
 
         # Initialize CLIP client for enhanced image-based search
         try:
@@ -76,6 +84,13 @@ class DataManager:
         except Exception as e:
             self.logger.warning(f"Could not initialize CLIP client: {e}")
             self.clip_client = None
+
+        # OpenAI client for vision (used in clip search query generation fallback)
+        try:
+            self.openai_client = OpenAIClient()
+        except Exception as e:
+            self.logger.warning(f"OpenAI client not available: {e}")
+            self.openai_client = None
 
     def _ensure_data_file_exists(self):
         """Create the data file if it doesn't exist"""
@@ -118,7 +133,7 @@ class DataManager:
                 reasoning: str
 
             # Analyze the image using vision API
-            result = self.openai_client.analyze_image_with_vision(
+            result = self.gemini_client.analyze_image_with_vision(
                 prompt="Analyze this room image and determine if it's empty. Consider furniture, decorations, and general room contents.",
                 pydantic_model=RoomEmptinessCheck,
                 image_path=image_path,
@@ -137,6 +152,7 @@ class DataManager:
         space_type: str,
         markers: List[ImprovementMarker],
         labelled_image_path: str,
+        context: ProjectContext,
     ) -> List[str]:
         """
         Generate AI recommendations based on improvement markers
@@ -158,6 +174,12 @@ class DataManager:
             class AIRecommendationResponse(BaseModel):
                 recommendations: List[str]
 
+            color_palette = context.color_analysis.get("palette_name") if context.color_analysis else None
+            primary_colors = context.color_analysis.get("primary_colors") if context.color_analysis else None
+            style_name = context.style_analysis.get("style_name") if context.style_analysis else None
+            style_materials = context.style_analysis.get("materials") if context.style_analysis else None
+            preferred_stores = context.preferred_stores or []
+
             # Build the prompt with marker information
             marker_info = "\n".join(
                 [
@@ -167,9 +189,14 @@ class DataManager:
             )
 
             prompt = f"""
-            Analyze this {space_type} and provide specific interior design recommendations based on the user's improvement markers.
+            Analyze the BASE ROOM IMAGE and provide specific interior design recommendations based on the user's improvement markers.
 
             Space Type: {space_type}
+            Color Palette: {color_palette or "Not provided"}
+            Primary Colors (guidance): {primary_colors or "Not provided"}
+            Design Style: {style_name or "Not provided"}
+            Style Materials: {style_materials or "Not provided"}
+            Preferred Stores: {preferred_stores or "Not provided"}
             
             User's Improvement Requests:
             {marker_info}
@@ -178,20 +205,27 @@ class DataManager:
             - Be specific about what to change and where
             - Reference the marker locations in the image
             - Include practical suggestions for furniture, decor, or layout changes
+            - Align with the given color palette and design style
+            - Favor items that could realistically be sourced from the preferred stores listed
             - Be written in a clear, actionable format
+            - Keep outputs concise (1–2 sentences each)
 
-            Format each recommendation as a simple string that clearly states what to do and where.
+            IMPORTANT: Return exactly 6 recommendations, each as a simple string that clearly states what to do and where.
             """
 
             # Analyze the labelled image with markers using vision API
-            result = self.openai_client.analyze_image_with_vision(
+            result = self.gemini_client.analyze_image_with_vision(
                 prompt=prompt,
                 pydantic_model=AIRecommendationResponse,
                 image_path=labelled_image_path,
-                system_message="You are an expert interior designer. Provide specific, actionable recommendations for improving spaces based on user feedback. Focus on practical changes that can be easily implemented.",
+                system_message="You are an expert interior designer. Provide specific, actionable recommendations for improving spaces based on user feedback. Focus on practical changes that can be easily implemented, aligned to the provided color palette, design style, and preferred stores. Always return exactly 4 recommendations.",
             )
 
-            return result.recommendations
+            recs = (result.recommendations or [])[:6]
+            while len(recs) < 6:
+                recs.append("Add a cohesive accent that matches the selected style and palette")
+
+            return recs
 
         except Exception as e:
             print(f"Error generating marker recommendations: {e}")
@@ -204,6 +238,61 @@ class DataManager:
                 "Improve lighting in the area marked with marker 2",
                 "Add texture and visual interest at marker 3",
             ]
+
+    def _dedupe_products_by_url(self, products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Deduplicate products by normalized URL (drop query params/fragments)."""
+        from urllib.parse import urlparse, urlunparse
+
+        def normalize(u: str) -> str:
+            try:
+                parsed = urlparse(u)
+                cleaned = parsed._replace(query="", fragment="")
+                return urlunparse(cleaned).lower()
+            except Exception:
+                return u.split("?")[0].lower()
+
+        seen = set()
+        deduped: List[Dict[str, Any]] = []
+        for p in products:
+            url = p.get("url") or ""
+            key = normalize(url)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            deduped.append(p)
+        return deduped
+
+    def _type_guard(self, title: str, target_type: str) -> bool:
+        """Allow only titles that match the target type family and reject decor/how-to."""
+        t = title.lower()
+        tt = target_type.lower()
+        # Negative keywords for decor/how-to
+        negatives = ["decor", "how to", "ideas", "tutorial", "guide", "inspiration", "poster", "print"]
+        if any(neg in t for neg in negatives):
+            return False
+
+        # Core category mapping
+        type_map = {
+            "shelf": ["shelf", "shelving", "bookcase", "wall shelf"],
+            "console table": ["console table", "sofa table", "entry table"],
+            "table": ["table", "dining table", "coffee table", "side table", "end table", "desk"],
+            "bench": ["bench", "ottoman", "entry bench"],
+            "chair": ["chair", "armchair", "accent chair", "dining chair", "desk chair"],
+            "sofa": ["sofa", "couch", "sectional", "loveseat"],
+            "bed": ["bed", "platform bed", "bed frame", "headboard"],
+            "lamp": ["lamp", "floor lamp", "table lamp", "sconce"],
+            "storage": ["cabinet", "dresser", "sideboard", "buffet", "storage"],
+            "rug": ["rug", "runner"],
+        }
+
+        # Find matched family
+        for family, keywords in type_map.items():
+            if tt in family or tt in " ".join(keywords):
+                return any(k in t for k in keywords)
+
+        # Default: require target_type substring
+        return tt in t
 
     def _create_labelled_image(
         self, base_image_path: str, markers: List[ImprovementMarker]
@@ -333,6 +422,38 @@ class DataManager:
         """Get all projects"""
         return self._load_projects()
 
+    def delete_project(self, project_id: str) -> bool:
+        """
+        Delete a project and its associated files
+        
+        Args:
+            project_id: ID of the project to delete
+            
+        Returns:
+            bool: True if project was deleted, False if not found
+        """
+        projects = self._load_projects()
+        
+        if project_id not in projects:
+            return False
+            
+        # Delete project images directory
+        project_images_dir = IMAGES_DIR / project_id
+        if project_images_dir.exists():
+            shutil.rmtree(project_images_dir)
+            self.logger.info(f"Deleted images directory for project {project_id}")
+            
+        # Remove from projects dictionary
+        del projects[project_id]
+        
+        # Save updated projects
+        self._save_projects(projects)
+        
+        self.logger.info(f"Deleted project {project_id}")
+        log_user_action("project_deleted", project_id=project_id)
+        
+        return True
+
     def upload_image(
         self, project_id: str, image_file: UploadFile, filename: str
     ) -> str:
@@ -424,20 +545,7 @@ class DataManager:
                 )
                 markers_with_colors.append(marker_with_color)
 
-            print(
-                f"Generating AI recommendations for {len(markers_with_colors)} markers"
-            )
-            # Generate AI recommendations based on markers
-            recommendations = self._generate_marker_recommendations(
-                space_type,
-                markers_with_colors,
-                labelled_image_path,
-            )
-
-            print(
-                f"Updating project context with {len(recommendations)} recommendations"
-            )
-            # Update project with markers, labelled image, recommendations, and status
+            # Update project with markers and labelled image; recommendations generated later when design context is ready
             current_context = ProjectContext.model_validate(
                 projects[project_id]["context"]
             )
@@ -445,15 +553,17 @@ class DataManager:
                 update={
                     "improvement_markers": markers_with_colors,
                     "labelled_base_image": labelled_image_path,
-                    "marker_recommendations": recommendations,
+                    "marker_recommendations": [],
                 }
             )
 
             projects[project_id]["context"] = updated_context.model_dump()
-            projects[project_id]["status"] = "MARKER_RECOMMENDATIONS_READY"
+            projects[project_id]["status"] = MARKERS_SAVED_STATUS
 
             print("Saving projects to file")
             self._save_projects(projects)
+            # Attempt generation if design context is already present
+            self._try_generate_marker_recommendations(project_id)
             print("Successfully completed save_improvement_markers")
             return labelled_image_path
 
@@ -493,7 +603,10 @@ class DataManager:
             ]
 
             updated_context = current_context.model_copy(
-                update={"inspiration_images": updated_inspiration_images}
+                update={
+                    "inspiration_images": updated_inspiration_images,
+                    "inspiration_images_skipped": False,
+                }
             )
 
             projects[project_id]["context"] = updated_context.model_dump()
@@ -550,7 +663,10 @@ class DataManager:
             )
 
             updated_context = current_context.model_copy(
-                update={"inspiration_images": updated_inspiration_images}
+                update={
+                    "inspiration_images": updated_inspiration_images,
+                    "inspiration_images_skipped": False,
+                }
             )
 
             projects[project_id]["context"] = updated_context.model_dump()
@@ -579,11 +695,25 @@ class DataManager:
             context = ProjectContext.model_validate(projects[project_id]["context"])
 
             if not context.inspiration_images:
+                if context.inspiration_images_skipped:
+                    raise ValueError(
+                        "Inspiration images were skipped. Upload images to generate recommendations."
+                    )
                 raise ValueError("No inspiration images found for this project")
+
+            if not context.base_image:
+                raise ValueError("No base image found for this project")
 
             if not context.space_type:
                 raise ValueError("No space type selected for this project")
-
+            
+            # Require color and style context (or explicit skips) before generating
+            if not context.color_analysis and not context.color_analysis_skipped:
+                raise ValueError("Please select a color palette or skip color analysis before generating recommendations")
+            
+            if not context.style_analysis and not context.style_analysis_skipped:
+                raise ValueError("Please select a design style or skip style analysis before generating recommendations")
+            
             # Create a Pydantic model for the AI response
             from typing import List
 
@@ -600,54 +730,352 @@ class DataManager:
                 ]
             )
 
-            prompt = f"""
-            Analyze these inspiration images for a {context.space_type} design project and provide specific recommendations.
+            # Extract color and style information
+            color_name = (
+                context.color_analysis.get("palette_name", "Custom")
+                if context.color_analysis
+                else "Not provided"
+            )
+            color_overview = (
+                context.color_analysis.get("design_brief", "")
+                if context.color_analysis
+                else ""
+            )
+            style_name = (
+                context.style_analysis.get("style_name", "Modern")
+                if context.style_analysis
+                else "Not provided"
+            )
+            style_overview = (
+                context.style_analysis.get("style_overview", "")
+                if context.style_analysis
+                else ""
+            )
+            materials = (
+                ", ".join(context.style_analysis.get("materials", [])[:5])
+                if context.style_analysis
+                else ""
+            )
+            preferred_stores = ", ".join(context.preferred_stores or [])
+            
+            # Format improvement markers if they exist
+            markers_text = ""
+            if context.improvement_markers:
+                markers_list = [f"- {m.description}" for m in context.improvement_markers]
+                markers_text = "\nUser's Specific Improvement Requests (High Priority):\n" + "\n".join(markers_list)
 
+            prompt = f"""
+            Analyze the attached base room image along with the inspiration images for this {context.space_type} project and provide exactly 6 specific recommendations.
+            
             Space Type: {context.space_type}
+            
+            Selected Color Palette: {color_name}
+            Color Guidance: {color_overview}
+            
+            Selected Style: {style_name}
+            Style Overview: {style_overview}
+            Key Materials: {materials}
+            
+            Preferred Stores (prioritize these if possible): {preferred_stores}
+            {markers_text}
             
             Inspiration Images:
             {inspiration_info}
 
-            Based on these inspiration images, provide specific, actionable design recommendations that:
-            - Incorporate the style, colors, and design elements from the inspiration images
-            - Are tailored to the {context.space_type} space type
-            - Include practical suggestions for furniture, decor, colors, and layout
-            - Reference specific elements from the inspiration images
-            - Are written in a clear, actionable format
-
+            Use the BASE ROOM IMAGE as the primary context for feasibility and layout.
+            
+            Based on the base room image, the inspiration images, the selected color palette, the chosen design style, AND the user's specific improvement requests (if any), provide exactly 4 specific, actionable design recommendations that:
+            1. DIRECTLY ADDRESS user's improvement requests if present (these are highest priority).
+            2. Incorporate the user's selected color palette throughout the recommendations.
+            3. Follow the principles of the user's chosen {style_name} design style.
+            4. Are tailored to the {context.space_type} space type.
+            5. Respect the room's existing layout, lighting, and architectural constraints visible in the base image.
+            6. Include practical suggestions for furniture, decor, and layout.
+            7. Are written in a clear, actionable format.
+            
+            IMPORTANT: Provide exactly 4 recommendations. Each recommendation should be a complete, standalone suggestion.
             Format each recommendation as a simple string that clearly states what to do and where.
             """
 
-            # Analyze the inspiration images using vision API
-            # For now, we'll analyze the first inspiration image
-            # In a full implementation, you might want to analyze all images
-            first_inspiration = context.inspiration_images[0]
+            # Resolve base image path
+            base_path = Path(context.base_image)
+            # If path logic is tricky, just check if it exists as is (relative to CWD)
+            if not base_path.exists():
+                # Try fallback relative to data dir if needed, but context.base_image usually has full relative path
+                candidate = DATA_FILE.parent / base_path
+                if candidate.exists():
+                    base_path = candidate
+                elif not base_path.is_absolute():
+                     # Last ditch: try without any leading directories if they were duplicated
+                     # But most likely it's just relative to root.
+                     pass
 
-            result = self.openai_client.analyze_image_with_vision(
+            if not base_path.exists():
+                raise ValueError(f"Base image not found at {base_path}")
+
+            # Use the first inspiration image as an additional visual reference
+            first_inspiration = context.inspiration_images[0]
+            first_inspiration_path = Path(first_inspiration)
+            
+            if not first_inspiration_path.exists():
+                 candidate = DATA_FILE.parent / first_inspiration_path
+                 if candidate.exists():
+                     first_inspiration_path = candidate
+
+            if not first_inspiration_path.exists():
+                raise ValueError(f"Inspiration image not found at {first_inspiration_path}")
+
+            result = self.gemini_client.analyze_image_with_vision(
                 prompt=prompt,
                 pydantic_model=AIInspirationResponse,
-                image_path=first_inspiration,
-                system_message="You are an expert interior designer. Analyze inspiration images and provide specific, actionable design recommendations that incorporate the style and elements from the inspiration while being practical for the target space type.",
+                image_path=str(base_path),
+                additional_image_paths=[str(first_inspiration_path)],
+                system_message="You are an expert interior designer. Analyze inspiration images and provide specific, actionable design recommendations that incorporate the user's selected color palette and design style while being practical for the target space type. Always provide exactly 4 recommendations.",
             )
+
+            # Ensure we have exactly 4 recommendations
+            recommendations = result.recommendations[:4]
+            if len(recommendations) < 4:
+                # Pad if needed (shouldn't happen but just in case)
+                while len(recommendations) < 4:
+                    recommendations.append(f"Consider adding decorative accents that complement your {style_name} style")
 
             # Update project with inspiration recommendations
             updated_context = context.model_copy(
-                update={"inspiration_recommendations": result.recommendations}
+                update={"inspiration_recommendations": recommendations}
             )
 
             projects[project_id]["context"] = updated_context.model_dump()
             projects[project_id]["status"] = "INSPIRATION_RECOMMENDATIONS_READY"
 
             print(
-                f"Generated {len(result.recommendations)} inspiration recommendations"
+                f"Generated {len(recommendations)} inspiration recommendations"
             )
             self._save_projects(projects)
-            return result.recommendations
+            return recommendations
 
         except Exception as e:
             print(f"ERROR in generate_inspiration_recommendations: {e}")
             import traceback
 
+            traceback.print_exc()
+            raise
+
+    def apply_color_scheme(
+        self, 
+        project_id: str, 
+        palette_name: str, 
+        colors: List[str],
+        let_ai_decide: bool = False
+    ) -> Dict[str, Any]:
+        """Apply a color scheme using the Color Agent for intelligent color application guidance"""
+        try:
+            print(f"🎨 Applying color scheme for project {project_id}")
+            print(f"   Palette: {palette_name}, Colors: {colors}, AI Decide: {let_ai_decide}")
+            
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(projects[project_id]["context"])
+
+            if not context.base_image:
+                raise ValueError("No base image found for this project")
+            
+            if not context.space_type:
+                raise ValueError("No space type selected for this project")
+
+            # Call the Color Agent to analyze and provide guidance
+            color_analysis = self.gemini_client.analyze_color_application(
+                image_path=context.base_image,
+                palette_name=palette_name,
+                palette_colors=colors,
+                space_type=context.space_type,
+                let_ai_decide=let_ai_decide,
+            )
+
+            # Update project context with the color analysis
+            # Also update color_scheme for backward compatibility with image generation
+            color_scheme_data = {
+                "palette_name": palette_name,
+                "colors": colors,
+                "let_ai_decide": let_ai_decide,
+            }
+            
+            updated_context = context.model_copy(
+                update={
+                    "color_analysis": color_analysis,
+                    "color_scheme": color_scheme_data,
+                    "color_analysis_skipped": False,
+                }
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            # Note: We don't change the project status here as color selection is optional
+            # and doesn't block the workflow
+
+            print(f"✅ Color Agent analysis saved for project {project_id}")
+            self._save_projects(projects)
+            # Trigger marker recommendations if all prerequisites are met
+            self._try_generate_marker_recommendations(project_id)
+            return color_analysis
+
+        except Exception as e:
+            print(f"❌ ERROR in apply_color_scheme: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def apply_style(
+        self, 
+        project_id: str, 
+        style_name: str, 
+        let_ai_decide: bool = False
+    ) -> Dict[str, Any]:
+        """Apply an interior design style using the Style Agent for comprehensive guidance"""
+        try:
+            print(f"🎨 Applying style for project {project_id}")
+            print(f"   Style: {style_name}, AI Decide: {let_ai_decide}")
+            
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(projects[project_id]["context"])
+
+            if not context.base_image:
+                raise ValueError("No base image found for this project")
+            
+            if not context.space_type:
+                raise ValueError("No space type selected for this project")
+
+            # Get any existing color scheme to coordinate
+            color_scheme = context.color_scheme
+
+            # Call the Style Agent to analyze and provide guidance
+            style_analysis = self.gemini_client.analyze_style_application(
+                image_path=context.base_image,
+                style_name=style_name,
+                space_type=context.space_type,
+                color_scheme=color_scheme,
+                let_ai_decide=let_ai_decide,
+            )
+
+            # Update project context with the style analysis
+            # Also update design_style for backward compatibility with image generation
+            design_style_data = {
+                "style_name": style_name,
+                "let_ai_decide": let_ai_decide,
+            }
+            
+            updated_context = context.model_copy(
+                update={
+                    "style_analysis": style_analysis,
+                    "design_style": design_style_data,
+                    "style_analysis_skipped": False,
+                }
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+
+            print(f"✅ Style Agent analysis saved for project {project_id}")
+            self._save_projects(projects)
+            # Trigger marker recommendations if all prerequisites are met
+            self._try_generate_marker_recommendations(project_id)
+            return style_analysis
+
+        except Exception as e:
+            print(f"❌ ERROR in apply_style: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def skip_color_analysis(self, project_id: str) -> None:
+        """Skip color analysis for a project to unblock downstream steps."""
+        projects = self._load_projects()
+
+        if project_id not in projects:
+            raise ValueError(f"Project {project_id} not found")
+
+        context = ProjectContext.model_validate(projects[project_id]["context"])
+        updated_context = context.model_copy(
+            update={
+                "color_analysis": None,
+                "color_scheme": None,
+                "color_analysis_skipped": True,
+            }
+        )
+
+        projects[project_id]["context"] = updated_context.model_dump()
+        self._save_projects(projects)
+        self._try_generate_marker_recommendations(project_id)
+
+    def skip_style_analysis(self, project_id: str) -> None:
+        """Skip style analysis for a project to unblock downstream steps."""
+        projects = self._load_projects()
+
+        if project_id not in projects:
+            raise ValueError(f"Project {project_id} not found")
+
+        context = ProjectContext.model_validate(projects[project_id]["context"])
+        updated_context = context.model_copy(
+            update={
+                "style_analysis": None,
+                "design_style": None,
+                "style_analysis_skipped": True,
+            }
+        )
+
+        projects[project_id]["context"] = updated_context.model_dump()
+        self._save_projects(projects)
+        self._try_generate_marker_recommendations(project_id)
+
+    def skip_inspiration_images(self, project_id: str) -> None:
+        """Skip inspiration images to unblock downstream steps."""
+        projects = self._load_projects()
+
+        if project_id not in projects:
+            raise ValueError(f"Project {project_id} not found")
+
+        context = ProjectContext.model_validate(projects[project_id]["context"])
+        updated_context = context.model_copy(
+            update={
+                "inspiration_images": [],
+                "inspiration_recommendations": [],
+                "inspiration_images_skipped": True,
+            }
+        )
+
+        projects[project_id]["context"] = updated_context.model_dump()
+        self._save_projects(projects)
+
+    def update_preferred_stores(self, project_id: str, stores: List[str]) -> List[str]:
+        """Update the list of preferred retail stores in the project context"""
+        try:
+            print(f"🛒 Updating preferred stores for project {project_id}: {stores}")
+            projects = self._load_projects()
+
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            context = ProjectContext.model_validate(projects[project_id]["context"])
+            
+            updated_context = context.model_copy(
+                update={"preferred_stores": stores}
+            )
+
+            projects[project_id]["context"] = updated_context.model_dump()
+            self._save_projects(projects)
+            # Trigger marker recommendations if all prerequisites are met
+            self._try_generate_marker_recommendations(project_id)
+            
+            return stores
+
+        except Exception as e:
+            print(f"❌ ERROR in update_preferred_stores: {e}")
+            import traceback
             traceback.print_exc()
             raise
 
@@ -693,28 +1121,38 @@ class DataManager:
                 )
                 context_info += f"\nImprovement Areas Identified:\n{markers_info}"
 
+            if context.color_analysis:
+                ca = context.color_analysis
+                color_info = f"\n\nColor Analysis (Guidelines to follow):\n- Primary: {ca.get('primary_colors', [])}\n- Palette: {ca.get('palette_name', 'Custom')}\n- Lighting/Texture: {ca.get('lighting_notes', 'N/A')}"
+                context_info += color_info
+
+            if context.style_analysis:
+                sa = context.style_analysis
+                style_info = f"\n\nStyle Analysis (Guidelines to follow):\n- Style: {sa.get('style_name', 'Custom')}\n- Materials: {sa.get('materials', [])}\n- Characteristics: {sa.get('furniture_characteristics', 'N/A')}"
+                context_info += style_info
+
             if context.inspiration_recommendations:
                 inspiration_info = "\n".join(
                     [f"- {rec}" for rec in context.inspiration_recommendations]
                 )
-                context_info += f"\n\nStyle Recommendations:\n{inspiration_info}"
+                context_info += f"\n\nStyle Recommendations from Inspiration:\n{inspiration_info}"
 
-            prompt = f"""Based on this interior design project context, generate exactly 2 specific, actionable product recommendations.
+            prompt = f"""Based on this comprehensive interior design project context, generate exactly 6 specific, actionable product recommendations.
 
 {context_info}
 
 Requirements:
 - Each recommendation should be a specific action like "change sofa", "add coffee table", "replace dining chairs", "add floor lamp", etc.
-- Focus on items that would have the most visual impact for this {context.space_type}
-- Consider the improvement areas and style preferences mentioned above
-- Make recommendations that are realistic and achievable for most homeowners
-- Keep each recommendation to 2-4 words maximum
+- Focus on items that would have the most visual impact and align perfectly with the detected style and color guidelines.
+- Consider the improvement areas and style preferences mentioned above.
+- Make recommendations that are realistic and achievable for most homeowners.
+- Keep each recommendation to 2-4 words maximum.
 
-Return exactly 2 recommendations that are distinct and complementary to each other."""
+Return exactly 6 recommendations that are distinct and complementary to each other."""
 
             # Log AI API call with timing
             start_time = time.time()
-            result = self.openai_client.get_structured_completion(
+            result = self.gemini_client.get_structured_completion(
                 prompt=prompt,
                 pydantic_model=AIProductRecommendations,
                 system_message="You are an expert interior designer who specializes in making targeted, high-impact product recommendations for home improvement projects.",
@@ -788,35 +1226,52 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
 
             context = ProjectContext.model_validate(projects[project_id]["context"])
 
-            if not context.product_recommendations:
-                raise ValueError(
-                    "No product recommendations available for this project"
-                )
+            # Check if recommendation exists in either product or inspiration recommendations
+            is_product_rec = context.product_recommendations and selected_recommendation in context.product_recommendations
+            is_inspiration_rec = context.inspiration_recommendations and selected_recommendation in context.inspiration_recommendations
 
-            if selected_recommendation not in context.product_recommendations:
+            if not (is_product_rec or is_inspiration_rec):
                 raise ValueError(
                     f"'{selected_recommendation}' is not a valid recommendation option"
                 )
 
-            # Update the project context
+            # Update the project context - Toggle selection (multi-select)
+            current_selections = getattr(context, 'selected_product_recommendations', [])
+            # Ensure current_selections is a mutable list
+            current_selections = list(current_selections)
+
+            if selected_recommendation in current_selections:
+                current_selections.remove(selected_recommendation)
+            else:
+                current_selections.append(selected_recommendation)
+
             old_status = projects[project_id]["status"]
             updated_context = context.model_copy(
-                update={"selected_product_recommendation": selected_recommendation}
+                update={"selected_product_recommendations": current_selections}
             )
 
             projects[project_id]["context"] = updated_context.model_dump()
-            projects[project_id]["status"] = "PRODUCT_RECOMMENDATION_SELECTED"
+            
+            # Update status if we have a selection
+            if current_selections:
+                projects[project_id]["status"] = "PRODUCT_RECOMMENDATION_SELECTED"
+            elif context.product_recommendations:
+                 # Revert to product recs ready if we had them
+                projects[project_id]["status"] = "PRODUCT_RECOMMENDATIONS_READY"
+            elif context.inspiration_recommendations:
+                # Revert to inspiration recs ready
+                projects[project_id]["status"] = "INSPIRATION_RECOMMENDATIONS_READY"
 
             self.logger.info(
-                "Selected product recommendation successfully",
+                "Updated product recommendation selections",
                 extra={
                     "project_id": project_id,
-                    "selected_recommendation": selected_recommendation,
-                    "status": "PRODUCT_RECOMMENDATION_SELECTED",
+                    "selected_recommendations": current_selections,
+                    "status": projects[project_id]["status"],
                 },
             )
             log_project_status_change(
-                project_id, old_status, "PRODUCT_RECOMMENDATION_SELECTED"
+                project_id, old_status, projects[project_id]["status"]
             )
             log_user_action(
                 "product_recommendation_selected",
@@ -825,7 +1280,7 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             )
 
             self._save_projects(projects)
-            return selected_recommendation
+            return current_selections
 
         except Exception as e:
             self.logger.error(
@@ -856,9 +1311,9 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             if not context.is_ready_for_product_search():
                 raise ValueError("Project is not ready for product search")
 
-            if not self.serp_client:
+            if not self.serp_client and not self.exa_client:
                 raise ValueError(
-                    "SERP client not available - please check SERP_API_KEY"
+                    "No product search client available - configure SERP_API_KEY or EXA_API_KEY"
                 )
 
             # Use AI to generate a specific search query
@@ -868,37 +1323,70 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                 extra={
                     "project_id": project_id,
                     "search_query": search_query,
-                    "selected_recommendation": context.selected_product_recommendation,
+                    "selected_recommendations": context.selected_product_recommendations,
                 },
             )
 
-            # Use SERP API only - Exa doesn't work (gets CAPTCHA pages)
             search_start_time = time.time()
+            products: List[Dict[str, Any]] = []
 
+            # SERP Google Shopping
             if self.serp_client:
                 self.logger.info("Using SERP Google Shopping for product search")
-                products = self.serp_client.search_and_analyze_products(
+                serp_products = self.serp_client.search_and_analyze_products(
                     query=search_query,
                     space_type=context.space_type or "general",
                     num_results=12,
                 )
                 search_duration = (time.time() - search_start_time) * 1000
                 log_external_api_call(
-                    "serp", "product_search", search_duration, True, len(products)
+                    "serp", "product_search", search_duration, True, len(serp_products)
                 )
-
-                # Mark SERP products for frontend identification
-                for product in products:
+                for product in serp_products:
                     product["source_api"] = "serp"
                     product["search_method"] = "Google Shopping"
-            else:
-                self.logger.error("No SERP client available for product search")
-                products = []
+                products.extend(serp_products)
 
-            # Filter and enhance results
-            filtered_products = [p for p in products if p.get("is_product_page", True)][
-                :8
-            ]
+            # Exa semantic search + contents
+            if self.exa_client:
+                try:
+                    exa_start = time.time()
+                    exa_products = self.exa_client.search_and_analyze_products(
+                        query=search_query,
+                        space_type=context.space_type or "general",
+                        num_results=10,
+                        similar_per_seed=3,
+                    )
+                    exa_duration = (time.time() - exa_start) * 1000
+                    log_external_api_call(
+                        "exa", "product_search", exa_duration, True, len(exa_products)
+                    )
+                    for product in exa_products:
+                        product["source_api"] = "exa"
+                        product["search_method"] = "Exa Semantic"
+                    products.extend(exa_products)
+                except Exception as e:
+                    self.logger.warning(f"Exa product search failed: {e}")
+                    log_external_api_call("exa", "product_search", 0, False)
+
+            # Deduplicate, type-guard, and limit
+            products = self._dedupe_products_by_url(products)
+
+            # Use the first recommendation to set a target type guard if multiple
+            target_type = ""
+            if context.selected_product_recommendations:
+                target_type = context.selected_product_recommendations[0].split()[0]
+
+            filtered_products: List[Dict[str, Any]] = []
+            for p in products:
+                title = p.get("title", "")
+                if target_type and not self._type_guard(title, target_type):
+                    continue
+                if not p.get("is_product_page", True):
+                    continue
+                filtered_products.append(p)
+
+            filtered_products = filtered_products[:8]
 
             # Update the project context with search results
             old_status = projects[project_id]["status"]
@@ -922,6 +1410,7 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                     "search_query": search_query,
                     "total_found": len(filtered_products),
                     "filtered_count": len(filtered_products),
+                    "selected_recommendations": context.selected_product_recommendations,
                     "status": "PRODUCT_SEARCH_COMPLETE",
                 },
             )
@@ -946,17 +1435,8 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             log_external_api_call("search", "product_search", 0, False)
             raise
 
-    @log_api_call("clip_search_products")
-    def clip_search_products(self, project_id: str, rect: ClipRect, use_inspiration_image: bool = False) -> dict:
-        """Crop the generated image by a normalized rect, describe it, and search matching products.
-
-        The flow:
-        - Decode generated image from context
-        - Convert normalized rect to pixel box and crop with Pillow
-        - Call vision model to generate a concise product search query from the crop
-        - Use SERP client to find products
-        - Return results (does not mutate project status)
-        """
+    def _analyze_single_item(self, project_id: str, rect: ClipRect, use_inspiration_image: bool = False) -> dict:
+        """Internal helper to analyze a single furniture item using YOLO -> CLIP -> SERP pipeline."""
         try:
             projects = self._load_projects()
             if project_id not in projects:
@@ -987,13 +1467,59 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             image = Image.open(BytesIO(image_bytes)).convert("RGB")
             width, height = image.size
 
-            # Clamp and convert normalized rect to pixel box
+            # Smart crop -------------------------------------------------
             x = max(0.0, min(1.0, rect.x))
             y = max(0.0, min(1.0, rect.y))
             w = max(0.0, min(1.0, rect.width))
             h = max(0.0, min(1.0, rect.height))
             if w <= 0 or h <= 0:
                 raise ValueError("Clip rectangle has zero area")
+
+            # Try YOLO snap if available
+            snapped = False
+            pad_ratio_yolo = 0.05
+            if hasattr(self, "auto_detect_furniture"):
+                try:
+                    detections = self.auto_detect_furniture(project_id, image_type="inspiration" if use_inspiration_image else "product").get("detections", [])
+                    for det in detections:
+                        box = det.get("rect", {})
+                        bx, by, bw, bh = box.get("x", 0), box.get("y", 0), box.get("width", 0), box.get("height", 0)
+                        # Compute IoU with user rect
+                        inter_left = max(x, bx)
+                        inter_top = max(y, by)
+                        inter_right = min(x + w, bx + bw)
+                        inter_bottom = min(y + h, by + bh)
+                        inter_w = max(0.0, inter_right - inter_left)
+                        inter_h = max(0.0, inter_bottom - inter_top)
+                        inter_area = inter_w * inter_h
+                        user_area = w * h
+                        box_area = bw * bh
+                        if user_area > 0 and box_area > 0:
+                            iou_user = inter_area / user_area
+                            if iou_user > 0.5:
+                                # Snap to YOLO box with small padding
+                                x = max(0.0, bx - pad_ratio_yolo * bw)
+                                y = max(0.0, by - pad_ratio_yolo * bh)
+                                w = min(1.0, bw * (1 + 2 * pad_ratio_yolo))
+                                h = min(1.0, bh * (1 + 2 * pad_ratio_yolo))
+                                snapped = True
+                                break
+                except Exception as e:
+                    self.logger.warning(f"YOLO snap failed, fallback to padding: {e}")
+
+            if not snapped:
+                # Square and pad
+                max_dim = max(w, h)
+                pad_ratio = 0.10
+                w = h = max_dim * (1 + pad_ratio * 2)
+                # Center around original rect
+                x = x + (rect.width - w) / 2
+                y = y + (rect.height - h) / 2
+                # Clamp
+                x = max(0.0, min(1.0 - w, x))
+                y = max(0.0, min(1.0 - h, y))
+                w = min(1.0, w)
+                h = min(1.0, h)
 
             left = int(x * width)
             top = int(y * height)
@@ -1008,71 +1534,103 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             # Save crop temporarily to analyze with vision
             temp_dir = DATA_FILE.parent / "images" / project_id
             temp_dir.mkdir(parents=True, exist_ok=True)
-            crop_path = temp_dir / f"clip_{left}_{top}_{right}_{bottom}.png"
+            crop_path = temp_dir / f"clip_search_optimized_{uuid.uuid4().hex[:8]}.png" # Unique name for concurrency
             crop.save(crop_path)
 
-            # Try CLIP-based analysis first for enhanced accuracy
-            search_query = None
+            # Query generation
             clip_analysis = None
-            
+            search_query = None
+            target_type = None
             if self.clip_client and self.clip_client.is_available():
                 try:
-                    self.logger.info("Using CLIP for enhanced furniture detection")
                     clip_analysis = self.clip_client.analyze_furniture_region(crop)
-                    
-                    if "search_query" in clip_analysis and not clip_analysis.get("error"):
-                        search_query = clip_analysis["search_query"]
-                        self.logger.info(
-                            f"CLIP analysis successful: {search_query}",
-                            extra={
-                                "furniture_type": clip_analysis.get("furniture_type", {}).get("name"),
-                                "confidence": clip_analysis.get("furniture_type", {}).get("confidence"),
-                            }
-                        )
+                    target_type = (
+                        clip_analysis.get("furniture_type", {}).get("name")
+                        if clip_analysis and not clip_analysis.get("error")
+                        else None
+                    )
+                    negative_keywords = ["decor", "ideas", "how to"]
+                    search_query = self.clip_client.generate_enhanced_search_query(
+                        crop,
+                        vision_client=self.openai_client,
+                        context=None,
+                        negative_keywords=negative_keywords,
+                    )
                 except Exception as e:
-                    self.logger.warning(f"CLIP analysis failed, falling back to vision: {e}")
-            
-            # Fall back to OpenAI vision if CLIP not available or failed
+                    self.logger.warning(f"CLIP query generation failed, fallback: {e}")
+
             if not search_query:
-                from pydantic import BaseModel
-
-                class ClipQuery(BaseModel):
-                    query: str
-
-                prompt = (
-                    "You are an assistant generating concise shopping search queries from a product photo.\n"
-                    "Given the clipped image region from an interior design visualization, output a 3-8 word query\n"
-                    "that a user would type into furniture e-commerce sites to find this product (include style, color,\n"
-                    "material when visible). Return only the query text."
+                search_query = (
+                    context.selected_product["title"]
+                    if context.selected_product
+                    else (context.selected_product_recommendations[0] if context.selected_product_recommendations else "furniture")
                 )
 
-                try:
-                    clip_query = self.openai_client.analyze_image_with_vision(
-                        prompt=prompt,
-                        pydantic_model=ClipQuery,
-                        image_path=str(crop_path),
-                        model="gpt-4o-mini",  # vision-capable
-                    )
-                    search_query = clip_query.query.strip()
-                except Exception as e:
-                    self.logger.warning(f"Vision query generation failed, falling back: {e}")
-                    search_query = context.selected_product["title"] if context.selected_product else (context.selected_product_recommendation or "furniture")
-
             # Execute SERP product search
-            products = self.serp_client.search_and_analyze_products(
+            products: List[Dict[str, Any]] = []
+
+            # SERP
+            serp_products = self.serp_client.search_and_analyze_products(
                 query=search_query,
                 space_type=context.space_type or "general",
                 num_results=12,
             )
-            for product in products:
+            for product in serp_products:
                 product["source_api"] = "serp"
                 product["search_method"] = "Google Shopping"
+            products.extend(serp_products)
+
+            # Exa (semantic) if available
+            if self.exa_client:
+                try:
+                    exa_products = self.exa_client.search_and_analyze_products(
+                        query=search_query,
+                        space_type=context.space_type or "general",
+                        num_results=10,
+                        similar_per_seed=3,
+                    )
+                    for product in exa_products:
+                        product["source_api"] = "exa"
+                        product["search_method"] = "Exa Semantic"
+                    products.extend(exa_products)
+                except Exception as e:
+                    self.logger.warning(f"Exa clip-search fetch failed: {e}")
+
+            # Deduplicate before scoring
+            products = self._dedupe_products_by_url(products)
+
+            # Type guard: filter decor/how-to mismatches using target_type if available
+            filtered_products: List[Dict[str, Any]] = []
+            for p in products:
+                title = p.get("title", "")
+                if target_type and not self._type_guard(title, target_type):
+                    continue
+                filtered_products.append(p)
+            products = filtered_products
+
+            # Re-rank/filter with CLIP similarity against the optimized crop
+            scoring_meta = {}
+            if products:
+                scored = self.serp_client.score_products_with_clip(
+                    products,
+                    clip_client=self.clip_client,
+                    query_image=crop,
+                    drop_threshold=0.70,
+                    boost_threshold=0.85,
+                    timeout=1.5,
+                    max_workers=8,
+                    max_fetch=10,
+                )
+                products = scored.get("products", products)
+                scoring_meta = scored.get("meta", {})
 
             result = {
                 "search_query": search_query,
                 "products": products,
                 "total_found": len(products),
                 "analysis_method": "clip" if clip_analysis else "vision",
+                "clip_analysis": clip_analysis if clip_analysis and not clip_analysis.get("error") else None,
+                "agent_notes": scoring_meta,
             }
             
             # Add CLIP analysis details if available
@@ -1085,10 +1643,358 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                     "color": clip_analysis.get("color", {}).get("name"),
                 }
 
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Single item analysis failed: {e}", exc_info=True)
+            raise
+
+    @log_api_call("analyze_furniture_batch")
+    def analyze_furniture_batch(self, project_id: str, selections: List[Dict[str, Any]], image_type: str = "product") -> Dict[str, Any]:
+        """
+        Batch analyze multiple furniture selections efficiently using the YOLO -> CLIP -> SERP pipeline.
+        Input selections contain {id, x, y, label} (center points).
+        """
+        results = []
+        
+        # Determine image source
+        use_inspiration = (image_type == "inspiration")
+        
+        print(f"🔄 Processing batch analysis for {len(selections)} items (Type: {image_type})")
+
+        for sel in selections:
+            try:
+                # Create a small seed rect around the point to help the YOLO snapper
+                # The _analyze_single_item logic will snap this to the full object
+                box_size = 0.1 # 10% initial box
+                cx, cy = sel.get("x", 0.5), sel.get("y", 0.5)
+                
+                rect = ClipRect(
+                    x=cx - (box_size / 2),
+                    y=cy - (box_size / 2),
+                    width=box_size,
+                    height=box_size
+                )
+                
+                # Analyze
+                analysis = self._analyze_single_item(project_id, rect, use_inspiration_image=use_inspiration)
+                
+                # Format for frontend
+                results.append({
+                    "id": sel.get("id", "unknown"),
+                    "furniture_type": analysis.get("clip_analysis", {}).get("furniture_type") or "Furniture",
+                    "confidence": analysis.get("clip_analysis", {}).get("furniture_confidence") or 0.0,
+                    "style": analysis.get("clip_analysis", {}).get("style") or "Unknown",
+                    "material": analysis.get("clip_analysis", {}).get("material") or "Unknown",
+                    "color": analysis.get("clip_analysis", {}).get("color") or "Unknown",
+                    "search_query": analysis.get("search_query", ""),
+                    "products": analysis.get("products", [])
+                })
+                
+            except Exception as e:
+                self.logger.error(f"Failed to analyze item {sel.get('id')}: {e}")
+                # Add failed placeholder so UI doesn't break
+                results.append({
+                    "id": sel.get("id"),
+                    "furniture_type": "Analysis Failed",
+                    "confidence": 0,
+                    "style": "-",
+                    "material": "-",
+                    "color": "-",
+                    "search_query": "",
+                    "products": []
+                })
+
+        return {
+            "selections": results,
+            "overall_analysis": f"Successfully identified {len(results)} items."
+        }
+
+    def _analyze_single_item(self, project_id: str, rect: ClipRect, use_inspiration_image: bool = False) -> dict:
+        """Internal helper to analyze a single furniture item using YOLO -> CLIP -> SERP pipeline."""
+        try:
+            projects = self._load_projects()
+            if project_id not in projects:
+                raise ValueError(f"Project {project_id} not found")
+
+            project = projects[project_id]
+            context = ProjectContext.model_validate(project["context"])
+
+            # Choose which image to use for clip-search
+            if use_inspiration_image:
+                image_base64 = context.inspiration_generated_image_base64
+                if not image_base64:
+                    raise ValueError("No inspiration redesign image available to clip-search")
+            else:
+                image_base64 = context.generated_image_base64
+                if not image_base64:
+                    raise ValueError("No generated image available to clip-search")
+
+            if not self.serp_client:
+                raise ValueError("SERP client not available - please check SERP_API_KEY")
+
+            # Decode base64 image
+            import base64
+            from io import BytesIO
+            from PIL import Image
+
+            image_bytes = base64.b64decode(image_base64)
+            image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            width, height = image.size
+
+            # Smart crop -------------------------------------------------
+            x = max(0.0, min(1.0, rect.x))
+            y = max(0.0, min(1.0, rect.y))
+            w = max(0.0, min(1.0, rect.width))
+            h = max(0.0, min(1.0, rect.height))
+            if w <= 0 or h <= 0:
+                raise ValueError("Clip rectangle has zero area")
+
+            # Try YOLO snap if available
+            snapped = False
+            pad_ratio_yolo = 0.05
+            if hasattr(self, "auto_detect_furniture"):
+                try:
+                    detections = self.auto_detect_furniture(project_id, image_type="inspiration" if use_inspiration_image else "product").get("detections", [])
+                    for det in detections:
+                        box = det.get("rect", {})
+                        bx, by, bw, bh = box.get("x", 0), box.get("y", 0), box.get("width", 0), box.get("height", 0)
+                        # Compute IoU with user rect
+                        inter_left = max(x, bx)
+                        inter_top = max(y, by)
+                        inter_right = min(x + w, bx + bw)
+                        inter_bottom = min(y + h, by + bh)
+                        inter_w = max(0.0, inter_right - inter_left)
+                        inter_h = max(0.0, inter_bottom - inter_top)
+                        inter_area = inter_w * inter_h
+                        user_area = w * h
+                        box_area = bw * bh
+                        if user_area > 0 and box_area > 0:
+                            iou_user = inter_area / user_area
+                            if iou_user > 0.5:
+                                # Snap to YOLO box with small padding
+                                x = max(0.0, bx - pad_ratio_yolo * bw)
+                                y = max(0.0, by - pad_ratio_yolo * bh)
+                                w = min(1.0, bw * (1 + 2 * pad_ratio_yolo))
+                                h = min(1.0, bh * (1 + 2 * pad_ratio_yolo))
+                                snapped = True
+                                break
+                except Exception as e:
+                    self.logger.warning(f"YOLO snap failed, fallback to padding: {e}")
+
+            if not snapped:
+                # Square and pad
+                max_dim = max(w, h)
+                pad_ratio = 0.10
+                w = h = max_dim * (1 + pad_ratio * 2)
+                # Center around original rect
+                x = x + (rect.width - w) / 2
+                y = y + (rect.height - h) / 2
+                # Clamp
+                x = max(0.0, min(1.0 - w, x))
+                y = max(0.0, min(1.0 - h, y))
+                w = min(1.0, w)
+                h = min(1.0, h)
+
+            left = int(x * width)
+            top = int(y * height)
+            right = int(min(1.0, x + w) * width)
+            bottom = int(min(1.0, y + h) * height)
+
+            if right <= left or bottom <= top:
+                raise ValueError("Invalid clip rectangle after conversion")
+
+            crop = image.crop((left, top, right, bottom))
+
+            # Save crop temporarily to analyze with vision
+            temp_dir = DATA_FILE.parent / "images" / project_id
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            crop_path = temp_dir / f"clip_search_optimized_{uuid.uuid4().hex[:8]}.png" # Unique name for concurrency
+            crop.save(crop_path)
+
+            # Query generation
+            clip_analysis = None
+            search_query = None
+            target_type = None
+            if self.clip_client and self.clip_client.is_available():
+                try:
+                    clip_analysis = self.clip_client.analyze_furniture_region(crop)
+                    target_type = (
+                        clip_analysis.get("furniture_type", {}).get("name")
+                        if clip_analysis and not clip_analysis.get("error")
+                        else None
+                    )
+                    negative_keywords = ["decor", "ideas", "how to"]
+                    search_query = self.clip_client.generate_enhanced_search_query(
+                        crop,
+                        vision_client=self.openai_client,
+                        context=None,
+                        negative_keywords=negative_keywords,
+                    )
+                except Exception as e:
+                    self.logger.warning(f"CLIP query generation failed, fallback: {e}")
+
+            if not search_query:
+                search_query = (
+                    context.selected_product["title"]
+                    if context.selected_product
+                    else (context.selected_product_recommendations[0] if context.selected_product_recommendations else "furniture")
+                )
+
+            # Execute SERP product search
+            products: List[Dict[str, Any]] = []
+
+            # SERP
+            serp_products = self.serp_client.search_and_analyze_products(
+                query=search_query,
+                space_type=context.space_type or "general",
+                num_results=12,
+            )
+            for product in serp_products:
+                product["source_api"] = "serp"
+                product["search_method"] = "Google Shopping"
+            products.extend(serp_products)
+
+            # Exa (semantic) if available
+            if self.exa_client:
+                try:
+                    exa_products = self.exa_client.search_and_analyze_products(
+                        query=search_query,
+                        space_type=context.space_type or "general",
+                        num_results=10,
+                        similar_per_seed=3,
+                    )
+                    for product in exa_products:
+                        product["source_api"] = "exa"
+                        product["search_method"] = "Exa Semantic"
+                    products.extend(exa_products)
+                except Exception as e:
+                    self.logger.warning(f"Exa clip-search fetch failed: {e}")
+
+            # Deduplicate before scoring
+            products = self._dedupe_products_by_url(products)
+
+            # Type guard: filter decor/how-to mismatches using target_type if available
+            filtered_products: List[Dict[str, Any]] = []
+            for p in products:
+                title = p.get("title", "")
+                if target_type and not self._type_guard(title, target_type):
+                    continue
+                filtered_products.append(p)
+            products = filtered_products
+
+            # Re-rank/filter with CLIP similarity against the optimized crop
+            scoring_meta = {}
+            if products:
+                scored = self.serp_client.score_products_with_clip(
+                    products,
+                    clip_client=self.clip_client,
+                    query_image=crop,
+                    drop_threshold=0.70,
+                    boost_threshold=0.85,
+                    timeout=1.5,
+                    max_workers=8,
+                    max_fetch=10,
+                )
+                products = scored.get("products", products)
+                scoring_meta = scored.get("meta", {})
+
+            result = {
+                "search_query": search_query,
+                "products": products,
+                "total_found": len(products),
+                "analysis_method": "clip" if clip_analysis else "vision",
+                "clip_analysis": clip_analysis if clip_analysis and not clip_analysis.get("error") else None,
+                "agent_notes": scoring_meta,
+            }
+            
+            # Add CLIP analysis details if available
+            if clip_analysis and not clip_analysis.get("error"):
+                result["clip_analysis"] = {
+                    "furniture_type": clip_analysis.get("furniture_type", {}).get("name"),
+                    "furniture_confidence": clip_analysis.get("furniture_type", {}).get("confidence"),
+                    "style": clip_analysis.get("style", {}).get("name"),
+                    "material": clip_analysis.get("material", {}).get("name"),
+                    "color": clip_analysis.get("color", {}).get("name"),
+                }
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Single item analysis failed: {e}", exc_info=True)
+            raise
+
+    @log_api_call("analyze_furniture_batch")
+    def analyze_furniture_batch(self, project_id: str, selections: List[Dict[str, Any]], image_type: str = "product") -> Dict[str, Any]:
+        """
+        Batch analyze multiple furniture selections efficiently using the YOLO -> CLIP -> SERP pipeline.
+        Input selections contain {id, x, y, label} (center points).
+        """
+        results = []
+        
+        # Determine image source
+        use_inspiration = (image_type == "inspiration")
+        
+        print(f"🔄 Processing batch analysis for {len(selections)} items (Type: {image_type})")
+
+        for sel in selections:
+            try:
+                # Create a small seed rect around the point to help the YOLO snapper
+                # The _analyze_single_item logic will snap this to the full object
+                box_size = 0.1 # 10% initial box
+                cx, cy = sel.get("x", 0.5), sel.get("y", 0.5)
+                
+                rect = ClipRect(
+                    x=cx - (box_size / 2),
+                    y=cy - (box_size / 2),
+                    width=box_size,
+                    height=box_size
+                )
+                
+                # Analyze
+                analysis = self._analyze_single_item(project_id, rect, use_inspiration_image=use_inspiration)
+                
+                # Format for frontend
+                results.append({
+                    "id": sel.get("id", "unknown"),
+                    "furniture_type": analysis.get("clip_analysis", {}).get("furniture_type") or "Furniture",
+                    "confidence": analysis.get("clip_analysis", {}).get("furniture_confidence") or 0.0,
+                    "style": analysis.get("clip_analysis", {}).get("style") or "Unknown",
+                    "material": analysis.get("clip_analysis", {}).get("material") or "Unknown",
+                    "color": analysis.get("clip_analysis", {}).get("color") or "Unknown",
+                    "search_query": analysis.get("search_query", ""),
+                    "products": analysis.get("products", [])
+                })
+                
+            except Exception as e:
+                self.logger.error(f"Failed to analyze item {sel.get('id')}: {e}")
+                # Add failed placeholder so UI doesn't break
+                results.append({
+                    "id": sel.get("id"),
+                    "furniture_type": "Analysis Failed",
+                    "confidence": 0,
+                    "style": "-",
+                    "material": "-",
+                    "color": "-",
+                    "search_query": "",
+                    "products": []
+                })
+
+        return {
+            "selections": results,
+            "overall_analysis": f"Successfully identified {len(results)} items."
+        }
+
+    @log_api_call("clip_search_products")
+    def clip_search_products(self, project_id: str, rect: ClipRect, use_inspiration_image: bool = False) -> dict:
+        """Crop generated image, build a rich query, and re-rank SERP with CLIP visual filtering."""
+        try:
+            result = self._analyze_single_item(project_id, rect, use_inspiration_image)
+
             log_user_action(
                 "clip_product_search_completed",
                 project_id=project_id,
-                results_count=len(products),
+                results_count=len(result.get("products", [])),
             )
 
             return result
@@ -1151,17 +2057,29 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                 )
                 raise ValueError("Project is not ready for product selection")
 
-            print("💾 Creating selected product data...")
-            # Save selected product
-            selected_product = {
-                "url": product_url,
-                "title": product_title,
-                "image_url": product_image_url,
-                "selected_at": datetime.now().isoformat(),
-            }
+            print("💾 Creating selected product storage...")
+            # Get existing selected products or empty list
+            current_products = getattr(context, 'selected_products', [])
+            current_products = list(current_products) # Ensure mutable
 
-            print("📝 Updating context with selected product...")
-            context.selected_product = selected_product
+            # Check if product already selected (by URL)
+            exists = any(p.get('url') == product_url for p in current_products)
+            
+            if not exists:
+                # Save selected product
+                selected_product = {
+                    "url": product_url,
+                    "title": product_title,
+                    "image_url": product_image_url,
+                    "selected_at": datetime.now().isoformat(),
+                }
+                current_products.append(selected_product)
+                print(f"✅ Added product to selection: {product_title}")
+            else:
+                print(f"ℹ️ Product already in selection: {product_title}")
+
+            print("📝 Updating context with selection list...")
+            context.selected_products = current_products
             context.generation_prompt = generation_prompt
             
             # Save color scheme if provided
@@ -1189,9 +2107,9 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             print("✅ Product selection completed successfully!")
             return {
                 "project_id": project_id,
-                "selected_product": selected_product,
+                "selected_products": current_products,
                 "status": "success",
-                "message": f"Product selected: {product_title[:50]}...",
+                "message": f"Added to selection: {product_title[:50]}...",
             }
 
         except Exception as e:
@@ -1216,9 +2134,10 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                 raise ValueError("Gemini client is not available")
 
             # Extract product details
-            selected_product = context.selected_product
-            product_image_url = selected_product["image_url"]
-            product_title = selected_product["title"]
+            selected_products = context.selected_products
+            if not selected_products:
+                raise ValueError("No products selected for visualization")
+            
             space_type = context.space_type or "living space"
             custom_prompt = context.generation_prompt
 
@@ -1264,13 +2183,12 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             # Create project-specific directory for the generated image
             project_dir = DATA_FILE.parent / "images" / project_id
 
-            # Generate the visualization with full context
+            # Generate the visualization with multi-product context
             generated_image_base64, final_prompt = (
                 self.gemini_client.generate_product_visualization(
                     original_room_image_path=str(original_room_image_path),
-                    product_image_url=product_image_url,
+                    selected_products=selected_products,
                     space_type=space_type,
-                    product_title=product_title,
                     inspiration_recommendations=context.inspiration_recommendations
                     or [],
                     marker_locations=context.improvement_markers or [],
@@ -1302,7 +2220,7 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
 
             return {
                 "project_id": project_id,
-                "selected_product": selected_product,
+                "selected_products": selected_products,
                 "generated_image_base64": generated_image_base64,
                 "generation_prompt": final_prompt,
                 "status": "success",
@@ -1327,7 +2245,11 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
 
             context = ProjectContext.model_validate(project["context"])
             # Detailed readiness logging
-            ready = context.is_ready_for_inspiration_redesign()
+            # Check readiness: needs base image, space type, and EITHER inspiration OR product recs
+            has_inspiration = context.inspiration_recommendations and len(context.inspiration_recommendations) > 0
+            has_products = context.product_recommendations and len(context.product_recommendations) > 0
+            ready = context.base_image and context.space_type and (has_inspiration or has_products)
+            
             self.logger.info(
                 "Checking readiness for inspiration redesign",
                 extra={
@@ -1335,6 +2257,7 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                     "has_base_image": context.base_image is not None,
                     "has_space_type": context.space_type is not None,
                     "num_inspiration_recs": len(context.inspiration_recommendations or []),
+                    "num_product_recs": len(context.product_recommendations or []),
                     "project_status": project["status"],
                 },
             )
@@ -1344,10 +2267,10 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
                     missing.append("base_image")
                 if not context.space_type:
                     missing.append("space_type")
-                if not context.inspiration_recommendations or len(context.inspiration_recommendations) == 0:
-                    missing.append("inspiration_recommendations")
+                if not (has_inspiration or has_products):
+                    missing.append("inspiration_or_product_recommendations")
                 raise ValueError(
-                    f"Project is not ready for inspiration-based redesign; missing: {', '.join(missing)}"
+                    f"Project is not ready for redesign; missing: {', '.join(missing)}"
                 )
 
             if not self.gemini_client:
@@ -1376,110 +2299,136 @@ Return exactly 2 recommendations that are distinct and complementary to each oth
             if not original_room_image_path:
                 raise ValueError("No original room image available")
 
-            # Create comprehensive prompt based on inspiration recommendations
+            # --- Helper to prevent f-string crashes ---
+            def clean(text):
+                """Escapes curly braces so Python f-strings don't break."""
+                if not text: return ""
+                return str(text).replace("{", "{{").replace("}", "}}")
+
+            # Get space type for prompt
             space_type = context.space_type or "living space"
-            inspiration_context = "\n".join(
-                [
-                    f"{i+1}. {rec}"
-                    for i, rec in enumerate(context.inspiration_recommendations[:5])
-                ]
-            )
 
-            prompt = f"""
-TASK: Redesign this {space_type} by incorporating the following inspiration-based design recommendations.
+            # 1. Build DESIGN CONTEXT
+            design_context_lines = []
+            
+            # Inspiration
+            if context.inspiration_recommendations and len(context.inspiration_recommendations) > 0:
+                design_context_lines.append("INSPIRATION GOALS:")
+                # We clean every string we inject
+                design_context_lines.extend([f"- {clean(rec)}" for rec in context.inspiration_recommendations[:5]])
+                design_context_lines.append("") # Blank line for spacing
+            
+            # Improvement Markers
+            if context.improvement_markers:
+                design_context_lines.append("AREAS TO IMPROVE:")
+                design_context_lines.extend([f"- {clean(m.description)}" for m in context.improvement_markers])
+                design_context_lines.append("")
 
-INSPIRATION RECOMMENDATIONS:
-{inspiration_context}
+            # Color Analysis
+            if context.color_analysis:
+                ca = context.color_analysis
+                design_context_lines.append("COLOR GUIDELINES:")
+                design_context_lines.append(f"- Palette: {clean(ca.get('palette_name', 'Custom'))}")
+                
+                # Fix: primary_colors is a list of ColorSwatch dicts, not strings
+                if ca.get('primary_colors'):
+                    # Handle both list of strings (legacy) and list of dicts (ColorSwatch)
+                    p_colors = []
+                    for c in ca.get('primary_colors', []):
+                        if isinstance(c, dict):
+                            # Extract hex and description
+                            c_str = c.get('hex', '')
+                            if c.get('description'):
+                                c_str += f" ({c.get('description')})"
+                            p_colors.append(c_str)
+                        elif isinstance(c, str):
+                            p_colors.append(c)
+                        else:
+                            p_colors.append(str(c))
+                    
+                    design_context_lines.append(f"- Primary Colors: {clean(', '.join(p_colors))}")
+                
+                design_context_lines.append(f"- Lighting Notes: {clean(ca.get('lighting_notes', 'N/A'))}")
+                design_context_lines.append("")
 
-REQUIREMENTS:
-1. **Preserve Room Structure**: Keep the room's walls, windows, doors, and architectural elements exactly as shown
-2. **Implement Recommendations**: Apply each inspiration recommendation to transform the space
-3. **Style Consistency**: Ensure all changes work together cohesively
-4. **Practical Design**: Make changes that are realistic and achievable
-5. **Detailed Execution**: Show specific changes like:
-   - Updated furniture pieces matching the recommended style
-   - New color schemes and materials
-   - Improved layouts and arrangements
-   - Added or modified decor elements
-   - Updated lighting as suggested
+            # Style Analysis
+            if context.style_analysis:
+                sa = context.style_analysis
+                design_context_lines.append("STYLE GUIDELINES:")
+                design_context_lines.append(f"- Style: {clean(sa.get('style_name', 'Custom'))}")
+                if sa.get('materials'):
+                    design_context_lines.append(f"- Materials: {clean(', '.join(sa.get('materials')))}")
+                design_context_lines.append(f"- Characteristics: {clean(sa.get('furniture_characteristics', 'N/A'))}")
+                
+            # Join and ensure we don't return an empty block if no data exists
+            design_context_str = "\n".join(design_context_lines) if design_context_lines else "General Modern Upgrade"
 
-OUTPUT: Generate a photorealistic redesigned image of this {space_type} that beautifully incorporates all the inspiration recommendations while maintaining the room's original structure.
-"""
+            # 2. Build PRODUCT UPDATES
+            product_list_str = "None specified"
+            
+            # Logic: Using existing has_products flag or re-deriving
+            selected_recs = context.selected_product_recommendations or []
+            ai_recs = context.product_recommendations or []
+            product_source = selected_recs if len(selected_recs) > 0 else ai_recs
+            
+            if product_source:
+                product_list_str = "\n".join([f"- {clean(rec)}" for rec in product_source[:5]])
+
+            # 3. Final Prompt Construction
+            prompt = f"""### ROLE & OBJECTIVE
+You are an elite Interior Design AI for the Nano Banana app. Your goal is to redesign the provided {clean(space_type)} image to match specific design requirements while adhering to professional spatial planning and Feng Shui principles.
+
+### INPUT DATA
+• REFERENCE IMAGE: [Provided Image]
+• DESIGN CONTEXT:
+{design_context_str}
+
+• PRODUCT UPDATES:
+{product_list_str}
+
+### CORE DESIGN LOGIC (Apply Strict Adherence)
+1. **Feng Shui & Flow:**
+   - Visual Balance: Distribute visual weight (Wood, Fire, Earth, Metal, Water) evenly.
+   - Command Position: Primary seating/bed must have a clear view of the entry but not align directly with it.
+   - Chi Flow: Ensure clear visual pathways from doors to windows.
+
+2. **Pro Layout Rules:**
+   - Anchoring: Use a primary rug to anchor furniture groups (front legs on rug at minimum).
+   - Circulation: Maintain wide, unobstructed walking paths between zones.
+   - Lighting Layers: Integrate ambient (general), task (functional), and accent (mood) lighting sources.
+
+3. **Visual Corrections (Positive Reinforcement):**
+   - If a sofa is present, pull it slightly away from walls ("floating") to create depth.
+   - Ensure desks face into the room or towards a view, never strictly facing a blank wall.
+   - Scale furniture to occupy approximately 2/3 of the floor area for realistic proportions.
+
+### EXECUTION REQUIREMENTS
+1. **Structural Integrity (HIGHEST PRIORITY):** - DO NOT CHANGE: Walls, ceiling height, window locations, door frames, or flooring type (unless specified).
+   - The architectural "shell" must remain identical to the Reference Image.
+
+2. **Style Transformation:**
+   - Apply the textures, colors, and mood from the Design Context.
+   - Replace existing furniture with items matching the Product Updates.
+   - Update textiles (curtains, pillows, rugs) to match the new palette.
+
+3. **Photorealism:**
+   - Lighting must match the natural light direction of the original image.
+   - Shadows and reflections must be physically accurate.
+
+### OUTPUT
+Generate a high-fidelity, photorealistic redesign of the {clean(space_type)}. The image must look like a high-end interior design magazine feature that perfectly blends the Design Context with the existing room architecture."""
 
             print(f"🎨 Inspiration redesign prompt: {prompt[:200]}...")
 
-            # Use Gemini to generate the redesigned image
-            from PIL import Image
-            import base64
-            from io import BytesIO
-
-            # Load the original image
-            original_image = Image.open(original_room_image_path)
-
-            # Convert to base64
-            buffer = BytesIO()
-            original_image.save(buffer, format="PNG")
-            original_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-            original_image_url = f"data:image/png;base64,{original_image_b64}"
-
-            # Call Gemini API
-            response = self.gemini_client.client.chat.completions.create(
-                extra_headers={
-                    "HTTP-Referer": "https://spaces-ai.com",
-                    "X-Title": "Spaces AI - Interior Design Tool",
-                },
-                model="google/gemini-2.5-flash-image-preview",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": original_image_url,
-                                    "detail": "high",
-                                },
-                            },
-                        ],
-                    }
-                ],
-                max_tokens=1024,
-                temperature=0.7,
+            # Call Gemini API using the new method
+            generated_image_base64 = self.gemini_client.generate_room_redesign(
+                original_room_image_path=original_room_image_path,
+                prompt=prompt
             )
 
-            # Extract generated image
-            generated_image_base64 = None
-            if (
-                response.choices
-                and hasattr(response.choices[0].message, "images")
-                and response.choices[0].message.images
-            ):
-                first_image = response.choices[0].message.images[0]
-                if isinstance(first_image, dict) and "image_url" in first_image:
-                    image_data_url = first_image["image_url"]["url"]
-                    if image_data_url.startswith("data:image/"):
-                        import re
+            # Assign to generated_image_base64 for the rest of the function to use
+            # (which already expects this variable name)
 
-                        base64_match = re.search(
-                            r"data:image/[^;]+;base64,(.+)", image_data_url
-                        )
-                        if base64_match:
-                            generated_image_base64 = base64_match.group(1)
-
-            if not generated_image_base64:
-                # Log partial response for debugging (without large payloads)
-                try:
-                    self.logger.error(
-                        "Gemini did not return an image",
-                        extra={
-                            "project_id": project_id,
-                            "has_choices": bool(getattr(response, "choices", None)),
-                        },
-                    )
-                except Exception:
-                    pass
-                raise ValueError("No image generated by Gemini")
 
             # Update context with generated image
             context.inspiration_generated_image_base64 = generated_image_base64
@@ -1561,25 +2510,40 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
             image = Image.open(BytesIO(image_bytes)).convert("RGB")
             width, height = image.size
             
+            # Auto-detect objects first using advanced detector
+            from furniture_detector import furniture_detector
+            detections = []
+            try:
+                detections = furniture_detector.detect(image)
+                self.logger.info(f"YOLO found {len(detections)} objects for advanced segmentation")
+            except Exception as e:
+                self.logger.warning(f"Auto-detection failed: {e}")
+
             # Analyze each selection
             analysis_results = []
             
             for selection in selections:
                 try:
-                    # Extract a region around the selection point
-                    # Create a box around the click point (10% of image size)
-                    box_size = 0.1
+                    # Get selection coordinates
                     x = selection.x if hasattr(selection, 'x') else selection.get('x', 0.5)
                     y = selection.y if hasattr(selection, 'y') else selection.get('y', 0.5)
                     
-                    # Calculate crop box
-                    left = max(0, int((x - box_size/2) * width))
-                    top = max(0, int((y - box_size/2) * height))
-                    right = min(width, int((x + box_size/2) * width))
-                    bottom = min(height, int((y + box_size/2) * height))
+                    # Use Advanced Furniture Detector logic (Refined API)
+                    fd_result = furniture_detector.select_at_click(x, y, image, detections)
                     
-                    # Crop the region
-                    crop = image.crop((left, top, right, bottom))
+                    crop = fd_result.crop
+                    selected = fd_result.selected
+                    method = fd_result.method
+                    reason = fd_result.reason
+                    
+                    if selected:
+                        self.logger.info(f"🎯 Matched click to object: {selected.get('label', 'unknown')} (Method: {method}, Reason: {reason})")
+                        if fd_result.needs_disambiguation:
+                            self.logger.info("⚠️ Ambiguous selection detected (UI should handle disambiguation)")
+                    else:
+                        self.logger.info(f"📦 No object matched, used fallback: {method} ({reason})")
+                    
+                    # Save crop temporarily
                     
                     # Save crop temporarily
                     temp_dir = DATA_FILE.parent / "images" / project_id
@@ -1588,23 +2552,22 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
                     crop_path = temp_dir / f"selection_{selection_id}.png"
                     crop.save(crop_path)
                     
-                    # Analyze with CLIP if available
+                    # Analyze with CLIP and refine with Gemini vision for attributes
                     analysis = None
                     search_query = ""
-                    
+
                     if self.clip_client and self.clip_client.is_available():
                         try:
                             self.logger.info(f"Using CLIP for selection {selection_id}")
                             clip_analysis = self.clip_client.analyze_furniture_region(crop)
-                            
                             if "search_query" in clip_analysis and not clip_analysis.get("error"):
                                 analysis = clip_analysis
                                 search_query = clip_analysis["search_query"]
                         except Exception as e:
                             self.logger.warning(f"CLIP analysis failed for selection {selection_id}: {e}")
-                    
-                    # Fallback to vision API if CLIP failed
-                    if not analysis:
+
+                    # Always run a lightweight Gemini refinement for type/material/color to improve accuracy
+                    try:
                         from pydantic import BaseModel
 
                         class FurnitureQuery(BaseModel):
@@ -1623,24 +2586,25 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
                             "5. A concise 3-5 word search query for shopping"
                         )
 
-                        try:
-                            result = self.openai_client.analyze_image_with_vision(
-                                prompt=prompt,
-                                pydantic_model=FurnitureQuery,
-                                image_path=str(crop_path),
-                                model="gpt-4o-mini",
-                            )
-                            analysis = {
-                                "furniture_type": {"name": result.furniture_type, "confidence": 0.8},
-                                "style": {"name": result.style},
-                                "material": {"name": result.material},
-                                "color": {"name": result.color},
-                                "search_query": result.search_query
-                            }
+                        result = self.gemini_client.analyze_image_with_vision(
+                            prompt=prompt,
+                            pydantic_model=FurnitureQuery,
+                            image_path=str(crop_path),
+                        )
+
+                        # Use Gemini outputs to override/augment CLIP attributes
+                        if not analysis:
+                            analysis = {}
+                        analysis["furniture_type"] = {"name": result.furniture_type, "confidence": 0.8}
+                        analysis["style"] = {"name": result.style}
+                        analysis["material"] = {"name": result.material}
+                        analysis["color"] = {"name": result.color}
+                        if not search_query:
                             search_query = result.search_query
-                        except Exception as e:
-                            self.logger.warning(f"Vision analysis failed for selection {selection_id}: {e}")
-                            search_query = "furniture"
+                    except Exception as e:
+                        self.logger.warning(f"Vision refinement failed for selection {selection_id}: {e}")
+                        if not analysis:
+                            search_query = search_query or "furniture"
                             analysis = {
                                 "furniture_type": {"name": "furniture", "confidence": 0.5},
                                 "style": {"name": "unknown"},
@@ -1649,149 +2613,70 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
                                 "search_query": search_query
                             }
                     
-                    # Step 1: Use CLIP analysis to get search query
-                    # Step 2: Perform Google Lens reverse image search with the cropped image
-                    # Step 3: Enhance results with Claude + Exa AI
-                    products = []
-                    
-                    # First, try Google Lens reverse image search with the cropped image
-                    reverse_search_results = []
+                    # Unified product search using SERP + Exa with type guard and CLIP scoring
+                    products: List[Dict[str, Any]] = []
+
+                    if not search_query:
+                        search_query = "furniture"
+
+                    # SERP
                     if self.serp_client:
                         try:
-                            # Save crop as temporary file for Google Lens
-                            import io
-                            crop_buffer = io.BytesIO()
-                            crop.save(crop_buffer, format='PNG')
-                            crop_bytes = crop_buffer.getvalue()
-                            crop_base64 = base64.b64encode(crop_bytes).decode('utf-8')
-                            
-                            # Try to upload to ImgBB to get public URL (required for Google Lens)
-                            public_url = self.upload_image_to_imgbb(crop_base64)
-                            
-                            if public_url:
-                                # Use Google Lens reverse image search
-                                self.logger.info(f"🔍 Using Google Lens for selection {selection_id}")
-                                lens_results = self.serp_client.reverse_image_search_google_lens_url(public_url)
-                                
-                                # Convert Google Lens results to product format
-                                for lens_match in lens_results[:8]:
-                                    reverse_search_results.append({
-                                        "title": lens_match.get("title", "Unknown Product"),
-                                        "url": lens_match.get("product_link") or lens_match.get("link", ""),
-                                        "source": lens_match.get("source", "Unknown"),
-                                        "thumbnail": lens_match.get("thumbnail", ""),
-                                        "images": [lens_match.get("thumbnail")] if lens_match.get("thumbnail") else [],
-                                        "price_str": "Price not available",
-                                        "price": None,
-                                        "description": lens_match.get("title", ""),
-                                        "store": lens_match.get("source", "Unknown"),
-                                        "source_api": "google_lens",
-                                    })
-                                
-                                self.logger.info(f"✅ Google Lens found {len(reverse_search_results)} results for selection {selection_id}")
-                            else:
-                                # Fallback: Use Google Shopping with CLIP search query
-                                self.logger.info(f"📦 Falling back to Google Shopping for selection {selection_id}")
-                                if search_query:
-                                    shopping_results = self.serp_client.search_products(search_query, num_results=10)
-                                    if shopping_results and "results" in shopping_results:
-                                        for shop_item in shopping_results["results"][:8]:
-                                            # Extract product info from shopping result
-                                            product_info = self.serp_client._extract_product_info(shop_item)
-                                            if product_info:
-                                                reverse_search_results.append({
-                                                    "title": product_info.get("title", "Unknown Product"),
-                                                    "url": product_info.get("url", ""),
-                                                    "source": product_info.get("store", "Unknown"),
-                                                    "thumbnail": product_info.get("images", [""])[0] if product_info.get("images") else "",
-                                                    "images": product_info.get("images", []),
-                                                    "price_str": product_info.get("price_str", "Price not available"),
-                                                    "price": product_info.get("price"),
-                                                    "description": product_info.get("description", ""),
-                                                    "store": product_info.get("store", "Unknown"),
-                                                    "source_api": "google_shopping",
-                                                    "availability": product_info.get("availability", "Check availability"),
-                                                    "rating": product_info.get("rating"),
-                                                    "reviews": product_info.get("reviews"),
-                                                })
-                                        self.logger.info(f"✅ Google Shopping found {len(reverse_search_results)} results for '{search_query}'")
+                            serp_products = self.serp_client.search_and_analyze_products(
+                                query=search_query,
+                                space_type=context.space_type or "general",
+                                num_results=10,
+                            )
+                            for product in serp_products:
+                                product["source_api"] = "serp"
+                                product["search_method"] = "Google Shopping"
+                            products.extend(serp_products)
                         except Exception as e:
-                            self.logger.warning(f"Product search failed for selection {selection_id}: {e}")
-                    
-                    # Enhance reverse search results with Claude analysis
-                    if reverse_search_results and claude_client:
+                            self.logger.warning(f"SERP search failed for {selection_id}: {e}")
+
+                    # Exa
+                    if self.exa_client:
                         try:
-                            # Prepare context for Claude
-                            context_prompt = f"""
-                            You are analyzing furniture search results from Google Lens reverse image search.
-                            
-                            Original CLIP Analysis:
-                            - Furniture Type: {analysis.get("furniture_type", {}).get("name", "unknown")}
-                            - Style: {analysis.get("style", {}).get("name", "unknown")}
-                            - Material: {analysis.get("material", {}).get("name", "unknown")}
-                            - Color: {analysis.get("color", {}).get("name", "unknown")}
-                            - Search Query: {search_query}
-                            
-                            Reverse Search Results ({len(reverse_search_results)} items):
-                            {self._format_reverse_search_results_for_claude(reverse_search_results)}
-                            
-                            Please analyze these results and:
-                            1. Identify the most relevant and high-quality products
-                            2. Extract detailed product information (price, materials, dimensions, etc.)
-                            3. Rate each product's relevance to the original furniture item
-                            4. Provide enhanced product recommendations
-                            
-                            Return a JSON response with enhanced product details.
-                            """
-                            
-                            enhanced_products = claude_client.get_completion(
-                                prompt=context_prompt,
-                                model="claude-3-5-haiku-20241022",
-                                max_tokens=2000,
-                                temperature=0.3
+                            exa_products = self.exa_client.search_and_analyze_products(
+                                query=search_query,
+                                space_type=context.space_type or "general",
+                                num_results=8,
+                                similar_per_seed=3,
                             )
-                            
-                            # Parse Claude's response and merge with original results
-                            products = self._parse_claude_enhanced_products(
-                                enhanced_products.content,
-                                reverse_search_results
-                            )
-                            
-                            # Add Exa AI search for additional products if available
-                            if self.exa_client and search_query:
-                                try:
-                                    exa_results = self.exa_client.search_and_analyze_products(
-                                        query=search_query,
-                                        space_type=context.space_type or "general",
-                                        num_results=5
-                                    )
-                                    for exa_product in exa_results:
-                                        exa_product["source_api"] = "exa"
-                                        exa_product["enhanced_by"] = "exa_ai"
-                                    products.extend(exa_results)
-                                except Exception as e:
-                                    self.logger.warning(f"Exa enhancement failed for {search_query}: {e}")
-                            
+                            for product in exa_products:
+                                product["source_api"] = "exa"
+                                product["search_method"] = "Exa Semantic"
+                            products.extend(exa_products)
                         except Exception as e:
-                            self.logger.warning(f"Claude enhancement failed for selection {selection_id}: {e}")
-                            # Fallback to original reverse search results
-                            products = reverse_search_results
-                    
-                    # If no reverse search results or Claude enhancement failed, use original Google Lens results
-                    if not products and reverse_search_results:
-                        self.logger.info(f"Using raw Google Lens results for selection {selection_id}")
-                        products = reverse_search_results
-                    
-                    # Final fallback: if Google Lens completely failed, log it
-                    if not products:
-                        self.logger.warning(f"No products found for selection {selection_id} after Google Lens search")
-                    
-                    # Add source tracking
-                    for product in products:
-                        if "source_api" not in product:
-                            product["source_api"] = "reverse_search"
-                        if "enhanced_by" not in product:
-                            product["enhanced_by"] = "claude"
+                            self.logger.warning(f"Exa search failed for {selection_id}: {e}")
+
+                    # Deduplicate and type-guard
+                    products = self._dedupe_products_by_url(products)
+                    target_type = analysis.get("furniture_type", {}).get("name", "")
+                    filtered_products: List[Dict[str, Any]] = []
+                    for p in products:
+                        title = p.get("title", "")
+                        if target_type and not self._type_guard(title, target_type):
+                            continue
+                        filtered_products.append(p)
+
+                    # CLIP scoring against the crop
+                    scoring_meta = {}
+                    if filtered_products:
+                        scored = self.serp_client.score_products_with_clip(
+                            filtered_products,
+                            clip_client=self.clip_client,
+                            query_image=crop,
+                            drop_threshold=0.70,
+                            boost_threshold=0.85,
+                            timeout=1.5,
+                            max_workers=8,
+                            max_fetch=8,
+                        )
+                        filtered_products = scored.get("products", filtered_products)
+                        scoring_meta = scored.get("meta", {})
+
+                    products = filtered_products
                     
                     # Build result for this selection
                     result_item = {
@@ -1802,7 +2687,8 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
                         "material": analysis.get("material", {}).get("name", "unknown"),
                         "color": analysis.get("color", {}).get("name", "unknown"),
                         "search_query": search_query,
-                        "products": products[:5]  # Limit to 5 products per item
+                        "products": products[:5],  # Limit to 5 products per item
+                        "agent_notes": scoring_meta if scoring_meta else None,
                     }
                     
                     analysis_results.append(result_item)
@@ -2213,6 +3099,43 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
             except Exception:
                 return {"detections": []}
 
+    def _find_best_box_for_click(
+        self, click_x: float, click_y: float, detections: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Find the best matching YOLO detection for a click point.
+        
+        Args:
+            click_x: Normalized X coordinate (0-1)
+            click_y: Normalized Y coordinate (0-1)
+            detections: List of detection dicts with 'rect' keys
+            
+        Returns:
+            The best matching detection or None.
+            Prioritizes the smallest bounding box containing the point 
+            (to select specific items like pillows over sofas).
+        """
+        matches = []
+        for d in detections:
+            r = d.get("rect")
+            if not r:
+                continue
+            
+            # Check if point is inside rect
+            # rect: x, y, width, height (normalized)
+            rx, ry, rw, rh = r["x"], r["y"], r["width"], r["height"]
+            
+            if (rx <= click_x <= rx + rw) and (ry <= click_y <= ry + rh):
+                # Calculate area for sorting
+                area = rw * rh
+                matches.append((area, d))
+        
+        if not matches:
+            return None
+        
+        # Sort by area ascending (smallest first)
+        matches.sort(key=lambda x: x[0])
+        return matches[0][1]
+
     def _generate_search_query(self, context: ProjectContext) -> str:
         """Generate an optimized search query based on the project context and selected recommendation"""
         try:
@@ -2223,9 +3146,10 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
                 reasoning: str
 
             # Build context for AI
+            recs_text = ", ".join(context.selected_product_recommendations) if context.selected_product_recommendations else "furniture"
             context_info = f"""
             Space Type: {context.space_type}
-            Selected Recommendation: {context.selected_product_recommendation}
+            Selected Recommendations: {recs_text}
             """
 
             if context.improvement_markers:
@@ -2237,8 +3161,23 @@ OUTPUT: Generate a photorealistic redesigned image of this {space_type} that bea
             if context.inspiration_recommendations:
                 style_summary = ", ".join(context.inspiration_recommendations[:2])
                 context_info += f"\nStyle Preferences: {style_summary}"
+            
+            # Add color and style preferences
+            if context.color_analysis:
+                palette_name = context.color_analysis.get("palette_name", "")
+                if palette_name:
+                    context_info += f"\nColor Palette: {palette_name}"
+            
+            if context.style_analysis:
+                style_name = context.style_analysis.get("style_name", "")
+                if style_name:
+                    context_info += f"\nDesign Style: {style_name}"
+            
+            # Add preferred stores
+            if context.preferred_stores:
+                context_info += f"\nPreferred Stores: {', '.join(context.preferred_stores[:3])}"
 
-            prompt = f"""Generate a specific, optimized search query to find products for this recommendation.
+            prompt = f"""Generate a specific, optimized shopping search query to find products for this recommendation.
 
 {context_info}
 
@@ -2248,6 +3187,8 @@ Create a search query that:
 - Is optimized for e-commerce sites like Wayfair, West Elm, etc.
 - Is 3-8 words maximum
 - Focuses on the most important product characteristics
+- Avoids decor-only results (e.g., '-decor -ideas -how to style')
+- Prefer furniture/product pages (tables, chairs, shelves, sofas, lamps, rugs, beds)
 
 For example:
 - If recommendation is "change sofa" and style is modern → "modern sectional sofa gray"
@@ -2256,18 +3197,126 @@ For example:
 
 Generate the most effective search query for this scenario:"""
 
-            result = self.openai_client.get_structured_completion(
+            result = self.gemini_client.get_structured_completion(
                 prompt=prompt,
                 pydantic_model=SearchQuery,
-                system_message="You are an expert at generating optimized product search queries for furniture and home decor e-commerce sites.",
             )
 
-            return result.query
+            return f"{result.query} -decor -ideas"
 
         except Exception as e:
             print(f"Error generating search query: {e}")
             # Fallback to simple query
-            return f"{context.selected_product_recommendation} {context.space_type}"
+            recs_text = ", ".join(context.selected_product_recommendations) if context.selected_product_recommendations else "furniture"
+            return f"{recs_text} {context.space_type} -decor -ideas"
+
+
+    def _resolve_path(self, path_str: str) -> Path:
+        """Resolve stored relative paths safely (handles leading data/)."""
+        p = Path(path_str)
+        if p.is_absolute():
+            return p
+        if path_str.startswith("data/"):
+            return DATA_FILE.parent / path_str[5:]
+        return DATA_FILE.parent / p
+
+    def _ready_for_marker_recommendations(self, context: ProjectContext) -> bool:
+        """Check if we have enough design context to generate marker recommendations."""
+        return (
+            context.base_image is not None
+            and context.space_type is not None
+            and len(context.improvement_markers) > 0
+            and context.labelled_base_image is not None
+            and (bool(context.color_analysis) or context.color_analysis_skipped)
+            and (bool(context.style_analysis) or context.style_analysis_skipped)
+            and bool(context.preferred_stores)
+        )
+
+    def _status_rank(self, status: str) -> int:
+        """Return ordering index for statuses; unknown statuses rank last."""
+        try:
+            return STATUS_ORDER.index(status)
+        except ValueError:
+            return len(STATUS_ORDER)
+
+    def _try_generate_marker_recommendations(self, project_id: str) -> None:
+        """Generate marker recommendations once style/color/stores are set."""
+        projects = self._load_projects()
+        if project_id not in projects:
+            return
+
+        project = projects[project_id]
+        context = ProjectContext.model_validate(project["context"])
+
+        # Already generated
+        if project["status"] == "MARKER_RECOMMENDATIONS_READY" and context.marker_recommendations:
+            return
+
+        # Avoid downgrading projects that have progressed beyond marker recommendations
+        allowed_statuses = {
+            "SPACE_TYPE_SELECTED",
+            MARKERS_SAVED_STATUS,
+            "MARKER_RECOMMENDATIONS_READY",
+        }
+        if project["status"] not in allowed_statuses:
+            return
+
+        if not self._ready_for_marker_recommendations(context):
+            return
+
+        # Ensure labelled image path exists
+        labelled_path = self._resolve_path(context.labelled_base_image)
+        if not labelled_path.exists():
+            self.logger.warning(f"Labelled image not found at {labelled_path}")
+            return
+
+        # Generate recommendations
+        recs = self._generate_marker_recommendations(
+            context.space_type or "space",
+            context.improvement_markers,
+            str(labelled_path),
+            context,
+        )
+
+        updated_context = context.model_copy(
+            update={"marker_recommendations": recs}
+        )
+        projects[project_id]["context"] = updated_context.model_dump()
+        projects[project_id]["status"] = "MARKER_RECOMMENDATIONS_READY"
+        self._save_projects(projects)
+
+    def trigger_marker_recommendations(self, project_id: str) -> List[str]:
+        """Explicitly generate marker-based recommendations after gating criteria are met."""
+        projects = self._load_projects()
+        if project_id not in projects:
+            raise ValueError(f"Project {project_id} not found")
+
+        project = projects[project_id]
+        context = ProjectContext.model_validate(project["context"])
+
+        if not self._ready_for_marker_recommendations(context):
+            raise ValueError("Project is not ready for marker recommendations. Please ensure base image, space type, labelled markers, color analysis, style analysis, and preferred stores are set.")
+
+        labelled_path = self._resolve_path(context.labelled_base_image)
+        if not labelled_path.exists():
+            raise ValueError(f"Labelled image not found at {labelled_path}")
+
+        recs = self._generate_marker_recommendations(
+            context.space_type or "space",
+            context.improvement_markers,
+            str(labelled_path),
+            context,
+        )
+
+        updated_context = context.model_copy(update={"marker_recommendations": recs})
+        projects[project_id]["context"] = updated_context.model_dump()
+
+        current_rank = self._status_rank(project["status"])
+        marker_rank = self._status_rank("MARKER_RECOMMENDATIONS_READY")
+        if current_rank < marker_rank:
+            projects[project_id]["status"] = "MARKER_RECOMMENDATIONS_READY"
+        self._save_projects(projects)
+        return recs
 
 
 # Global instance

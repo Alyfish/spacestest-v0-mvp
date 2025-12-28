@@ -12,11 +12,11 @@ from models import (
     ImageUploadResponse,
     ImprovementMarkersRequest,
     ImprovementMarkersResponse,
+    MarkerRecommendationsResponse,
     InspirationImageGenerationResponse,
     InspirationImagesBatchUploadResponse,
     InspirationImageUploadResponse,
     InspirationRecommendationsResponse,
-    MarkerRecommendationsResponse,
     ProductRecommendationSelectionRequest,
     ProductRecommendationSelectionResponse,
     ProductRecommendationsResponse,
@@ -38,10 +38,17 @@ from models import (
     FurnitureAnalysisItem,
     ReverseSearchBatchRequest,
     ReverseSearchBatchResponse,
+    SkipStepResponse,
     AffiliateCartRequest,
     AffiliateCartResponse,
     AffiliateProduct,
     RetailerCart,
+    ApplyColorRequest,
+    ApplyColorResponse,
+    ApplyStyleRequest,
+    ApplyStyleResponse,
+    PreferredStoresRequest,
+    PreferredStoresResponse,
 )
 
 load_dotenv()
@@ -118,6 +125,15 @@ async def get_project(project_id: str):
         created_at=project["created_at"],
         context=context,
     )
+
+
+@app.delete("/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Delete a project"""
+    if not data_manager.delete_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    return {"status": "success", "message": f"Project {project_id} deleted successfully"}
 
 
 @app.post("/projects/{project_id}/upload-image", response_model=ImageUploadResponse)
@@ -266,6 +282,28 @@ async def get_marker_recommendations(project_id: str):
 
 
 @app.post(
+    "/projects/{project_id}/marker-recommendations",
+    response_model=MarkerRecommendationsResponse,
+)
+async def generate_marker_recommendations(project_id: str):
+    """Generate marker-based AI recommendations when the project is ready (color/style/stores set)."""
+    try:
+        recs = data_manager.trigger_marker_recommendations(project_id)
+        project = data_manager.get_project(project_id)
+        context = ProjectContext.model_validate(project["context"])
+        return MarkerRecommendationsResponse(
+            project_id=project_id,
+            space_type=context.space_type or "unknown",
+            recommendations=recs,
+            status=project["status"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate marker recommendations: {str(e)}")
+
+
+@app.post(
     "/projects/{project_id}/inspiration-image",
     response_model=InspirationImageUploadResponse,
 )
@@ -408,25 +446,30 @@ async def generate_inspiration_redesign(project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Check if project has inspiration recommendations (regardless of status)
+    # Check if project has inspiration recommendations OR product recommendations
     context = ProjectContext.model_validate(project["context"])
     has_inspiration_recs = (
         context.inspiration_recommendations 
         and len(context.inspiration_recommendations) > 0
     )
+    has_product_recs = (
+        context.product_recommendations
+        and len(context.product_recommendations) > 0
+    )
     
-    if not has_inspiration_recs:
+    if not has_inspiration_recs and not has_product_recs:
         logger.warning(
-            "Project has no inspiration recommendations",
+            "Project has no inspiration or product recommendations",
             extra={
                 "project_id": project_id,
                 "current_status": project["status"],
                 "has_inspiration_recs": False,
+                "has_product_recs": False,
             },
         )
         raise HTTPException(
             status_code=400,
-            detail="Project must have inspiration recommendations first. Upload inspiration images and generate recommendations.",
+            detail="Project must have either inspiration or product recommendations first.",
         )
 
     try:
@@ -473,6 +516,315 @@ async def generate_inspiration_redesign(project_id: str):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate inspiration redesign: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/apply-color-scheme",
+    response_model=ApplyColorResponse,
+)
+async def apply_color_scheme(project_id: str, color_request: ApplyColorRequest):
+    """Apply a color scheme to the project using the Color Agent for analysis"""
+    logger.info(
+        "API request: apply color scheme",
+        extra={
+            "project_id": project_id,
+            "palette_name": color_request.palette_name,
+            "let_ai_decide": color_request.let_ai_decide,
+        },
+    )
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    context = ProjectContext.model_validate(project["context"])
+
+    # Need at least a base image and space type
+    if not context.base_image or not context.space_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have a base image and space type selected first",
+        )
+
+    try:
+        logger.info(
+            "Starting Color Agent analysis",
+            extra={
+                "project_id": project_id,
+                "palette_name": color_request.palette_name,
+            },
+        )
+        
+        color_analysis = data_manager.apply_color_scheme(
+            project_id,
+            color_request.palette_name,
+            color_request.colors,
+            color_request.let_ai_decide,
+        )
+
+        logger.info(
+            "Color Agent analysis complete",
+            extra={"project_id": project_id},
+        )
+
+        from models import ColorAnalysis
+        return ApplyColorResponse(
+            project_id=project_id,
+            palette_name=color_request.palette_name,
+            color_analysis=ColorAnalysis.model_validate(color_analysis),
+            status="success",
+        )
+    except ValueError as e:
+        logger.error(
+            "Color scheme application failed: ValueError",
+            extra={"project_id": project_id, "error": str(e)},
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        logger.error(
+            "Color scheme application failed: Unexpected error",
+            extra={
+                "project_id": project_id,
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to apply color scheme: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/apply-style",
+    response_model=ApplyStyleResponse,
+)
+async def apply_style(project_id: str, style_request: ApplyStyleRequest):
+    """Apply an interior design style to the project using the Style Agent for analysis"""
+    logger.info(
+        "API request: apply style",
+        extra={
+            "project_id": project_id,
+            "style_name": style_request.style_name,
+            "let_ai_decide": style_request.let_ai_decide,
+        },
+    )
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    context = ProjectContext.model_validate(project["context"])
+
+    # Need at least a base image and space type
+    if not context.base_image or not context.space_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have a base image and space type selected first",
+        )
+
+    try:
+        logger.info(
+            "Starting Style Agent analysis",
+            extra={
+                "project_id": project_id,
+                "style_name": style_request.style_name,
+            },
+        )
+        
+        style_analysis = data_manager.apply_style(
+            project_id,
+            style_request.style_name,
+            style_request.let_ai_decide,
+        )
+
+        logger.info(
+            "Style Agent analysis complete",
+            extra={"project_id": project_id},
+        )
+
+        from models import StyleAnalysis
+        return ApplyStyleResponse(
+            project_id=project_id,
+            style_name=style_request.style_name,
+            style_analysis=StyleAnalysis.model_validate(style_analysis),
+            status="success",
+        )
+    except ValueError as e:
+        logger.error(
+            "Style application failed: ValueError",
+            extra={"project_id": project_id, "error": str(e)},
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        logger.error(
+            "Style application failed: Unexpected error",
+            extra={
+                "project_id": project_id,
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to apply style: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/skip-color-analysis",
+    response_model=SkipStepResponse,
+)
+async def skip_color_analysis(project_id: str):
+    """Skip color analysis to unblock downstream steps."""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    context = ProjectContext.model_validate(project["context"])
+    if not context.base_image or not context.space_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have a base image and space type selected first",
+        )
+
+    try:
+        data_manager.skip_color_analysis(project_id)
+        project = data_manager.get_project(project_id)
+        return SkipStepResponse(
+            project_id=project_id,
+            status=project["status"],
+            skipped_step="color_analysis",
+            message="Color analysis skipped",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to skip color analysis: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/skip-style-analysis",
+    response_model=SkipStepResponse,
+)
+async def skip_style_analysis(project_id: str):
+    """Skip style analysis to unblock downstream steps."""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    context = ProjectContext.model_validate(project["context"])
+    if not context.base_image or not context.space_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have a base image and space type selected first",
+        )
+
+    try:
+        data_manager.skip_style_analysis(project_id)
+        project = data_manager.get_project(project_id)
+        return SkipStepResponse(
+            project_id=project_id,
+            status=project["status"],
+            skipped_step="style_analysis",
+            message="Style analysis skipped",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to skip style analysis: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/skip-inspiration-images",
+    response_model=SkipStepResponse,
+)
+async def skip_inspiration_images(project_id: str):
+    """Skip inspiration images to unblock downstream steps."""
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    context = ProjectContext.model_validate(project["context"])
+    if not context.base_image or not context.space_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must have a base image and space type selected first",
+        )
+
+    try:
+        data_manager.skip_inspiration_images(project_id)
+        project = data_manager.get_project(project_id)
+        return SkipStepResponse(
+            project_id=project_id,
+            status=project["status"],
+            skipped_step="inspiration_images",
+            message="Inspiration images skipped",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to skip inspiration images: {str(e)}",
+        )
+
+
+@app.post(
+    "/projects/{project_id}/preferred-stores",
+    response_model=PreferredStoresResponse,
+)
+async def update_preferred_stores(
+    project_id: str, store_request: PreferredStoresRequest
+):
+    """Update user's preferred retail stores in the project context"""
+    logger.info(
+        "API request: update preferred stores",
+        extra={
+            "project_id": project_id,
+            "stores": store_request.stores,
+        },
+    )
+    project = data_manager.get_project(project_id)
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        updated_stores = data_manager.update_preferred_stores(
+            project_id, store_request.stores
+        )
+
+        return PreferredStoresResponse(
+            project_id=project_id,
+            stores=updated_stores,
+            status="success",
+        )
+    except Exception as e:
+        import traceback
+        logger.error(
+            "Update preferred stores failed: Unexpected error",
+            extra={
+                "project_id": project_id,
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update preferred stores: {str(e)}",
         )
 
 
@@ -550,11 +902,27 @@ async def select_product_recommendation(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if project["status"] != "PRODUCT_RECOMMENDATIONS_READY":
-        raise HTTPException(
-            status_code=400,
-            detail="Project must have product recommendations ready first",
-        )
+    allowed_statuses = [
+        "PRODUCT_RECOMMENDATIONS_READY",
+        "INSPIRATION_RECOMMENDATIONS_READY",
+        "PRODUCT_RECOMMENDATION_SELECTED",
+        "PRODUCT_SEARCH_COMPLETE",
+        "PRODUCT_SELECTED",
+        "IMAGE_GENERATED",
+        "INSPIRATION_REDESIGN_COMPLETE"
+    ]
+    
+    if project["status"] not in allowed_statuses:
+        # Fallback: check if we actually have recommendations in context, if so, we might allow it (legacy projects/weird states)
+        context = ProjectContext.model_validate(project["context"])
+        has_recs = (context.product_recommendations and len(context.product_recommendations) > 0) or \
+                   (context.inspiration_recommendations and len(context.inspiration_recommendations) > 0)
+        
+        if not has_recs:
+             raise HTTPException(
+                status_code=400,
+                detail="Project must have product or inspiration recommendations ready first",
+            )
 
     try:
         selected = data_manager.select_product_recommendation(
@@ -564,7 +932,7 @@ async def select_product_recommendation(
 
         return ProductRecommendationSelectionResponse(
             project_id=project_id,
-            selected_recommendation=selected,
+            selected_recommendations=selected,
             status=project["status"],
         )
     except ValueError as e:
@@ -600,12 +968,12 @@ async def search_products(project_id: str):
 
         return ProductSearchResponse(
             project_id=project_id,
-            selected_recommendation=context.selected_product_recommendation or "",
+            selected_recommendations=context.selected_product_recommendations,
             search_query=search_result["search_query"],
             products=search_result["products"],
             total_found=search_result["total_found"],
             status=project["status"],
-            message=f"Found {search_result['total_found']} products for '{context.selected_product_recommendation}'",
+            message=f"Found {search_result['total_found']} products for your selections",
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -645,7 +1013,7 @@ async def select_product_for_generation(
 
         return ProductSelectionResponse(
             project_id=project_id,
-            selected_product=selected["selected_product"],
+            selected_products=selected["selected_products"],
             status="success",
             message=selected["message"],
         )
@@ -685,7 +1053,7 @@ async def generate_product_visualization(project_id: str):
 
         return ImageGenerationResponse(
             project_id=project_id,
-            selected_product=generation_result["selected_product"],
+            selected_products=generation_result["selected_products"],
             generated_image_base64=generation_result["generated_image_base64"],
             generation_prompt=generation_result["generation_prompt"],
             status="success",

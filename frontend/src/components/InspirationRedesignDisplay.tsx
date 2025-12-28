@@ -1,6 +1,7 @@
 "use client";
 
 import { useGenerateInspirationRedesign } from "@/lib/api";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { useState } from "react";
 import { FurnitureIdentificationPanel } from "./FurnitureIdentificationPanel";
 
@@ -20,6 +21,10 @@ export function InspirationRedesignDisplay({
   const generateRedesign = useGenerateInspirationRedesign();
   const [imageError, setImageError] = useState(false);
   const [showFurniturePanel, setShowFurniturePanel] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
 
   const handleGenerate = () => {
     generateRedesign.mutate(projectId, {
@@ -71,8 +76,14 @@ export function InspirationRedesignDisplay({
               <img
                 src={`data:image/png;base64,${generatedImageBase64}`}
                 alt="Inspiration Redesign"
-                className="w-full h-64 object-cover rounded-lg mb-3"
+                className="w-full h-64 object-cover rounded-lg mb-3 cursor-zoom-in"
                 onError={() => setImageError(true)}
+                onClick={(event) =>
+                  setLightboxImage({
+                    src: event.currentTarget.src,
+                    alt: "Inspiration Redesign",
+                  })
+                }
               />
             ) : (
               <div className="w-full h-64 bg-gray-200 dark:bg-gray-600 rounded-lg mb-3 flex items-center justify-center">
@@ -132,6 +143,12 @@ export function InspirationRedesignDisplay({
           onClose={() => setShowFurniturePanel(false)}
         />
       )}
+      <ImageLightbox
+        isOpen={Boolean(lightboxImage)}
+        src={lightboxImage?.src || ""}
+        alt={lightboxImage?.alt || "Image preview"}
+        onClose={() => setLightboxImage(null)}
+      />
 
       {inspirationPrompt && (
         <div className="mt-6 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-4">
@@ -146,6 +163,5 @@ export function InspirationRedesignDisplay({
     </div>
   );
 }
-
 
 
