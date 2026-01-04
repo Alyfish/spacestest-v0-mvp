@@ -406,3 +406,74 @@ class CLIPClient:
         except Exception as e:
             self.logger.error(f"Failed to generate enhanced query: {e}")
             return "furniture"
+
+    def validate_products_by_label(self, label: str, products: List[Dict[str, Any]], threshold: float = 0.18, top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Validate and re-rank candidate products against a text label using CLIP.
+        
+        Args:
+            label: The text label to validate against (e.g. "modern grey sofa")
+            products: List of product dicts
+            threshold: Minimum similarity score to keep a product
+            top_k: Max products to return
+            
+        Returns:
+            Filtered and sorted list of products
+        """
+        if not self.is_available():
+            return products[:top_k]
+            
+        try:
+            # 1. Encode the LABEL (text) to get a "ideal concept" vector
+            text_embedding = self.encode_text(label)
+            if text_embedding is None:
+                return products[:top_k]
+            
+            validated = []
+            
+            for product in products:
+                # 2. Get product thumbnail
+                # Get best available image URL
+                image_url = product.get('thumbnail') 
+                if not image_url and product.get('images'):
+                    image_url = product['images'][0]
+                if not image_url: 
+                    continue
+                    
+                # 3. Download and Encode product image
+                # This needs a helper to download generic URLs
+                image = self._download_image_from_url(image_url)
+                if not image:
+                    continue
+                    
+                img_embedding = self.encode_image(image)
+                if img_embedding is None:
+                    continue
+                
+                # 4. Compute similarity
+                score = self.compute_similarity(text_embedding, img_embedding)
+                
+                product['clip_validation_score'] = score
+                if score > threshold:
+                    validated.append(product)
+            
+            # Sort by score
+            validated.sort(key=lambda x: x.get('clip_validation_score', 0), reverse=True)
+            return validated[:top_k]
+            
+        except Exception as e:
+            self.logger.error(f"Error in validate_products_by_label: {e}")
+            return products[:top_k]
+
+    def _download_image_from_url(self, url: str) -> Optional[Image.Image]:
+        """Helper to download image from URL safely"""
+        # Avoid circular imports if possible or import internally
+        import requests
+        try:
+            resp = requests.get(url, timeout=3.0)
+            if resp.status_code == 200:
+                return Image.open(BytesIO(resp.content)).convert("RGB")
+        except Exception:
+            pass
+        return None
+

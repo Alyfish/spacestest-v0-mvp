@@ -824,39 +824,58 @@ REMEMBER: Keep walls, doors, flooring, ceiling unchanged. Focus on furniture, de
         color_scheme: Dict[str, Any] = None,
         design_style: Dict[str, Any] = None,
     ) -> str:
-        """Create a comprehensive prompt for integrating multiple products into the original room"""
+        """Create a comprehensive prompt for integrating products with PHOTOREALISM focus"""
         
-        # Build context
-        context_parts = []
+        # Build dynamic context
+        titles_str = ", ".join(product_titles) if product_titles else "new furniture items"
         
-        titles_str = "', '".join(product_titles)
-        context_parts.append(f"Task: Integrate the following products into this {space_type} image: '{titles_str}'.")
-        
-        if custom_prompt:
-             context_parts.append(f"User Request: {custom_prompt}")
-
-        if inspiration_recommendations:
-            context_parts.append("Style Guide:\n" + "\n".join(f"- {rec}" for rec in inspiration_recommendations[:3]))
-
-        if marker_locations:
-             context_parts.append("Placement Areas:\n" + "\n".join(f"- Marker {i+1}: {m.description}" for i, m in enumerate(marker_locations) if hasattr(m, 'description')))
-
-        if color_scheme:
-             palette = color_scheme.get("colors", [])
-             if palette:
-                 context_parts.append(f"Color Palette: {', '.join(palette)}")
-        
+        style_context = ""
         if design_style:
-             style = design_style.get("style_name")
-             if style:
-                 context_parts.append(f"Design Style: {style}")
+            style = design_style.get("style_name", "")
+            materials = design_style.get("materials", [])
+            if style:
+                style_context = f"Design Style: {style}"
+                if materials:
+                    style_context += f"\nMaterials: {', '.join(materials[:5])}"
+        
+        color_context = ""
+        if color_scheme:
+            palette = color_scheme.get("colors", [])
+            if palette:
+                color_context = f"Color Palette: {', '.join(palette)}"
+        
+        placement_context = ""
+        if marker_locations:
+            placements = [f"- Marker {i+1}: {m.description}" for i, m in enumerate(marker_locations) if hasattr(m, 'description')]
+            if placements:
+                placement_context = "Placement Areas:\n" + "\n".join(placements)
+        
+        user_request = f"User Request: {custom_prompt}" if custom_prompt else ""
+        
+        # PHOTOREALISM FOCUSED PROMPT
+        prompt = f"""### ROLE & OBJECTIVE
+You are a master of Architectural Photography and Interior Restoration. Your task is to modify this {space_type} photograph by integrating the following products: {titles_str}.
+The goal is a "Real-Life" photograph, NOT a digital render.
 
-        context_parts.append("""
-        Instructions:
-        - seamlessly composite the product into the room
-        - match lighting, shadows, and perspective
-        - preserve the original room structure (walls, floor, windows)
-        - make it look photorealistic and high-design
-        """)
+### 1. STRUCTURAL LOCKDOWN (NON-NEGOTIABLE)
+DO NOT ALTER: Walls, ceiling, window frames, door locations, flooring material, or electrical outlets.
+PERSPECTIVE: Maintain the exact lens focal length and camera angle of the original photo.
 
-        return "\n\n".join(context_parts)
+### 2. PHOTOGRAPHIC REALISM PROTOCOLS (CRITICAL)
+LIGHTING PHYSICS: All illumination must come from existing windows and visible lamps. Match the shadow direction and hardness of the original.
+MATERIAL AUTHENTICITY: Wood must show natural grain and micro-scratches. Fabrics must show visible weave and realistic folding. Metal must reflect the room accurately, not generic white highlights.
+OPTICAL IMPERFECTIONS: Include subtle depth of field, realistic color grading, and ambient occlusion in corners.
+CAMERA SIMULATION: Emulate a full-frame DSLR with 24-35mm lens. Include minor vignetting.
+
+### 3. DESIGN CONTEXT
+{style_context}
+{color_context}
+{placement_context}
+{user_request}
+
+### 4. OUTPUT REQUIREMENT
+Generate a high-resolution photograph. If it looks like a "3D render" or has a smooth, plastic, digital appearance, it has FAILED.
+It MUST look like a before-and-after photo taken by the same camera in the same physical room."""
+
+        return prompt
+

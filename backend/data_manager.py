@@ -263,6 +263,36 @@ class DataManager:
             deduped.append(p)
         return deduped
 
+    def upload_image_to_imgbb(self, image_base64: str) -> Optional[str]:
+        """Upload base64 image to ImgBB and return public URL."""
+        import requests
+        
+        try:
+            imgbb_key = os.getenv("IMGBB_API_KEY")
+            if not imgbb_key:
+                self.logger.warning("IMGBB_API_KEY not found")
+                return None
+            
+            url = "https://api.imgbb.com/1/upload"
+            payload = {
+                "key": imgbb_key,
+                "image": image_base64,
+            }
+            
+            response = requests.post(url, data=payload, timeout=10)
+            result = response.json()
+            
+            if result.get("success"):
+                return result["data"]["url"]
+            
+            self.logger.warning(f"ImgBB upload failed: {result}")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error uploading to ImgBB: {e}")
+            return None
+
+
     def _type_guard(self, title: str, target_type: str) -> bool:
         """Allow only titles that match the target type family and reject decor/how-to."""
         t = title.lower()
@@ -2374,49 +2404,38 @@ Return exactly 6 recommendations that are distinct and complementary to each oth
             if product_source:
                 product_list_str = "\n".join([f"- {clean(rec)}" for rec in product_source[:5]])
 
-            # 3. Final Prompt Construction
+            # 3. Final Prompt Construction - PHOTOREALISM FOCUSED
             prompt = f"""### ROLE & OBJECTIVE
-You are an elite Interior Design AI for the Nano Banana app. Your goal is to redesign the provided {clean(space_type)} image to match specific design requirements while adhering to professional spatial planning and Feng Shui principles.
+You are a master of Architectural Photography and Interior Restoration. Your task is to modify the provided photograph (the input image) by replacing specific furniture and decor while maintaining the exact architectural shell and original camera properties. The goal is a "Real-Life" photograph, not a digital render.
 
-### INPUT DATA
-• REFERENCE IMAGE: [Provided Image]
-• DESIGN CONTEXT:
+### 1. STRUCTURAL LOCKDOWN (NON-NEGOTIABLE)
+DO NOT ALTER: The position of walls, ceiling height, window frames, door locations, flooring material, or electrical outlets.
+SPATIAL DYNAMICS: New furniture must occupy the same 3D coordinate space as the items they replace. Ensure the scale of new items matches the realistic dimensions of the room's footprint.
+PERSPECTIVE: Maintain the exact lens focal length and camera angle of the original photo.
+
+### 2. PHOTOGRAPHIC REALISM PROTOCOLS (CRITICAL)
+LIGHTING PHYSICS: Do not add "magical" light sources. All illumination must come from the existing windows and any visible lamps in the original photo. Shadows must be hard-edged or soft based on the original photo's light direction.
+MATERIAL AUTHENTICITY: Avoid the "plastic" AI look at all costs. Wood must show natural grain and micro-scratches; fabrics must show visible weave and realistic folding; metal must show authentic reflections of the room environment, not generic white highlights.
+OPTICAL IMPERFECTIONS: Include subtle photographic traits: natural depth of field (slight blur on very foreground or background objects), realistic color grading matching the original photo's white balance, and organic shadows in corners (ambient occlusion).
+CAMERA SIMULATION: Treat this as if shot on a professional full-frame DSLR with a 24-35mm lens. Emulate subtle lens characteristics like minor vignetting and natural color fringing at high-contrast edges.
+
+### 3. DESIGN SPECIFICATIONS
+SPACE TYPE: {clean(space_type)}
+
 {design_context_str}
 
-• PRODUCT UPDATES:
+FURNITURE REPLACEMENTS:
 {product_list_str}
 
-### CORE DESIGN LOGIC (Apply Strict Adherence)
-1. **Feng Shui & Flow:**
-   - Visual Balance: Distribute visual weight (Wood, Fire, Earth, Metal, Water) evenly.
-   - Command Position: Primary seating/bed must have a clear view of the entry but not align directly with it.
-   - Chi Flow: Ensure clear visual pathways from doors to windows.
+DECOR & TEXTILES:
+- If adding a rug, ensure it tucks realistically under nearby furniture legs.
+- Any wall art should have appropriate frames matching the style (e.g., thin black metal for modern, ornate wood for traditional).
+- Textiles (curtains, throws, pillows) must show realistic fabric draping and creasing.
 
-2. **Pro Layout Rules:**
-   - Anchoring: Use a primary rug to anchor furniture groups (front legs on rug at minimum).
-   - Circulation: Maintain wide, unobstructed walking paths between zones.
-   - Lighting Layers: Integrate ambient (general), task (functional), and accent (mood) lighting sources.
+DECLUTTERING: Remove all small loose items, trash, and visible cables from desks and floors to create a clean, organized, professional space.
 
-3. **Visual Corrections (Positive Reinforcement):**
-   - If a sofa is present, pull it slightly away from walls ("floating") to create depth.
-   - Ensure desks face into the room or towards a view, never strictly facing a blank wall.
-   - Scale furniture to occupy approximately 2/3 of the floor area for realistic proportions.
-
-### EXECUTION REQUIREMENTS
-1. **Structural Integrity (HIGHEST PRIORITY):** - DO NOT CHANGE: Walls, ceiling height, window locations, door frames, or flooring type (unless specified).
-   - The architectural "shell" must remain identical to the Reference Image.
-
-2. **Style Transformation:**
-   - Apply the textures, colors, and mood from the Design Context.
-   - Replace existing furniture with items matching the Product Updates.
-   - Update textiles (curtains, pillows, rugs) to match the new palette.
-
-3. **Photorealism:**
-   - Lighting must match the natural light direction of the original image.
-   - Shadows and reflections must be physically accurate.
-
-### OUTPUT
-Generate a high-fidelity, photorealistic redesign of the {clean(space_type)}. The image must look like a high-end interior design magazine feature that perfectly blends the Design Context with the existing room architecture."""
+### 4. OUTPUT REQUIREMENT
+Generate a high-resolution photograph. If the image looks like a "3D concept render" or has a smooth, plastic, digital art appearance, it has FAILED. It MUST look like a "before and after" photo taken by the same camera in the same physical room. The final image should be indistinguishable from a real photograph shot for a high-end interior design magazine."""
 
             print(f"🎨 Inspiration redesign prompt: {prompt[:200]}...")
 
@@ -2470,20 +2489,14 @@ Generate a high-fidelity, photorealistic redesign of the {clean(space_type)}. Th
         self, 
         project_id: str, 
         selections: List,
-        image_type: str = "product"
+        image_type: str = "product",
+        mode: str = "full"
     ) -> Dict[str, Any]:
         """
-        Analyze multiple furniture selections in a batch using CLIP.
-        
-        Args:
-            project_id: Project ID
-            selections: List of furniture selections with x,y coordinates
-            image_type: Type of image ("product" or "inspiration")
-            
-        Returns:
-            Analysis results for all selections
+        Analyze multiple furniture selections using Gemini 3.0 spatial detection, ImgBB, and CLIP.
         """
         try:
+            # Load Project
             projects = self._load_projects()
             if project_id not in projects:
                 raise ValueError(f"Project {project_id} not found")
@@ -2491,7 +2504,7 @@ Generate a high-fidelity, photorealistic redesign of the {clean(space_type)}. Th
             project = projects[project_id]
             context = ProjectContext.model_validate(project["context"])
             
-            # Get the appropriate image based on type
+            # 1. Get Image
             if image_type == "inspiration":
                 image_base64 = context.inspiration_generated_image_base64
                 if not image_base64:
@@ -2499,230 +2512,181 @@ Generate a high-fidelity, photorealistic redesign of the {clean(space_type)}. Th
             else:
                 image_base64 = context.generated_image_base64
                 if not image_base64:
-                    raise ValueError("No product visualization available")
+                    # Fallback to base image if generated image not available
+                    if context.base_image and os.path.exists(context.base_image):
+                         with open(context.base_image, "rb") as f:
+                            image_base64 = base64.b64encode(f.read()).decode('utf-8')
+                    else:
+                        raise ValueError("No image available for analysis")
             
-            # Decode base64 image
+            # Decode image for processing
             import base64
             from io import BytesIO
             from PIL import Image
-            
             image_bytes = base64.b64decode(image_base64)
-            image = Image.open(BytesIO(image_bytes)).convert("RGB")
-            width, height = image.size
+            full_image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            width, height = full_image.size
             
-            # Auto-detect objects first using advanced detector
-            from furniture_detector import furniture_detector
-            detections = []
-            try:
-                detections = furniture_detector.detect(image)
-                self.logger.info(f"YOLO found {len(detections)} objects for advanced segmentation")
-            except Exception as e:
-                self.logger.warning(f"Auto-detection failed: {e}")
-
-            # Analyze each selection
+            # Initialize Utilities
+            from spatial_utils import SpatialDetector, smart_crop
+            spatial_detector = SpatialDetector()
+            
             analysis_results = []
             
             for selection in selections:
                 try:
-                    # Get selection coordinates
-                    x = selection.x if hasattr(selection, 'x') else selection.get('x', 0.5)
-                    y = selection.y if hasattr(selection, 'y') else selection.get('y', 0.5)
-                    
-                    # Use Advanced Furniture Detector logic (Refined API)
-                    fd_result = furniture_detector.select_at_click(x, y, image, detections)
-                    
-                    crop = fd_result.crop
-                    selected = fd_result.selected
-                    method = fd_result.method
-                    reason = fd_result.reason
-                    
-                    if selected:
-                        self.logger.info(f"🎯 Matched click to object: {selected.get('label', 'unknown')} (Method: {method}, Reason: {reason})")
-                        if fd_result.needs_disambiguation:
-                            self.logger.info("⚠️ Ambiguous selection detected (UI should handle disambiguation)")
+                    # Extract click coordinates
+                    # Handle both Pydantic objects and dicts
+                    if hasattr(selection, 'x') and hasattr(selection, 'y'):
+                        # Pydantic object (FurnitureSelection)
+                        x = selection.x
+                        y = selection.y
+                    elif isinstance(selection, dict):
+                        # Dict format
+                        x = selection.get("x")
+                        y = selection.get("y")
                     else:
-                        self.logger.info(f"📦 No object matched, used fallback: {method} ({reason})")
+                        self.logger.warning(f"Unknown selection format: {type(selection)}")
+                        continue
+
+                    if x is None or y is None:
+                        self.logger.warning(f"Skipping selection without coordinates: {selection}")
+                        continue
+                        
+                    self.logger.info(f"Analyzing selection at {x}, {y}")
                     
-                    # Save crop temporarily
+                    # ============================================================
+                    # STEP 1: Gemini Spatial Detection (Object + Bounding Box)
+                    # ============================================================
+                    detection = spatial_detector.get_object_bbox(
+                        image_bytes, 
+                        click_x=x, 
+                        click_y=y,
+                        image_width=width,
+                        image_height=height
+                    )
                     
-                    # Save crop temporarily
-                    temp_dir = DATA_FILE.parent / "images" / project_id
-                    temp_dir.mkdir(parents=True, exist_ok=True)
-                    selection_id = selection.id if hasattr(selection, 'id') else selection.get('id', 'unknown')
-                    crop_path = temp_dir / f"selection_{selection_id}.png"
-                    crop.save(crop_path)
+                    label = detection["label"]
+                    attributes = detection.get("attributes", {})
+                    search_query = detection.get("search_query", label)
+                    bbox_norm = detection.get("bbox_normalized", [0.3, 0.3, 0.7, 0.7])
                     
-                    # Analyze with CLIP and refine with Gemini vision for attributes
-                    analysis = None
-                    search_query = ""
-
-                    if self.clip_client and self.clip_client.is_available():
-                        try:
-                            self.logger.info(f"Using CLIP for selection {selection_id}")
-                            clip_analysis = self.clip_client.analyze_furniture_region(crop)
-                            if "search_query" in clip_analysis and not clip_analysis.get("error"):
-                                analysis = clip_analysis
-                                search_query = clip_analysis["search_query"]
-                        except Exception as e:
-                            self.logger.warning(f"CLIP analysis failed for selection {selection_id}: {e}")
-
-                    # Always run a lightweight Gemini refinement for type/material/color to improve accuracy
-                    try:
-                        from pydantic import BaseModel
-
-                        class FurnitureQuery(BaseModel):
-                            furniture_type: str
-                            style: str
-                            material: str
-                            color: str
-                            search_query: str
-
-                        prompt = (
-                            "Analyze this furniture item and provide:\n"
-                            "1. The type of furniture (e.g., sofa, chair, table)\n"
-                            "2. The style (e.g., modern, traditional)\n"
-                            "3. The primary material\n"
-                            "4. The primary color\n"
-                            "5. A concise 3-5 word search query for shopping"
-                        )
-
-                        result = self.gemini_client.analyze_image_with_vision(
-                            prompt=prompt,
-                            pydantic_model=FurnitureQuery,
-                            image_path=str(crop_path),
-                        )
-
-                        # Use Gemini outputs to override/augment CLIP attributes
-                        if not analysis:
-                            analysis = {}
-                        analysis["furniture_type"] = {"name": result.furniture_type, "confidence": 0.8}
-                        analysis["style"] = {"name": result.style}
-                        analysis["material"] = {"name": result.material}
-                        analysis["color"] = {"name": result.color}
-                        if not search_query:
-                            search_query = result.search_query
-                    except Exception as e:
-                        self.logger.warning(f"Vision refinement failed for selection {selection_id}: {e}")
-                        if not analysis:
-                            search_query = search_query or "furniture"
-                            analysis = {
-                                "furniture_type": {"name": "furniture", "confidence": 0.5},
-                                "style": {"name": "unknown"},
-                                "material": {"name": "unknown"},
-                                "color": {"name": "unknown"},
-                                "search_query": search_query
-                            }
+                    self.logger.info(f"Gemini detected: {label} {bbox_norm}")
                     
-                    # Unified product search using SERP + Exa with type guard and CLIP scoring
-                    products: List[Dict[str, Any]] = []
-
-                    if not search_query:
-                        search_query = "furniture"
-
-                    # SERP
+                    # ============================================================
+                    # STEP 2: Smart Crop using Gemini Bounding Box
+                    # ============================================================
+                    crop = smart_crop(full_image, bbox_norm, padding=0.05)
+                    
+                    # Store crop as base64 for returning to UI if needed
+                    crop_buffer = BytesIO()
+                    crop.save(crop_buffer, format='PNG')
+                    crop_base64 = base64.b64encode(crop_buffer.getvalue()).decode('utf-8')
+                    
+                    # ============================================================
+                    # STEP 3: Parallel Search (Google Lens + Exa)
+                    # ============================================================
+                    all_products = []
+                    
+                    # --- 3A: Google Lens Reverse Image Search ---
                     if self.serp_client:
-                        try:
-                            serp_products = self.serp_client.search_and_analyze_products(
-                                query=search_query,
-                                space_type=context.space_type or "general",
-                                num_results=10,
-                            )
-                            for product in serp_products:
-                                product["source_api"] = "serp"
-                                product["search_method"] = "Google Shopping"
-                            products.extend(serp_products)
-                        except Exception as e:
-                            self.logger.warning(f"SERP search failed for {selection_id}: {e}")
+                        # Upload crop to ImgBB for public URL
+                        public_url = self.upload_image_to_imgbb(crop_base64)
+                        
+                        if public_url:
+                            self.logger.info(f"Searching Google Lens with public URL: {public_url}")
+                            lens_results = self.serp_client.reverse_image_search_google_lens_url(public_url)
+                            for lens_match in lens_results[:12]:
+                                # Map to internal product format
+                                all_products.append({
+                                    "title": lens_match.get("title", "Unknown Product"),
+                                    "url": lens_match.get("product_link") or lens_match.get("link", ""),
+                                    "store": lens_match.get("source", "Unknown"),
+                                    "thumbnail": lens_match.get("thumbnail", ""),
+                                    "price": None,
+                                    "price_str": str(lens_match.get("price") or ""),
+                                    "description": lens_match.get("title", ""),
+                                    "source_api": "google_lens",
+                                    "relevance_score": 1.0,
+                                    "images": [lens_match.get("thumbnail")] if lens_match.get("thumbnail") else []
+                                })
+                        else:
+                            self.logger.warning("ImgBB upload failed, skipping Google Lens URL search")
+                    
+                    # --- 3B: Exa Neural Search ---
+                    # Use dedicated search_utils for Exa (as per plan)
+                    try:
+                        from search_utils import search_exa_products
+                        # Construct rich query from Gemini attributes
+                        color = attributes.get("color", "")
+                        material = attributes.get("material", "")
+                        style = attributes.get("style", "")
+                        exa_query = f"{color} {material} {style} {label}".strip()
+                        self.logger.info(f"Searching Exa with query: {exa_query}")
+                        
+                        exa_results = search_exa_products(exa_query, num_results=8)
+                        all_products.extend(exa_results)
+                    except Exception as e:
+                        self.logger.warning(f"Exa search failed: {e}")
 
-                    # Exa
-                    if self.exa_client:
-                        try:
-                            exa_products = self.exa_client.search_and_analyze_products(
-                                query=search_query,
-                                space_type=context.space_type or "general",
-                                num_results=8,
-                                similar_per_seed=3,
-                            )
-                            for product in exa_products:
-                                product["source_api"] = "exa"
-                                product["search_method"] = "Exa Semantic"
-                            products.extend(exa_products)
-                        except Exception as e:
-                            self.logger.warning(f"Exa search failed for {selection_id}: {e}")
+                    # Deduplicate
+                    all_products = self._dedupe_products_by_url(all_products)
 
-                    # Deduplicate and type-guard
-                    products = self._dedupe_products_by_url(products)
-                    target_type = analysis.get("furniture_type", {}).get("name", "")
-                    filtered_products: List[Dict[str, Any]] = []
-                    for p in products:
-                        title = p.get("title", "")
-                        if target_type and not self._type_guard(title, target_type):
-                            continue
-                        filtered_products.append(p)
-
-                    # CLIP scoring against the crop
-                    scoring_meta = {}
-                    if filtered_products:
-                        scored = self.serp_client.score_products_with_clip(
-                            filtered_products,
-                            clip_client=self.clip_client,
-                            query_image=crop,
-                            drop_threshold=0.70,
-                            boost_threshold=0.85,
-                            timeout=1.5,
-                            max_workers=8,
-                            max_fetch=8,
+                    # ============================================================
+                    # STEP 4: CLIP Validation and Reranking
+                    # ============================================================
+                    if self.clip_client and self.clip_client.is_available() and all_products:
+                        self.logger.info(f"Validating {len(all_products)} products with CLIP against label: '{label}'")
+                        validated_products = self.clip_client.validate_products_by_label(
+                            label=label,
+                            products=all_products,
+                            threshold=0.15, # Slightly lower threshold to be safe
+                            top_k=8
                         )
-                        filtered_products = scored.get("products", filtered_products)
-                        scoring_meta = scored.get("meta", {})
-
-                    products = filtered_products
+                        # Only replace if validation didn't empty results aggressively
+                        if validated_products:
+                           all_products = validated_products
                     
-                    # Build result for this selection
-                    result_item = {
-                        "id": selection_id,
-                        "furniture_type": analysis.get("furniture_type", {}).get("name", "unknown"),
-                        "confidence": analysis.get("furniture_type", {}).get("confidence", 0.5),
-                        "style": analysis.get("style", {}).get("name", "unknown"),
-                        "material": analysis.get("material", {}).get("name", "unknown"),
-                        "color": analysis.get("color", {}).get("name", "unknown"),
-                        "search_query": search_query,
-                        "products": products[:5],  # Limit to 5 products per item
-                        "agent_notes": scoring_meta if scoring_meta else None,
-                    }
+                    # Limit final results
+                    all_products = all_products[:12]
                     
-                    analysis_results.append(result_item)
+                    # Create FurnitureAnalysisItem result
+                    from models import FurnitureAnalysisItem
+                    
+                    # Map to FurnitureAnalysisItem structure (must match model exactly)
+                    analysis_item = FurnitureAnalysisItem(
+                        id=f"item_{int(time.time())}_{x}",
+                        furniture_type=label,
+                        confidence=detection.get("confidence", 0.9),
+                        style=attributes.get("style", ""),
+                        material=attributes.get("material", ""),
+                        color=attributes.get("color", ""),
+                        search_query=search_query,
+                        products=all_products
+                    )
+                    
+                    analysis_results.append(analysis_item.model_dump())
                     
                 except Exception as e:
-                    self.logger.error(f"Failed to analyze selection {selection_id}: {e}")
-                    # Add a default result for failed selections
-                    analysis_results.append({
-                        "id": selection_id if 'selection_id' in locals() else "unknown",
-                        "furniture_type": "unknown",
-                        "confidence": 0,
-                        "style": "unknown",
-                        "material": "unknown",
-                        "color": "unknown",
-                        "search_query": "",
-                        "products": []
-                    })
+                    self.logger.error(f"Error analyzing selection {selection}: {e}", exc_info=True)
+                    # Continue to next selection even if one fails
             
-            # Generate overall analysis
-            overall_analysis = f"Analyzed {len(analysis_results)} furniture items in your {context.space_type or 'room'}. "
-            if analysis_results:
-                types = [r["furniture_type"] for r in analysis_results if r["furniture_type"] != "unknown"]
-                if types:
-                    overall_analysis += f"Found: {', '.join(types)}."
+            # Update Context (Optional depending on how frontend uses it)
+            # We assume frontend just takes the response for now
             
             return {
+                "project_id": project_id,
                 "selections": analysis_results,
-                "overall_analysis": overall_analysis,
-                "total_items": len(analysis_results)
+                "status": "success"
             }
             
         except Exception as e:
-            self.logger.error(f"Failed to analyze furniture batch: {e}")
+            self.logger.error(f"Batch furniture analysis failed: {e}", exc_info=True)
+            log_external_api_call("batch", "analyze_furniture", 0, False)
             raise
+
+
+
 
     def upload_image_to_imgbb(self, image_base64: str) -> Optional[str]:
         """Upload a base64 image to ImgBB and return the public URL.
