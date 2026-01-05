@@ -2531,6 +2531,9 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
             from spatial_utils import SpatialDetector, smart_crop
             spatial_detector = SpatialDetector()
             
+            print(f"🔎 analyze_furniture_batch (Gemini Spatial) - Processing {len(selections)} selections")
+            print(f"   Image size: {width}x{height}, Type: {image_type}")
+            
             analysis_results = []
             
             for selection in selections:
@@ -2571,6 +2574,9 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                     search_query = detection.get("search_query", label)
                     bbox_norm = detection.get("bbox_normalized", [0.3, 0.3, 0.7, 0.7])
                     
+                    print(f"   📍 Click at ({x:.2f}, {y:.2f}) -> Detected: '{label}'")
+                    print(f"   📦 BBox: {bbox_norm}")
+                    print(f"   🔍 Search query: {search_query}")
                     self.logger.info(f"Gemini detected: {label} {bbox_norm}")
                     
                     # ============================================================

@@ -45,7 +45,7 @@ class GeminiClient:
         self,
         prompt: str,
         pydantic_model: Type[T],
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-flash-preview",  # Gemini 3 Flash
         max_tokens: Optional[int] = None,
         system_message: Optional[str] = None,
     ) -> T:
@@ -55,7 +55,7 @@ class GeminiClient:
         Args:
             prompt: The input prompt
             pydantic_model: Pydantic model class for structured output
-            model: The model to use (default: gemini-2.5-flash)
+            model: The model to use (default: gemini-3-flash-preview)
             max_tokens: Maximum tokens in response
             system_message: Optional system message
         """
@@ -97,7 +97,7 @@ class GeminiClient:
         prompt: str,
         pydantic_model: Type[T],
         image_path: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-flash-preview",  # Gemini 3 Flash
         max_tokens: Optional[int] = None,
         system_message: Optional[str] = None,
         additional_image_paths: Optional[List[str]] = None,
@@ -109,7 +109,7 @@ class GeminiClient:
             prompt: The prompt describing what to analyze
             pydantic_model: Pydantic model class for structured output
             image_path: Path to the image file
-            model: The vision model to use (default: gemini-2.5-flash)
+            model: The vision model to use (default: gemini-3-flash-preview)
             max_tokens: Maximum tokens
             system_message: Optional system message
         """
@@ -161,7 +161,7 @@ class GeminiClient:
         palette_colors: list,
         space_type: str,
         let_ai_decide: bool = False,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-flash-preview",  # Gemini 3 Flash
     ) -> Dict[str, Any]:
         """
         Color Agent: Analyze how to apply a color palette to a space.
@@ -196,9 +196,13 @@ IMPORTANT: You are the design expert. Even when a user selects a specific color 
 
             # Build the user prompt with the 10-step process
             if let_ai_decide:
-                color_context = "The user wants you to choose the BEST colors for this space. Analyze the room and select an optimal color palette."
+                color_context = """You are a world-class interior designer with COMPLETE CREATIVE FREEDOM.
+Analyze this space and create the PERFECT color palette from scratch.
+You are NOT restricted to any predefined colors or palettes - choose ANY colors that will look stunning.
+Consider color theory, the room's architecture, lighting, mood, and modern design trends.
+Be bold, creative, and professional - recommend colors that would impress clients at a high-end design firm."""
             else:
-                color_context = f"""The user has selected the "{palette_name}" palette with colors: {', '.join(palette_colors)}.
+                color_context = f"""The user has selected the \"{palette_name}\" palette with colors: {', '.join(palette_colors)}.
 Use these colors as a starting point, but adapt as needed for the best result.
 If certain colors don't work well for this space, feel free to suggest alternatives."""
 
@@ -258,8 +262,8 @@ Specify exactly which colors go where:
 🔟 PROVIDE STRUCTURED OUTPUT
 Follow the required JSON schema exactly."""
 
-            # Gemini API currently does not support additionalProperties in schemas reliably.
-            # Request JSON text and validate locally with Pydantic for strict structure.
+
+            # Gemini 3 doesn't support additional_properties in schemas, so we request JSON and parse locally
             response = self.client.models.generate_content(
                 model=model,
                 contents=[prompt, pil_image],
@@ -483,12 +487,19 @@ Follow the required JSON schema exactly."""
 
             try:
                 payload = load_json_payload(response.text)
+                print(f"📋 Color Agent raw payload keys: {list(payload.keys())}")
+                print(f"📋 Color Agent raw primary_colors: {payload.get('primary_colors', 'NOT FOUND')}")
+                print(f"📋 Color Agent raw color_selection: {payload.get('color_selection', 'NOT FOUND')}")
                 try:
                     result = ColorAnalysis.model_validate(payload)
-                except Exception:
+                    print(f"✅ Color Agent analysis complete (direct validation)")
+                except Exception as direct_err:
+                    print(f"⚠️ Direct validation failed: {direct_err}, trying normalization...")
                     normalized = normalize_color_analysis_payload(payload)
+                    print(f"📋 Normalized primary_colors: {normalized.get('primary_colors', [])}")
+                    print(f"📋 Normalized color_assignments: {normalized.get('color_assignments', [])}")
                     result = ColorAnalysis.model_validate(normalized)
-                print(f"✅ Color Agent analysis complete")
+                    print(f"✅ Color Agent analysis complete (after normalization)")
                 return result.model_dump()
             except Exception as parse_err:
                 print(f"❌ Failed to parse Color Agent response: {parse_err}")
@@ -509,7 +520,7 @@ Follow the required JSON schema exactly."""
         space_type: str,
         color_scheme: Dict[str, Any] = None,
         let_ai_decide: bool = False,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-flash-preview",  # Gemini 3 Flash
     ) -> Dict[str, Any]:
         """
         Style Agent: Analyze how to apply an interior design style to a space.
@@ -563,9 +574,14 @@ You are the design expert. Tailor all recommendations specifically to the room s
 
             # Build the user prompt
             if let_ai_decide:
-                style_context = "Analyze this room and recommend the BEST interior design style for it. Consider the room's architecture, lighting, and existing elements."
+                style_context = """You are a world-class interior designer with COMPLETE CREATIVE FREEDOM.
+Analyze this room and select the PERFECT design style that will transform this space.
+You are NOT restricted to common styles - you can recommend ANY style from minimalist to maximalist, 
+from classic to avant-garde, or even create a unique fusion of styles.
+Consider the room's architecture, natural lighting, size, existing elements, and modern design trends.
+Be bold, innovative, and professional - recommend a style that would impress clients at a top design studio."""
             else:
-                style_context = f"""The user has selected the "{style_name}" style.
+                style_context = f"""The user has selected the \"{style_name}\" style.
 Provide detailed guidance on how to transform this room into that style."""
 
             color_context = ""
