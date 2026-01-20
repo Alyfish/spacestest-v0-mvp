@@ -43,6 +43,10 @@ class ProjectProvider extends ChangeNotifier {
       _roomWidth != null && _roomHeight != null && _roomLength != null;
   List<String> get preferredStores => _currentProject?.preferredStores ?? [];
   String? get approach => _currentProject?.approach;
+  String? get colorPalette =>
+      _currentProject?.designPreferences['colorPalette'] as String?;
+  String? get designStyle =>
+      _currentProject?.designPreferences['designStyle'] as String?;
 
   void _setStatus(ProjectStatus status) {
     _status = status;
@@ -371,6 +375,96 @@ class ProjectProvider extends ChangeNotifier {
     } catch (e) {
       AppLogger.error('Failed to save preferred stores', e);
       _setError('Failed to save preferred stores: ${e.toString()}');
+      return false;
+    }
+  }
+
+  /// Save color palette selection (mocked API call)
+  Future<bool> saveColorPalette(
+    BuildContext context,
+    String paletteId,
+  ) async {
+    if (_currentProject == null) {
+      _setError('No active project to update');
+      return false;
+    }
+
+    try {
+      _setStatus(ProjectStatus.uploading);
+
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final authToken = userProvider.user.token;
+
+      if (authToken == null) {
+        _setError('Authentication token not available');
+        return false;
+      }
+
+      await ApiService.submitColorPalette(
+        _currentProject!.id,
+        authToken,
+        paletteId,
+      );
+
+      _currentProject = _currentProject!.copyWith(
+        designPreferences: {
+          ..._currentProject!.designPreferences,
+          'colorPalette': paletteId,
+        },
+        updatedAt: DateTime.now(),
+      );
+
+      _setStatus(ProjectStatus.ready);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to save color palette', e);
+      _setError('Failed to save color palette: ${e.toString()}');
+      return false;
+    }
+  }
+
+  /// Save design style selection (mocked API call)
+  Future<bool> saveDesignStyle(
+    BuildContext context,
+    String styleId,
+  ) async {
+    if (_currentProject == null) {
+      _setError('No active project to update');
+      return false;
+    }
+
+    try {
+      _setStatus(ProjectStatus.uploading);
+
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final authToken = userProvider.user.token;
+
+      if (authToken == null) {
+        _setError('Authentication token not available');
+        return false;
+      }
+
+      await ApiService.submitDesignStyle(
+        _currentProject!.id,
+        authToken,
+        styleId,
+      );
+
+      _currentProject = _currentProject!.copyWith(
+        designPreferences: {
+          ..._currentProject!.designPreferences,
+          'designStyle': styleId,
+        },
+        updatedAt: DateTime.now(),
+      );
+
+      _setStatus(ProjectStatus.ready);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to save design style', e);
+      _setError('Failed to save design style: ${e.toString()}');
       return false;
     }
   }

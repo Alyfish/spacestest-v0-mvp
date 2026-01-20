@@ -94,7 +94,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
     });
   }
 
-  InlineSpan _buildColoredText(String text, {bool isPrimary = false}) {
+  InlineSpan _buildColoredText(String text) {
     final parts = text.split(' ');
     final spans = <TextSpan>[];
     for (var i = 0; i < parts.length; i++) {
@@ -107,7 +107,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
             color: isAllCaps ? AppTheme.primaryColor : AppTheme.bodyTextColor,
             fontFamily: AppTheme.secondaryFont,
             fontSize: 16,
-            fontWeight: FontWeight.w400,
+            fontWeight: FontWeight.w200,
           ),
         ),
       );
@@ -140,18 +140,93 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Header row
               const Text('Analyzing...', style: AppTheme.sectionTitleStyle),
-              const SizedBox(height: 16),
-
-              const SizedBox(height: 8),
+              SizedBox(height: MediaQuery.of(context).size.height * 0.03),
 
               // Top text (fixed to top-right)
               Container(
                 height: 44,
-                margin: EdgeInsets.only(right: 32),
+                margin: EdgeInsets.only(
+                  left: MediaQuery.of(context).size.width * 0.12,
+                ),
+
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 1000),
+                    transitionBuilder: (child, anim) =>
+                        FadeTransition(opacity: anim, child: child),
+                    layoutBuilder: (currentChild, previousChildren) {
+                      return Stack(
+                        alignment: Alignment.centerLeft,
+                        children: <Widget>[
+                          ...previousChildren,
+                          if (currentChild != null) currentChild,
+                        ],
+                      );
+                    },
+                    child: RichText(
+                      key: ValueKey('top-text-$_textIndex'),
+                      textAlign: TextAlign.left,
+                      text: _buildColoredText(_textRotation[_textIndex]),
+                    ),
+                  ),
+                ),
+              ),
+
+              SizedBox(height: 12),
+              // Video area with locked aspect ratio (vertical)
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final aspect =
+                      _isVideoReady && _videoController.value.aspectRatio != 0
+                      ? _videoController.value.aspectRatio
+                      : 3 / 4;
+                  final maxHeight = constraints.maxHeight
+                      .clamp(0, 300)
+                      .toDouble();
+                  final height = maxHeight > 0.0 ? maxHeight : 300.0;
+                  final width = height * aspect;
+
+                  return Center(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: SizedBox(
+                        height: height,
+                        width: width,
+                        child: _isVideoReady
+                            ? FittedBox(
+                                fit: BoxFit.cover,
+                                alignment: Alignment.center,
+                                child: SizedBox(
+                                  width: _videoController.value.size.width,
+                                  height: _videoController.value.size.height,
+                                  child: VideoPlayer(_videoController),
+                                ),
+                              )
+                            : Container(
+                                color: AppTheme.grayColor.withValues(
+                                  alpha: 0.1,
+                                ),
+                                child: const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+
+              const SizedBox(height: 12),
+
+              // Bottom floating texts (kept outside video)
+              SizedBox(
+                height: 20,
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: AnimatedSwitcher(
@@ -168,84 +243,45 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                       );
                     },
                     child: RichText(
-                      key: ValueKey('top-text-${_textIndex}'),
+                      key: ValueKey('bottom-text-$_textIndex'),
                       textAlign: TextAlign.right,
-                      text: _buildColoredText(_textRotation[_textIndex]),
+                      text: _buildColoredText(
+                        _textRotation[(_textIndex + 2) % _textRotation.length],
+                      ),
                     ),
                   ),
                 ),
               ),
 
-              const SizedBox(height: 8),
+              const SizedBox(height: 40),
 
-              // Video area with locked aspect ratio (vertical)
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final aspect =
-                        _isVideoReady && _videoController.value.aspectRatio != 0
-                        ? _videoController.value.aspectRatio
-                        : 3 / 4;
-                    final maxHeight = constraints.maxHeight
-                        .clamp(0, 500)
-                        .toDouble();
-                    final height = maxHeight > 0.0 ? maxHeight : 500.0;
-                    final width = height * aspect;
-
-                    return Center(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(24),
-                        child: SizedBox(
-                          height: height,
-                          width: width,
-                          child: _isVideoReady
-                              ? FittedBox(
-                                  fit: BoxFit.cover,
-                                  alignment: Alignment.center,
-                                  child: SizedBox(
-                                    width: _videoController.value.size.width,
-                                    height: _videoController.value.size.height,
-                                    child: VideoPlayer(_videoController),
-                                  ),
-                                )
-                              : Container(
-                                  color: AppTheme.grayColor.withValues(
-                                    alpha: 0.1,
-                                  ),
-                                  child: const Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                ),
-                        ),
-                      ),
-                    );
-                  },
+              // Third rotating text line (adds depth to the status feel)
+              Container(
+                height: 20,
+                margin: EdgeInsets.only(
+                  left: MediaQuery.of(context).size.width * 0.06,
                 ),
-              ),
-
-              const SizedBox(height: 8),
-
-              // Bottom floating texts (kept outside video)
-              SizedBox(
-                height: 44,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 1000),
-                  transitionBuilder: (child, anim) =>
-                      FadeTransition(opacity: anim, child: child),
-                  layoutBuilder: (currentChild, previousChildren) {
-                    return Stack(
-                      alignment: Alignment.centerLeft,
-                      children: <Widget>[
-                        ...previousChildren,
-                        if (currentChild != null) currentChild,
-                      ],
-                    );
-                  },
-                  child: RichText(
-                    key: ValueKey('bottom-text-${_textIndex}'),
-                    textAlign: TextAlign.left,
-                    text: _buildColoredText(
-                      _textRotation[(_textIndex + 2) % _textRotation.length],
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 1000),
+                    transitionBuilder: (child, anim) =>
+                        FadeTransition(opacity: anim, child: child),
+                    layoutBuilder: (currentChild, previousChildren) {
+                      return Stack(
+                        alignment: Alignment.centerLeft,
+                        children: <Widget>[
+                          ...previousChildren,
+                          if (currentChild != null) currentChild,
+                        ],
+                      );
+                    },
+                    child: RichText(
+                      key: ValueKey('third-text-$_textIndex'),
+                      textAlign: TextAlign.left,
+                      text: _buildColoredText(
+                        _textRotation[(_textIndex + 4) % _textRotation.length],
+                      ),
                     ),
                   ),
                 ),

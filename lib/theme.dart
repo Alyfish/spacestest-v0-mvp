@@ -13,7 +13,7 @@ class AppTheme {
   static const Color overlayColor = Color(0x33A00534); // #A00534 with 20% opacity
   static const Color selectedCardBackground = Color(0xFFFAF2F5); // Selected card background
   static const Color selectedCardOutline = Color(0xFFA00534); // Selected card outline
-  static const Color unselectedCardOutline = Color(0xFFEBEBEB); // Unselected card outline
+  static const Color unselectedCardOutline = Color(0xFFA09B9B); // Unselected card outline
   static const Color unselectedCardBackground = Color(0xFFFFFFFF); // Unselected card background
   static const Color transparent = Colors.transparent; // Transparent color
 

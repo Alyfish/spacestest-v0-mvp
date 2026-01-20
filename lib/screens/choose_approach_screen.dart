@@ -174,8 +174,8 @@ class _ChooseApproachContentState extends State<ChooseApproachContent> {
 
   Widget _buildImage(ProjectProvider provider) {
     final imageProvider =
-      provider.getProjectImageProvider() ??
-      provider.getInspirationImageProvider();
+        provider.getProjectImageProvider() ??
+        provider.getInspirationImageProvider();
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),

@@ -107,6 +107,26 @@ class ApiService {
 
     const mockResponse = [
       {
+        // Real API call placeholder; add auth token and endpoint when backend is ready.
+        // final url = Uri.parse('${ApiConstants.baseUrl}/preferred-stores');
+        // final response = await http.get(
+        //   url,
+        //   headers: ApiConstants.authHeaders('<authToken>'),
+        // );
+        // if (response.statusCode == 200) {
+        //   final data = jsonDecode(response.body) as List<dynamic>;
+        //   return data
+        //       .cast<Map<String, dynamic>>()
+        //       .map((storeJson) => PreferredStore.fromJson(storeJson))
+        //       .toList();
+        // } else {
+        //   AppLogger.error(
+        //     'Failed to fetch preferred stores: ${response.statusCode} - ${response.body}',
+        //   );
+        //   throw Exception(
+        //     'Failed to fetch preferred stores: ${response.statusCode}',
+        //   );
+        // }
         'id': 'walmart',
         'name': 'walmart',
         'logoUrl':
@@ -153,7 +173,7 @@ class ApiService {
   /// Mocked submission of design approach selection
   static Future<Map<String, dynamic>> submitApproach(
     String projectId,
-    String _authToken,
+    String authToken,
     String approach,
   ) async {
     await Future.delayed(const Duration(milliseconds: 400));
@@ -170,7 +190,7 @@ class ApiService {
   /// Mocked submission of preferred stores selection
   static Future<Map<String, dynamic>> submitPreferredStores(
     String projectId,
-    String _authToken,
+    String authToken,
     List<String> storeIds,
   ) async {
     await Future.delayed(const Duration(milliseconds: 500));
@@ -180,6 +200,61 @@ class ApiService {
     return {
       'projectId': projectId,
       'preferredStores': storeIds,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+  }
+
+  /// Mocked submission of color palette selection
+  static Future<Map<String, dynamic>> submitColorPalette(
+    String projectId,
+    String authToken,
+    String paletteId,
+  ) async {
+    await Future.delayed(const Duration(milliseconds: 420));
+
+    AppLogger.info('Submitting color palette for $projectId: $paletteId');
+
+    // Real API call placeholder; update endpoint and payload once backend is ready.
+    // final url = Uri.parse(
+    //   '${ApiConstants.baseUrl}/projects/$projectId/color-palette',
+    // );
+    // final response = await http.post(
+    //   url,
+    //   headers: ApiConstants.authHeaders(authToken),
+    //   body: jsonEncode({'paletteId': paletteId}),
+    // );
+    // if (response.statusCode == 200 || response.statusCode == 201) {
+    //   final data = jsonDecode(response.body) as Map<String, dynamic>;
+    //   return data;
+    // } else {
+    //   AppLogger.error(
+    //     'Failed to submit color palette: ${response.statusCode} - ${response.body}',
+    //   );
+    //   throw Exception(
+    //     'Failed to submit color palette: ${response.statusCode}',
+    //   );
+    // }
+
+    return {
+      'projectId': projectId,
+      'colorPalette': paletteId,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+  }
+
+  /// Mocked submission of design style selection
+  static Future<Map<String, dynamic>> submitDesignStyle(
+    String projectId,
+    String authToken,
+    String styleId,
+  ) async {
+    await Future.delayed(const Duration(milliseconds: 420));
+
+    AppLogger.info('Submitting design style for $projectId: $styleId');
+
+    return {
+      'projectId': projectId,
+      'designStyle': styleId,
       'updatedAt': DateTime.now().toIso8601String(),
     };
   }
@@ -304,6 +379,49 @@ class ApiService {
       AppLogger.error('Error uploading inspiration images batch', e);
       rethrow;
     }
+  }
+
+  /// Mocked fetch for improvement actions suggested by AI
+  static Future<List<Map<String, String>>> fetchImprovementActions() async {
+    await Future.delayed(const Duration(milliseconds: 350));
+
+    const mockActions = [
+      {
+        'id': 'add_change_vase',
+        'title': 'add/change Vase',
+        'assetPath': 'assets/images/extras/vase.png',
+      },
+      {
+        'id': 'add_change_sofa',
+        'title': 'add/change Sofa',
+        'assetPath': 'assets/images/improvements/sofa.png',
+      },
+    ];
+
+    AppLogger.info('Fetched ${mockActions.length} improvement actions (mock)');
+
+    // Real API call placeholder; wire up auth and parsing once backend is ready.
+    // final url = Uri.parse('${ApiConstants.baseUrl}/improvement-actions');
+    // final response = await http.get(
+    //   url,
+    //   headers: ApiConstants.authHeaders('<authToken>'),
+    // );
+    // if (response.statusCode == 200) {
+    //   final data = jsonDecode(response.body) as List<dynamic>;
+    //   return data
+    //       .cast<Map<String, dynamic>>()
+    //       .map((item) => item.map((k, v) => MapEntry(k, v.toString())))
+    //       .toList();
+    // } else {
+    //   AppLogger.error(
+    //     'Failed to fetch improvement actions: ${response.statusCode} - ${response.body}',
+    //   );
+    //   throw Exception(
+    //     'Failed to fetch improvement actions: ${response.statusCode}',
+    //   );
+    // }
+
+    return mockActions;
   }
 
   // Helper method to determine MIME type from file extension

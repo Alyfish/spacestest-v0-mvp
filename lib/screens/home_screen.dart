@@ -15,6 +15,7 @@ import '../screens/preferred_stores_screen.dart';
 import '../screens/measure_room_screen.dart';
 import '../screens/choose_approach_screen.dart';
 import '../screens/analyzing_screen.dart';
+import '../screens/improvements_screen.dart';
 import '../providers/project_provider.dart';
 import '../utils/logger.dart';
 import 'package:video_player/video_player.dart';
@@ -31,6 +32,7 @@ enum HomeContentType {
   chooseApproach,
   preferredStores,
   analyzing,
+  improvements,
 }
 
 class HomeScreen extends StatefulWidget {
@@ -111,6 +113,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showChooseApproach() {
     setState(() {
       _currentContent = HomeContentType.chooseApproach;
+    });
+  }
+
+  void _showImprovements() {
+    setState(() {
+      _analyzingController?.dispose();
+      _analyzingController = null;
+      _currentContent = HomeContentType.improvements;
     });
   }
 
@@ -304,8 +314,13 @@ class _HomeScreenState extends State<HomeScreen> {
             : _currentContent == HomeContentType.analyzing
             ? AnalyzingScreen(
                 onBack: _showPreferredStores,
-                onComplete: _showMainContent,
+                onComplete: _showImprovements,
                 controller: _analyzingController,
+              )
+            : _currentContent == HomeContentType.improvements
+            ? ImprovementsScreen(
+                onBack: _showPreferredStores,
+                onImprove: _showMainContent,
               )
             : _buildMainContent(),
       ),
