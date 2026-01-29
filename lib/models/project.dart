@@ -16,6 +16,7 @@ class Project {
   final String? name;
   final String? description;
   final String? spaceChosen;
+  final String? customSpaceDescription;
   final String? approach;
   final List<String> tags;
   final Map<String, dynamic> designPreferences;
@@ -33,6 +34,7 @@ class Project {
     this.name,
     this.description,
     this.spaceChosen,
+    this.customSpaceDescription,
     this.approach,
     this.tags = const [],
     this.designPreferences = const {},
@@ -54,6 +56,7 @@ class Project {
       name: json['name'],
       description: json['description'],
       spaceChosen: json['spaceChosen'],
+      customSpaceDescription: json['customSpaceDescription'],
       approach:
           json['approach'] ??
           (json['designPreferences'] != null
@@ -81,6 +84,7 @@ class Project {
       'name': name,
       'description': description,
       'spaceChosen': spaceChosen,
+      'customSpaceDescription': customSpaceDescription,
       'approach': approach,
       'tags': tags,
       'designPreferences': designPreferences,
@@ -100,6 +104,7 @@ class Project {
     String? name,
     String? description,
     String? spaceChosen,
+    String? customSpaceDescription,
     String? approach,
     List<String>? tags,
     Map<String, dynamic>? designPreferences,
@@ -118,6 +123,7 @@ class Project {
       name: name ?? this.name,
       description: description ?? this.description,
       spaceChosen: spaceChosen ?? this.spaceChosen,
+      customSpaceDescription: customSpaceDescription ?? this.customSpaceDescription,
       approach: approach ?? this.approach,
       tags: tags ?? this.tags,
       designPreferences: designPreferences ?? this.designPreferences,

@@ -29,29 +29,28 @@ class MarkerWidget extends StatelessWidget {
     final screenX = displayOffset.dx + (normalizedX * displaySize.width);
     final screenY = displayOffset.dy + (normalizedY * displaySize.height);
 
-    // Parse hex color
-    Color markerColor;
-    try {
-      markerColor = Color(int.parse(marker.color.replaceFirst('#', '0xFF')));
-    } catch (e) {
-      markerColor = AppTheme.primaryColor; // Fallback color
-    }
+    // Marker styling constants
+    const double markerSize = 32.0;
+
+    // Always use primary color (pink) for consistency
+    const Color markerColor = AppTheme.primaryColor;
 
     return Positioned(
-      left: screenX - 20, // Center the marker (marker width is 40)
-      top: screenY - 20, // Center the marker (marker height is 40)
+      left: screenX - (markerSize / 2),
+      top: screenY - (markerSize / 2),
       child: GestureDetector(
         onTap: onTap,
-        behavior: HitTestBehavior.translucent,
+        behavior: HitTestBehavior.opaque,
         child: Container(
-          width: 20,
-          height: 20,
+          width: markerSize,
+          height: markerSize,
           decoration: BoxDecoration(
             color: markerColor,
             shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
+                color: markerColor.withValues(alpha: 0.3),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -60,9 +59,8 @@ class MarkerWidget extends StatelessWidget {
           child: const Center(
             child: Icon(
               Icons.add,
-              color: AppTheme.backgroundColor, // White plus sign
-              size: 20,
-              fontWeight: FontWeight.w900,
+              color: Colors.white,
+              size: 18,
             ),
           ),
         ),

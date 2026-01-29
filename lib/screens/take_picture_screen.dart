@@ -63,6 +63,9 @@ class _TakePictureContentState extends State<TakePictureContent> {
   }
 
   Future<void> _checkPermissions() async {
+    // Demo mode: skip permission check on web
+    if (ProjectProvider.demoMode) return;
+    
     final cameraStatus = await Permission.camera.status;
     if (cameraStatus.isDenied) {
       await Permission.camera.request();
@@ -80,6 +83,17 @@ class _TakePictureContentState extends State<TakePictureContent> {
       _isLoading = true;
       _errorMessage = null;
     });
+
+    // Demo mode: skip camera and simulate capture
+    if (ProjectProvider.demoMode) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      AppLogger.info('DEMO MODE: Simulated photo capture');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        widget.onConfirmSelection?.call();
+      }
+      return;
+    }
 
     try {
       // Capture the image using the image provider for camera functionality

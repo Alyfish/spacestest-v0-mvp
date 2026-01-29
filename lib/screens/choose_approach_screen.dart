@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:provider/provider.dart';
-
 import '../providers/project_provider.dart';
 import '../theme.dart';
-import '../widgets/custom_outlined_button.dart';
-import '../widgets/icon_button.dart';
+import '../widgets/step_progress_bar.dart';
 
 class ChooseApproachScreen extends StatelessWidget {
   final VoidCallback? onBack;
@@ -16,72 +14,9 @@ class ChooseApproachScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppTheme.backgroundColor,
-        elevation: 0,
-        toolbarHeight: 70,
-        automaticallyImplyLeading: false,
-        title: Row(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10.0),
-              child: Image.asset(
-                'assets/logo/logo.png',
-                height: 100,
-                width: 100,
-              ),
-            ),
-          ],
-        ),
-      ),
-      backgroundColor: AppTheme.backgroundColor,
+      backgroundColor: AppTheme.scaffoldBackground,
       body: SafeArea(
         child: ChooseApproachContent(onBack: onBack, onContinue: onContinue),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: AppTheme.backgroundColor,
-        selectedItemColor: AppTheme.primaryColor,
-        unselectedItemColor: AppTheme.grayColor,
-        selectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-        ),
-        unselectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w400,
-        ),
-        currentIndex: 0,
-        onTap: (_) {},
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.home),
-            activeIcon: Icon(IconsaxPlusBold.home),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.discover),
-            activeIcon: Icon(IconsaxPlusBold.discover),
-            label: 'Discover',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bag_2),
-            activeIcon: Icon(IconsaxPlusBold.bag_2),
-            label: 'Cart',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bookmark),
-            activeIcon: Icon(IconsaxPlusBold.bookmark),
-            label: 'Saved',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.profile_circle),
-            activeIcon: Icon(IconsaxPlusBold.profile_circle),
-            label: 'Profile',
-          ),
-        ],
       ),
     );
   }
@@ -101,222 +36,301 @@ class _ChooseApproachContentState extends State<ChooseApproachContent> {
   String? _selectedApproach;
   bool _isSaving = false;
 
-  final List<_ApproachOption> _options = const [
-    _ApproachOption(
-      id: 'iterative',
-      title: 'Iterative Improvement.',
-      icon: IconsaxPlusLinear.refresh,
-      activeColor: AppTheme.primaryColor,
-      iconBackground: Color(0xFFF6D3DD),
-    ),
-    _ApproachOption(
-      id: 'revamp',
-      title: 'Complete Revamp.',
-      icon: IconsaxPlusLinear.magicpen,
-      activeColor: Color(0xFF00A651),
-      iconBackground: Color(0xFFDDF4E5),
-    ),
-  ];
-
   @override
   void initState() {
     super.initState();
-    final projectProvider = Provider.of<ProjectProvider>(
-      context,
-      listen: false,
-    );
+    final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
     _selectedApproach = projectProvider.approach;
   }
 
   Future<void> _handleContinue() async {
     if (_selectedApproach == null || _isSaving) return;
 
-    final projectProvider = Provider.of<ProjectProvider>(
-      context,
-      listen: false,
-    );
-
+    final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
     if (!projectProvider.hasProject) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Create a project before choosing an approach'),
+        SnackBar(
+          content: Text(
+            'Create a project first',
+            style: AppTheme.dmSans(color: Colors.white),
+          ),
           backgroundColor: AppTheme.errorColor,
         ),
       );
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
-
-    final success = await projectProvider.saveApproach(
-      context,
-      _selectedApproach!,
-    );
+    setState(() => _isSaving = true);
+    final success = await projectProvider.saveApproach(context, _selectedApproach!);
 
     if (mounted) {
-      setState(() {
-        _isSaving = false;
-      });
-
-      if (success && widget.onContinue != null) {
-        widget.onContinue!();
-      }
+      setState(() => _isSaving = false);
+      if (success) widget.onContinue?.call();
     }
-  }
-
-  void _onOptionTap(String id) {
-    setState(() {
-      _selectedApproach = id;
-    });
-  }
-
-  Widget _buildImage(ProjectProvider provider) {
-    final imageProvider =
-        provider.getProjectImageProvider() ??
-        provider.getInspirationImageProvider();
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: Container(
-        width: double.infinity,
-        height: MediaQuery.of(context).size.height * 0.36,
-        decoration: BoxDecoration(
-          color: AppTheme.grayColor.withValues(alpha: 0.15),
-        ),
-        child: imageProvider != null
-            ? Image(image: imageProvider, fit: BoxFit.cover)
-            : const Center(
-                child: Icon(
-                  IconsaxPlusLinear.image,
-                  size: 48,
-                  color: AppTheme.grayColor,
-                ),
-              ),
-      ),
-    );
-  }
-
-  Widget _buildOption(_ApproachOption option) {
-    final isSelected = _selectedApproach == option.id;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
-      onTap: () => _onOptionTap(option.id),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: isSelected
-                ? option.activeColor
-                : AppTheme.unselectedCardOutline,
-            width: isSelected ? 2 : 1.2,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: option.iconBackground,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(option.icon, size: 18, color: option.activeColor),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                option.title,
-                style: TextStyle(
-                  fontFamily: AppTheme.secondaryFont,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w400,
-                  color: AppTheme.bodyTextColor,
-                ),
-              ),
-            ),
-            Icon(
-              IconsaxPlusLinear.arrow_right_2,
-              size: 20,
-              color: isSelected ? option.activeColor : AppTheme.grayColor,
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
-      child: Consumer<ProjectProvider>(
-        builder: (context, provider, _) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Choose Approach.', style: AppTheme.sectionTitleStyle),
-              const SizedBox(height: 12),
-              _buildImage(provider),
-              const SizedBox(height: 16),
-              ..._options.map(
-                (opt) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _buildOption(opt),
+    return Column(
+      children: [
+        // Header with logo and settings
+        _buildHeader(),
+
+        // Progress bar
+        const SizedBox(height: 8),
+        const StepProgressBar(currentStep: 5, totalSteps: 8),
+
+        // Content
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 24),
+
+                // Title
+                Text(
+                  'Choose Approach.',
+                  style: AppTheme.dmSans(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
                 ),
+
+                const SizedBox(height: 24),
+
+                // Project Image Preview
+                _buildProjectImagePreview(),
+
+                const SizedBox(height: 24),
+
+                // Option Buttons
+                _buildApproachOption(
+                  id: 'iterative',
+                  icon: IconsaxPlusLinear.home_2,
+                  title: 'Iterative Improvement.',
+                ),
+                const SizedBox(height: 12),
+                _buildApproachOption(
+                  id: 'revamp',
+                  icon: IconsaxPlusLinear.magic_star,
+                  title: 'Complete Revamp.',
+                ),
+
+                const SizedBox(height: 100),
+              ],
+            ),
+          ),
+        ),
+
+        // Bottom Buttons
+        _buildBottomButtons(),
+      ],
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Spaces. logo
+          Image.asset(
+            'assets/logo/logo.png',
+            height: 32,
+          ),
+          // Settings icon
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppTheme.dividerColor,
+                width: 1,
               ),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButtonWidget(
-                    onPressed: widget.onBack ?? () => Navigator.pop(context),
-                    icon: IconsaxPlusLinear.arrow_left_2,
-                  ),
-                  const SizedBox(width: 16),
-                  CustomOutlinedButton(
-                    text: _isSaving ? 'Saving...' : 'Continue',
-                    icon: IconsaxPlusLinear.arrow_right_2,
-                    onPressed: _selectedApproach == null || _isSaving
-                        ? () {}
-                        : _handleContinue,
-                    textColor: AppTheme.bodyTextColor,
-                    borderColor: AppTheme.primaryColor,
-                    iconColor: AppTheme.primaryColor,
-                  ),
-                ],
+            ),
+            child: IconButton(
+              icon: const Icon(
+                Icons.settings_outlined,
+                color: AppTheme.textPrimary,
+                size: 22,
               ),
-            ],
-          );
-        },
+              onPressed: () {},
+            ),
+          ),
+        ],
       ),
     );
   }
-}
 
-class _ApproachOption {
-  final String id;
-  final String title;
-  final IconData icon;
-  final Color activeColor;
-  final Color iconBackground;
+  Widget _buildProjectImagePreview() {
+    return Consumer<ProjectProvider>(
+      builder: (context, provider, child) {
+        final imageProvider = provider.getProjectImageProvider();
+        final isDemoMode = imageProvider == null || ProjectProvider.demoMode;
 
-  const _ApproachOption({
-    required this.id,
-    required this.title,
-    required this.icon,
-    required this.activeColor,
-    required this.iconBackground,
-  });
+        return Container(
+          height: 240,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 20,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: isDemoMode
+                ? Image.asset(
+                    'assets/images_for_choose_spaces_new/1_pb_8pa89uOlXOTsrM8sFWg.jpg',
+                    fit: BoxFit.cover,
+                  )
+                : Image(
+                    image: imageProvider,
+                    fit: BoxFit.cover,
+                  ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildApproachOption({
+    required String id,
+    required IconData icon,
+    required String title,
+  }) {
+    final isSelected = _selectedApproach == id;
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedApproach = id),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : AppTheme.dividerColor,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 24,
+              color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary,
+            ),
+            const SizedBox(width: 16),
+            Text(
+              title,
+              style: AppTheme.dmSans(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? AppTheme.primaryColor : AppTheme.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomButtons() {
+    final continueEnabled = _selectedApproach != null;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            // Cancel button
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.textPrimary,
+                    side: const BorderSide(color: AppTheme.dividerColor, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: widget.onBack,
+                  child: Text(
+                    'Back',
+                    style: AppTheme.dmSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            // Continue button
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: continueEnabled
+                        ? AppTheme.primaryColor
+                        : AppTheme.primaryColor.withValues(alpha: 0.5),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: continueEnabled && !_isSaving ? _handleContinue : null,
+                  child: _isSaving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          'Continue',
+                          style: AppTheme.dmSans(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

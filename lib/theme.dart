@@ -1,194 +1,240 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
-  // Color Constants
-  static const Color primaryColor = Color(0xFFA00534); // Secondary/Primary brand color
-  static const Color backgroundColor = Color(0xFFFFFFFF); // White background
-  static const Color bodyTextColor = Color(0xFF000000); // Black text
-  static const Color grayColor = Color(0xFF8C8C8C); // Gray
-  static const Color darkGrayColor = Color(0xFF13283C); // Darker gray
-  static const Color greenColor = Color(0xFF05A00A); // Green
-  static const Color errorColor = Color(0xFFD32F2F); // Error red color
-  static const Color warningColor = Color(0xFFFFC107); // Warning yellow color
-  static const Color overlayColor = Color(0x33A00534); // #A00534 with 20% opacity
-  static const Color selectedCardBackground = Color(0xFFFAF2F5); // Selected card background
-  static const Color selectedCardOutline = Color(0xFFA00534); // Selected card outline
-  static const Color unselectedCardOutline = Color(0xFFA09B9B); // Unselected card outline
-  static const Color unselectedCardBackground = Color(0xFFFFFFFF); // Unselected card background
-  static const Color transparent = Colors.transparent; // Transparent color
+  // ============================================
+  // COLOR TOKENS
+  // ============================================
+  
+  // Backgrounds
+  static const Color scaffoldBackground = Color(0xFFFAFAFA); // Off-white
+  static const Color surfaceColor = Color(0xFFFFFFFF); // Pure white
+  static const Color backgroundColor = Color(0xFFFFFFFF); // Alias for surface
+  
+  // Text
+  static const Color textPrimary = Color(0xFF111111); // Near black
+  static const Color textSecondary = Color(0xFF6B7280); // Gray
+  static const Color textTertiary = Color(0xFF9CA3AF); // Light gray
+  static const Color bodyTextColor = Color(0xFF111111); // Alias for textPrimary
+  
+  // Borders & Dividers
+  static const Color dividerColor = Color(0xFFEFEFEF);
+  static const Color cardBorderColor = Color(0xFFEFEFEF);
+  static const Color lightGrayColor = Color(0xFFE6E6E6);
+  
+  // States
+  static const Color disabledFill = Color(0xFFF2F2F2);
+  static const Color disabledText = Color(0xFFB0B0B0);
+  
+  // Accent
+  static const Color primaryColor = Color(0xFFD02B48); // Brand Red
+  static const Color selectedCardBackground = Color(0xFFFFF5F7);
+  static const Color selectedCardOutline = Color(0xFFD02B48);
+  
+  // Legacy/Utility
+  static const Color grayColor = Color(0xFF8C8C8C);
+  static const Color darkGrayColor = Color(0xFF4A4A4A);
+  static const Color greenColor = Color(0xFF05A00A);
+  static const Color errorColor = Color(0xFFD32F2F);
+  static const Color warningColor = Color(0xFFFFC107);
+  static const Color overlayColor = Color(0x33D02B48);
+  static const Color unselectedCardOutline = Color(0xFFEFEFEF);
+  static const Color unselectedCardBackground = Color(0xFFFFFFFF);
+  static const Color transparent = Colors.transparent;
 
-  // Font Families
-  static const String primaryFont = 'AnnieUseYourTelescope'; // Main font
-  static const String secondaryFont = 'SF Pro Rounded'; // Secondary font
-  static const String accentFont = 'Kristi'; // Accent decorative font
+  // ============================================
+  // SPACING (8pt grid)
+  // ============================================
+  static const double spacingXs = 8.0;
+  static const double spacingSm = 16.0;
+  static const double spacingMd = 24.0;
+  static const double spacingLg = 32.0;
+  
+  static const double screenPadding = 16.0;
+  static const double sectionSpacing = 24.0;
+  static const double cardPadding = 16.0;
 
-  // Theme Data
+  // ============================================
+  // RADII
+  // ============================================
+  static const double cardRadius = 16.0;
+  static const double buttonRadius = 16.0;
+  static const double inputRadius = 12.0;
+
+  // ============================================
+  // BUTTON SPECS
+  // ============================================
+  static const double buttonHeight = 56.0;
+  static const double minButtonHeight = 56.0;
+
+  // ============================================
+  // TYPOGRAPHY (DM Sans)
+  // ============================================
+  
+  /// Base DM Sans text style
+  static TextStyle dmSans({
+    double fontSize = 16,
+    FontWeight fontWeight = FontWeight.w400,
+    Color? color,
+    double? height,
+    double? letterSpacing,
+  }) {
+    return GoogleFonts.dmSans(
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      color: color ?? textPrimary,
+      height: height,
+      letterSpacing: letterSpacing,
+      decoration: TextDecoration.none,
+    );
+  }
+
+  /// Title: 32 / 700 / LH 38
+  static TextStyle titleStyle({Color? color}) {
+    return GoogleFonts.dmSans(
+      fontSize: 32,
+      fontWeight: FontWeight.w700,
+      color: color ?? textPrimary,
+      height: 38 / 32,
+      decoration: TextDecoration.none,
+    );
+  }
+
+  /// Section: 22 / 600 / LH 28
+  static TextStyle sectionStyle({Color? color}) {
+    return GoogleFonts.dmSans(
+      fontSize: 22,
+      fontWeight: FontWeight.w600,
+      color: color ?? textPrimary,
+      height: 28 / 22,
+      decoration: TextDecoration.none,
+    );
+  }
+
+  /// Header: 18-24 / 700 (flexible for app bars etc)
+  static TextStyle headerStyle({
+    double fontSize = 22,
+    Color? color,
+  }) {
+    return GoogleFonts.dmSans(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w700,
+      color: color ?? textPrimary,
+      decoration: TextDecoration.none,
+    );
+  }
+
+  /// Body: 16 / 400 / LH 24
+  static TextStyle bodyStyle({
+    double fontSize = 16,
+    Color? color,
+  }) {
+    return GoogleFonts.dmSans(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w400,
+      color: color ?? textPrimary,
+      height: 24 / 16,
+      decoration: TextDecoration.none,
+    );
+  }
+
+  /// Caption: 13 / 400 / LH 18
+  static TextStyle captionStyle({Color? color}) {
+    return GoogleFonts.dmSans(
+      fontSize: 13,
+      fontWeight: FontWeight.w400,
+      color: color ?? textTertiary,
+      height: 18 / 13,
+      decoration: TextDecoration.none,
+    );
+  }
+
+  /// Label: 14 / 600
+  static TextStyle labelStyle({
+    double fontSize = 14,
+    Color? color,
+  }) {
+    return GoogleFonts.dmSans(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w600,
+      color: color ?? darkGrayColor,
+      decoration: TextDecoration.none,
+    );
+  }
+
+  // ============================================
+  // THEME DATA
+  // ============================================
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       
-      // Color Scheme
       colorScheme: const ColorScheme.light(
         primary: primaryColor,
         secondary: primaryColor,
-        surface: backgroundColor,
-        onPrimary: backgroundColor,
-        onSecondary: backgroundColor,
-        onSurface: bodyTextColor,
-        outline: unselectedCardOutline,
+        surface: surfaceColor,
+        onPrimary: surfaceColor,
+        onSecondary: surfaceColor,
+        onSurface: textPrimary,
+        outline: cardBorderColor,
       ),
 
-      // Scaffold
-      scaffoldBackgroundColor: backgroundColor,
+      scaffoldBackgroundColor: scaffoldBackground,
 
-      // App Bar Theme
-      appBarTheme: const AppBarTheme(
-        backgroundColor: backgroundColor,
-        foregroundColor: bodyTextColor,
+      appBarTheme: AppBarTheme(
+        backgroundColor: scaffoldBackground,
+        foregroundColor: textPrimary,
         elevation: 0,
-        centerTitle: false,
-        titleTextStyle: TextStyle(
-          fontFamily: primaryFont,
-          fontSize: 24,
-          fontWeight: FontWeight.normal,
-          color: bodyTextColor,
+        centerTitle: true,
+        titleTextStyle: sectionStyle(),
+        iconTheme: const IconThemeData(
+          color: textPrimary,
+          size: 24,
         ),
       ),
 
-      // Text Theme
-      textTheme: const TextTheme(
-        // Display styles (using AnnieUseYourTelescope for titles)
-        displayLarge: TextStyle(
-          fontFamily: primaryFont,
-          fontSize: 32,
-          fontWeight: FontWeight.normal,
-          color: bodyTextColor,
-        ),
-        displayMedium: TextStyle(
-          fontFamily: primaryFont,
-          fontSize: 28,
-          fontWeight: FontWeight.normal,
-          color: bodyTextColor,
-        ),
-        displaySmall: TextStyle(
-          fontFamily: primaryFont,
-          fontSize: 24,
-          fontWeight: FontWeight.normal,
-          color: bodyTextColor,
-        ),
-
-        // Headline styles (using AnnieUseYourTelescope for section titles)
-        headlineLarge: TextStyle(
-          fontFamily: primaryFont,
-          fontSize: 24,
-          fontWeight: FontWeight.normal,
-          color: primaryColor, // Using the brand color for emphasis
-        ),
-        headlineMedium: TextStyle(
-          fontFamily: primaryFont,
-          fontSize: 20,
-          fontWeight: FontWeight.normal,
-          color: primaryColor,
-        ),
-        headlineSmall: TextStyle(
-          fontFamily: primaryFont,
-          fontSize: 18,
-          fontWeight: FontWeight.normal,
-          color: primaryColor,
-        ),
-
-        // Title styles (using SF Pro for subtitles)
-        titleLarge: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 18,
-          fontWeight: FontWeight.w400,
-          color: bodyTextColor,
-        ),
-        titleMedium: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 16,
-          fontWeight: FontWeight.w400,
-          color: bodyTextColor,
-        ),
-        titleSmall: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 14,
-          fontWeight: FontWeight.w400,
-          color: bodyTextColor,
-        ),
-
-        // Body styles (using SF Pro for body text)
-        bodyLarge: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 16,
-          fontWeight: FontWeight.w400,
-          color: bodyTextColor,
-        ),
-        bodyMedium: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 14,
-          fontWeight: FontWeight.w400,
-          color: bodyTextColor,
-        ),
-        bodySmall: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w400,
-          color: grayColor,
-        ),
-
-        // Label styles (using SF Pro for buttons and labels)
-        labelLarge: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-          color: bodyTextColor,
-        ),
-        labelMedium: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          color: bodyTextColor,
-        ),
-        labelSmall: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 10,
-          fontWeight: FontWeight.w500,
-          color: grayColor,
-        ),
+      textTheme: TextTheme(
+        displayLarge: titleStyle(),
+        displayMedium: titleStyle(),
+        displaySmall: sectionStyle(),
+        headlineLarge: sectionStyle(),
+        headlineMedium: headerStyle(fontSize: 20),
+        headlineSmall: headerStyle(fontSize: 18),
+        titleLarge: headerStyle(fontSize: 18),
+        titleMedium: dmSans(fontSize: 16, fontWeight: FontWeight.w500),
+        titleSmall: dmSans(fontSize: 14, fontWeight: FontWeight.w500),
+        bodyLarge: bodyStyle(),
+        bodyMedium: bodyStyle(fontSize: 14),
+        bodySmall: captionStyle(),
+        labelLarge: labelStyle(),
+        labelMedium: labelStyle(fontSize: 12),
+        labelSmall: captionStyle(),
       ),
 
-      // Button Themes
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: primaryColor,
-          foregroundColor: backgroundColor,
+          foregroundColor: surfaceColor,
           elevation: 0,
+          minimumSize: const Size(double.infinity, buttonHeight),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(25),
+            borderRadius: BorderRadius.circular(buttonRadius),
           ),
-          textStyle: const TextStyle(
-            fontFamily: secondaryFont,
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
-          ),
+          textStyle: dmSans(fontSize: 17, fontWeight: FontWeight.w600),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         ),
       ),
 
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: primaryColor,
-          side: const BorderSide(color: primaryColor, width: 1),
+          foregroundColor: textPrimary,
+          side: const BorderSide(color: lightGrayColor, width: 1),
+          minimumSize: const Size(double.infinity, buttonHeight),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(25),
+            borderRadius: BorderRadius.circular(buttonRadius),
           ),
-          textStyle: const TextStyle(
-            fontFamily: secondaryFont,
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
-          ),
+          textStyle: dmSans(fontSize: 17, fontWeight: FontWeight.w600),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         ),
       ),
@@ -196,148 +242,136 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: primaryColor,
-          textStyle: const TextStyle(
-            fontFamily: secondaryFont,
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
-          ),
+          textStyle: dmSans(fontSize: 16, fontWeight: FontWeight.w600),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         ),
       ),
 
-      // Card Theme
       cardTheme: CardThemeData(
-        color: backgroundColor,
+        color: surfaceColor,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(
-            color: unselectedCardOutline,
-            width: 1,
-          ),
+          borderRadius: BorderRadius.circular(cardRadius),
+          side: const BorderSide(color: cardBorderColor, width: 1),
         ),
-        margin: const EdgeInsets.all(8),
+        margin: const EdgeInsets.all(0),
       ),
 
-      // Input Decoration Theme
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: backgroundColor,
+        fillColor: surfaceColor,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: unselectedCardOutline),
+          borderRadius: BorderRadius.circular(inputRadius),
+          borderSide: const BorderSide(color: cardBorderColor),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: unselectedCardOutline),
+          borderRadius: BorderRadius.circular(inputRadius),
+          borderSide: const BorderSide(color: cardBorderColor),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(inputRadius),
           borderSide: const BorderSide(color: primaryColor, width: 2),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.red),
+          borderRadius: BorderRadius.circular(inputRadius),
+          borderSide: const BorderSide(color: errorColor),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        hintStyle: const TextStyle(
-          fontFamily: secondaryFont,
-          color: grayColor,
-        ),
-        labelStyle: const TextStyle(
-          fontFamily: secondaryFont,
-          color: grayColor,
-        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+        hintStyle: bodyStyle(color: textTertiary),
+        labelStyle: labelStyle(color: textSecondary),
       ),
 
-      // Floating Action Button Theme
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
         backgroundColor: primaryColor,
-        foregroundColor: backgroundColor,
+        foregroundColor: surfaceColor,
         elevation: 4,
+        shape: CircleBorder(),
       ),
 
-      // Bottom Navigation Bar Theme
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: backgroundColor,
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: surfaceColor,
         selectedItemColor: primaryColor,
-        unselectedItemColor: grayColor,
+        unselectedItemColor: textTertiary,
         type: BottomNavigationBarType.fixed,
-        selectedLabelStyle: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-        ),
-        unselectedLabelStyle: TextStyle(
-          fontFamily: secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w400,
-        ),
+        elevation: 10,
+        selectedLabelStyle: dmSans(fontSize: 11, fontWeight: FontWeight.w600),
+        unselectedLabelStyle: dmSans(fontSize: 11, fontWeight: FontWeight.w400),
+      ),
+
+      dividerTheme: const DividerThemeData(
+        thickness: 1,
+        color: dividerColor,
+        space: 1,
       ),
     );
   }
 
-  // Custom Card Styles
+  // ============================================
+  // DECORATIONS
+  // ============================================
+  
   static BoxDecoration get selectedCardDecoration => BoxDecoration(
-    color: selectedCardBackground,
-    borderRadius: BorderRadius.circular(12),
-    border: Border.all(
-      color: selectedCardOutline,
-      width: 2,
-    ),
+    color: surfaceColor,
+    borderRadius: BorderRadius.circular(cardRadius),
+    border: Border.all(color: primaryColor, width: 2),
   );
 
   static BoxDecoration get unselectedCardDecoration => BoxDecoration(
-    color: unselectedCardBackground,
-    borderRadius: BorderRadius.circular(12),
-    border: Border.all(
-      color: unselectedCardOutline,
-      width: 1,
-    ),
+    color: surfaceColor,
+    borderRadius: BorderRadius.circular(cardRadius),
+    border: Border.all(color: cardBorderColor, width: 1),
   );
 
-  // Custom Text Styles for specific use cases
-  static const TextStyle logoTextStyle = TextStyle(
-    fontFamily: primaryFont,
-    fontSize: 28,
-    fontWeight: FontWeight.normal,
-    color: bodyTextColor,
+  static BoxDecoration get elevatedCardDecoration => BoxDecoration(
+    color: surfaceColor,
+    borderRadius: BorderRadius.circular(cardRadius),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withValues(alpha: 0.05),
+        blurRadius: 12,
+        offset: const Offset(0, 4),
+      ),
+    ],
   );
 
-  static const TextStyle sectionTitleStyle = TextStyle(
-    fontFamily: primaryFont,
-    fontSize: 40,
-    fontWeight: FontWeight.normal,
-    color: primaryColor,
+  // ============================================
+  // DEPRECATED (for backwards compatibility)
+  // ============================================
+  @Deprecated('Use dmSans() instead')
+  static const String primaryFont = 'DM Sans';
+  @Deprecated('Use dmSans() instead') 
+  static const String secondaryFont = 'DM Sans';
+  @Deprecated('Use dmSans() instead')
+  static const String accentFont = 'DM Sans';
+
+  @Deprecated('Use headerStyle() instead')
+  static TextStyle get logoTextStyle => headerStyle(fontSize: 20);
+
+  @Deprecated('Use sectionStyle() instead')
+  static TextStyle get sectionTitleStyle => sectionStyle();
+
+  @Deprecated('Use bodyStyle() instead')
+  static TextStyle get subtitleStyle => bodyStyle(color: textSecondary);
+
+  @Deprecated('Use dmSans() with white color instead')
+  static TextStyle get buttonTextStyle => dmSans(
+    fontSize: 17,
+    fontWeight: FontWeight.w600,
+    color: surfaceColor,
   );
 
-  // Accent subtitle (script) style using Kristi to complement the logo
-  static const TextStyle accentSubtitleStyle = TextStyle(
-    fontFamily: accentFont,
-    fontSize: 24,
-    fontWeight: FontWeight.w400,
-    color: primaryColor,
-    height: 1.1,
-  );
-
-  static const TextStyle subtitleStyle = TextStyle(
-    fontFamily: secondaryFont,
-    fontSize: 16,
-    fontWeight: FontWeight.w400,
-    color: grayColor,
-  );
-
-  static const TextStyle buttonTextStyle = TextStyle(
-    fontFamily: secondaryFont,
-    fontSize: 16,
-    fontWeight: FontWeight.w500,
-    color: backgroundColor,
-  );
-
-  static const TextStyle captionStyle = TextStyle(
-    fontFamily: secondaryFont,
-    fontSize: 12,
-    fontWeight: FontWeight.w400,
-    color: grayColor,
-  );
+  // Keep interStyle for backwards compatibility
+  static TextStyle interStyle({
+    double fontSize = 14,
+    FontWeight fontWeight = FontWeight.w400,
+    Color? color,
+    double? height,
+  }) {
+    return dmSans(
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      color: color,
+      height: height,
+    );
+  }
 }

@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:provider/provider.dart';
 import '../theme.dart';
+import '../providers/project_provider.dart';
+import '../utils/logger.dart';
+import '../widgets/app_bottom_nav_bar.dart';
 import 'home_screen.dart';
-import 'discover_screen.dart';
-import 'cart_screen.dart';
 import 'saved_screen.dart';
 import 'profile_screen.dart';
+import 'create_flow_screen.dart';
 
+/// Main navigation with 5 items including center FAB.
+/// - Home (functional)
+/// - Discover (coming soon)
+/// - Center FAB (upload photo)
+/// - Saved (functional)
+/// - Profile (functional)
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -17,161 +25,103 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
 
-  final List<Widget> _screens = [
-    const HomeScreen(),
-    const DiscoverScreen(),
-    const CartScreen(),
-    const SavedScreen(),
-    const ProfileScreen(),
-  ];
-
   void _onItemTapped(int index) {
+    // Index 2 is the FAB position - skip it in tab logic
+    if (index == 2) return;
+
+    // Check for "coming soon" tabs (only Discover now)
+    if (index == 1) {
+      _showComingSoonSnackbar();
+      return;
+    }
+
     setState(() {
       _selectedIndex = index;
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppTheme.backgroundColor,
-        elevation: 0,
-        toolbarHeight: 70,
-        automaticallyImplyLeading: false,
-        title: Row(
+  void _showComingSoonSnackbar() {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10.0),
-              child: Image.asset(
-                'assets/logo/logo.png',
-                height: 100,
-                width: 100,
+            Icon(
+              Icons.lock_outline,
+              color: Colors.white,
+              size: 18,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Coming soon',
+              style: AppTheme.dmSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Colors.white,
               ),
             ),
           ],
         ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(
-            height: 1,
-            color: Colors.grey.withValues(alpha: 0.2),
-          ),
+        backgroundColor: AppTheme.textSecondary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
         ),
-      ),
-      body: _screens[_selectedIndex],
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppTheme.backgroundColor,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildNavItem(
-                  index: 0,
-                  icon: IconsaxPlusLinear.home_2,
-                  selectedIcon: IconsaxPlusBold.home_2,
-                  label: 'Home',
-                ),
-                _buildNavItem(
-                  index: 1,
-                  icon: IconsaxPlusLinear.search_normal,
-                  selectedIcon: IconsaxPlusBold.search_normal,
-                  label: 'Discover',
-                ),
-                _buildNavItem(
-                  index: 2,
-                  icon: IconsaxPlusLinear.bag,
-                  selectedIcon: IconsaxPlusBold.bag,
-                  label: '',
-                  isSpecial: true, // This will be the circular cart icon
-                ),
-                _buildNavItem(
-                  index: 3,
-                  icon: IconsaxPlusLinear.bookmark,
-                  selectedIcon: IconsaxPlusBold.bookmark,
-                  label: 'Saved',
-                ),
-                _buildNavItem(
-                  index: 4,
-                  icon: IconsaxPlusLinear.profile,
-                  selectedIcon: IconsaxPlusBold.profile,
-                  label: 'Profile',
-                ),
-              ],
-            ),
-          ),
-        ),
+        margin: const EdgeInsets.all(16),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
 
-  Widget _buildNavItem({
-    required int index,
-    required IconData icon,
-    required IconData selectedIcon,
-    required String label,
-    bool isSpecial = false,
-  }) {
-    final isSelected = _selectedIndex == index;
-    
-    if (isSpecial) {
-      // Special circular cart button
-      return GestureDetector(
-        onTap: () => _onItemTapped(index),
-        child: Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: isSelected ? AppTheme.primaryColor : AppTheme.grayColor,
-          ),
-          child: Icon(
-            isSelected ? selectedIcon : icon,
-            color: AppTheme.darkGrayColor,
-            size: 30,
-          ),
-        ),
-      );
-    }
+  Future<void> _onFabPressed() async {
+    try {
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      await projectProvider.createProject(context);
 
-    // Regular nav items
-    return GestureDetector(
-      onTap: () => _onItemTapped(index),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isSelected ? selectedIcon : icon,
-              color: isSelected ? AppTheme.primaryColor : AppTheme.grayColor,
-              size: 24,
-            ),
-            if (label.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontFamily: AppTheme.secondaryFont,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: isSelected ? AppTheme.primaryColor : AppTheme.grayColor,
-                ),
-              ),
-            ],
-          ],
-        ),
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const CreateFlowScreen(),
+            fullscreenDialog: true,
+          ),
+        );
+      }
+    } catch (e) {
+      AppLogger.error('Failed to create project', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _getCurrentScreen() {
+    switch (_selectedIndex) {
+      case 0:
+        return const HomeScreen();
+      case 3:
+        return const SavedScreen();
+      case 4:
+        return const ProfileScreen();
+      default:
+        return const HomeScreen();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.scaffoldBackground,
+      body: _getCurrentScreen(),
+      extendBody: true,
+      bottomNavigationBar: AppBottomNavBar(
+        selectedIndex: _selectedIndex,
+        onItemTapped: _onItemTapped,
+        onFabPressed: _onFabPressed,
       ),
     );
   }

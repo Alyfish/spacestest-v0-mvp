@@ -23,11 +23,7 @@ class UserProvider extends ChangeNotifier {
       // Simulate network delay
       await Future.delayed(const Duration(milliseconds: 1500));
 
-      // Simulate random failure for testing (20% chance)
-      // Remove this line in production
-      if (DateTime.now().millisecondsSinceEpoch % 5 == 0) {
-        throw Exception('Mock authentication failed');
-      }
+      // Demo mode: always succeed (removed random failure)
 
       // Mock successful authentication
       _user = const User(

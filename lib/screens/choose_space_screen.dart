@@ -1,11 +1,13 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:spaces/providers/project_provider.dart';
-import 'package:spaces/widgets/icon_button.dart';
+import '../providers/project_provider.dart';
 import '../theme.dart';
-import '../widgets/custom_outlined_button.dart';
+import '../widgets/step_progress_bar.dart';
 
+/// Choose Space - Space type selection screen
+/// Users select what type of room they're redesigning
 class ChooseSpaceScreen extends StatelessWidget {
   final VoidCallback? onBack;
   final VoidCallback? onContinue;
@@ -15,72 +17,9 @@ class ChooseSpaceScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppTheme.backgroundColor,
-        elevation: 0,
-        toolbarHeight: 70,
-        automaticallyImplyLeading: false,
-        title: Row(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10.0),
-              child: Image.asset(
-                'assets/logo/logo.png',
-                height: 100,
-                width: 100,
-              ),
-            ),
-          ],
-        ),
-      ),
-      backgroundColor: AppTheme.backgroundColor,
+      backgroundColor: AppTheme.scaffoldBackground,
       body: SafeArea(
         child: ChooseSpaceContent(onBack: onBack, onContinue: onContinue),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: AppTheme.backgroundColor,
-        selectedItemColor: AppTheme.primaryColor,
-        unselectedItemColor: AppTheme.grayColor,
-        selectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-        ),
-        unselectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w400,
-        ),
-        currentIndex: 0, // Home tab stays selected during flow
-        onTap: (_) {}, // Disabled during flow
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.home),
-            activeIcon: Icon(IconsaxPlusBold.home),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.discover),
-            activeIcon: Icon(IconsaxPlusBold.discover),
-            label: 'Discover',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bag_2),
-            activeIcon: Icon(IconsaxPlusBold.bag_2),
-            label: 'Cart',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bookmark),
-            activeIcon: Icon(IconsaxPlusBold.bookmark),
-            label: 'Saved',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.profile_circle),
-            activeIcon: Icon(IconsaxPlusBold.profile_circle),
-            label: 'Profile',
-          ),
-        ],
       ),
     );
   }
@@ -96,40 +35,66 @@ class ChooseSpaceContent extends StatefulWidget {
   State<ChooseSpaceContent> createState() => _ChooseSpaceContentState();
 }
 
-class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
-  int _currentIndex = 0;
-  late PageController _pageController;
+class _ChooseSpaceContentState extends State<ChooseSpaceContent>
+    with TickerProviderStateMixin {
+  String? _selectedSpaceId;
 
-  // Space types data
+  // Animation controllers for staggered entrance
+  late List<AnimationController> _cardAnimationControllers;
+  late List<Animation<double>> _cardAnimations;
+
+  // Space types with new images
   final List<Map<String, String>> _spaceTypes = [
     {
       'id': 'living room',
-      'title': 'living room',
-      'image': 'assets/images/choose_space/choose_living.png',
+      'title': 'Living Room',
+      'description': 'Short description..',
+      'image': 'assets/images_for_choose_spaces_new/1_pb_8pa89uOlXOTsrM8sFWg.jpg',
     },
     {
       'id': 'bedroom',
-      'title': 'bedroom',
-      'image': 'assets/images/choose_space/choose_bedroom.png',
+      'title': 'Bedroom',
+      'description': 'Short description..',
+      'image': 'assets/images_for_choose_spaces_new/unsplash_7pCFUybP_P8_house cleaning.jpg',
     },
     {
       'id': 'office',
-      'title': 'office',
-      'image': 'assets/images/choose_space/choose_office.png',
+      'title': 'Office',
+      'description': 'Short description..',
+      'image': 'assets/images_for_choose_spaces_new/charles-loyer-QN6fCROYdWM-unsplash.webp',
     },
     {
-      'id': 'custom space',
-      'title': 'custom space',
-      'image': 'assets/images/choose_space/choose_custom.png',
+      'id': 'custom',
+      'title': 'Custom Space',
+      'description': 'Short description..',
+      'image': 'assets/images_for_choose_spaces_new/Lets-Talk-About-The-Great-2018-Housing-Crash.webp',
     },
   ];
 
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(viewportFraction: 1.2);
 
-    // Initialize the current index based on existing selection from ProjectProvider
+    // Initialize staggered animation controllers
+    _cardAnimationControllers = List.generate(
+      _spaceTypes.length,
+      (index) => AnimationController(
+        duration: const Duration(milliseconds: 400),
+        vsync: this,
+      ),
+    );
+
+    _cardAnimations = _cardAnimationControllers.map((controller) {
+      return CurvedAnimation(
+        parent: controller,
+        curve: Curves.easeOutCubic,
+      );
+    }).toList();
+
+    // Start staggered animations
+    _startStaggeredAnimations();
+
+    // Load existing selection
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final projectProvider = Provider.of<ProjectProvider>(
         context,
@@ -138,42 +103,47 @@ class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
       final existingSpaceChosen = projectProvider.currentProject?.spaceChosen;
 
       if (existingSpaceChosen != null) {
-        // Find the index of the existing selection
-        for (int i = 0; i < _spaceTypes.length; i++) {
-          if (_spaceTypes[i]['id'] == existingSpaceChosen) {
-            setState(() {
-              _currentIndex = i;
-            });
-            // Update the page controller to show the correct page
-            _pageController.jumpToPage(i);
-            break;
-          }
-        }
+        setState(() {
+          _selectedSpaceId = existingSpaceChosen;
+        });
       }
     });
   }
 
+  void _startStaggeredAnimations() {
+    for (int i = 0; i < _cardAnimationControllers.length; i++) {
+      Future.delayed(Duration(milliseconds: i * 80), () {
+        if (mounted) {
+          _cardAnimationControllers[i].forward();
+        }
+      });
+    }
+  }
+
   @override
   void dispose() {
-    _pageController.dispose();
+    for (var controller in _cardAnimationControllers) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  void _onPageChanged(int index) {
+  void _onSpaceSelected(String spaceId) {
+    HapticFeedback.selectionClick();
     setState(() {
-      _currentIndex = index;
+      _selectedSpaceId = spaceId;
     });
   }
 
   void _onContinue() {
+    if (_selectedSpaceId == null) return;
+
     final projectProvider = Provider.of<ProjectProvider>(
       context,
       listen: false,
     );
-    final selectedSpace = _spaceTypes[_currentIndex]['id']!;
 
-    // Store the selected space in the project
-    projectProvider.setSpaceChosen(selectedSpace);
+    projectProvider.setSpaceChosen(_selectedSpaceId!);
 
     if (widget.onContinue != null) {
       widget.onContinue!();
@@ -182,139 +152,248 @@ class _ChooseSpaceContentState extends State<ChooseSpaceContent> {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-      child: Column(
-        children: [
-          // Title section
-          Row(
-            children: [
-              const Text('Choose Space.', style: AppTheme.sectionTitleStyle),
-            ],
-          ),
+    return Column(
+      children: [
+        // Back button header
+        _buildHeader(),
 
-          const SizedBox(height: 20),
+        // Progress bar
+        const SizedBox(height: 8),
+        const StepProgressBar(currentStep: 3, totalSteps: 8),
 
-          // Carousel section
-          Column(
-            children: [
-              // Space carousel
-              SizedBox(
-                height:
-                    MediaQuery.of(context).size.height *
-                    0.52, // Fixed height for PageView
-                child: PageView.builder(
-                  controller: _pageController,
-                  onPageChanged: _onPageChanged,
+        // Content
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 24),
+
+                // Title with refined typography
+                Text(
+                  'Choose Space.',
+                  style: AppTheme.dmSans(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // 2x2 Grid of space cards
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    childAspectRatio: 0.78,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                  ),
                   itemCount: _spaceTypes.length,
                   itemBuilder: (context, index) {
                     final space = _spaceTypes[index];
-                    final isActive = index == _currentIndex;
+                    final isSelected = _selectedSpaceId == space['id'];
 
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // Space image container
-                          SizedBox(
-                            width: MediaQuery.of(context).size.width * 0.5,
-                            height: MediaQuery.of(context).size.height * 0.35,
-                            child: Transform.scale(
-                              scaleX: index >= 1
-                                  ? -1
-                                  : 1, // Mirror every other item
-                              child: Image.asset(
-                                space['image']!,
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) {
-                                  // Fallback if image doesn't exist
-                                  return Container(
-                                    decoration: BoxDecoration(
-                                      color: AppTheme.grayColor.withValues(
-                                        alpha: 0.3,
-                                      ),
-                                      borderRadius: BorderRadius.circular(24),
-                                    ),
-                                    child: const Center(
-                                      child: Icon(
-                                        IconsaxPlusLinear.home_2,
-                                        size: 48,
-                                        color: AppTheme.grayColor,
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 8),
-
-                          // Space title
-                          Text(
-                            space['title']!,
-                            style: TextStyle(
-                              fontFamily: AppTheme.secondaryFont,
-                              fontSize: isActive ? 40 : 32,
-                              fontWeight: FontWeight.w100,
-                              color: AppTheme.bodyTextColor,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
+                    return FadeTransition(
+                      opacity: _cardAnimations[index],
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, 0.1),
+                          end: Offset.zero,
+                        ).animate(_cardAnimations[index]),
+                        child: _buildSpaceCard(
+                          id: space['id']!,
+                          title: space['title']!,
+                          description: space['description']!,
+                          imagePath: space['image']!,
+                          isSelected: isSelected,
+                        ),
                       ),
                     );
                   },
                 ),
-              ),
 
-              // Page indicators
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _spaceTypes.length,
-                  (index) => Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: _currentIndex == index ? 12 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _currentIndex == index
-                          ? AppTheme.primaryColor
-                          : AppTheme.grayColor.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(4),
+                const SizedBox(height: 100), // Space for bottom bar
+              ],
+            ),
+          ),
+        ),
+
+        // Bottom CTA
+        _buildBottomButton(),
+      ],
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 20, 0),
+      child: Row(
+        children: [
+          // Back button
+          IconButton(
+            icon: const Icon(
+              Icons.arrow_back_ios_new_rounded,
+              size: 20,
+              color: AppTheme.textPrimary,
+            ),
+            onPressed: widget.onBack ?? () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSpaceCard({
+    required String id,
+    required String title,
+    required String description,
+    required String imagePath,
+    required bool isSelected,
+  }) {
+    return GestureDetector(
+      onTap: () => _onSpaceSelected(id),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : Colors.transparent,
+            width: isSelected ? 2 : 0,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Image fills most of the card
+            Expanded(
+              child: ClipRRect(
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(10),
+                  topRight: Radius.circular(10),
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Image.asset(
+                    imagePath,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color: AppTheme.scaffoldBackground,
+                        child: Icon(
+                          Icons.home_outlined,
+                          size: 40,
+                          color: AppTheme.textTertiary,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+
+            // Text content below image
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Title
+                  Text(
+                    title,
+                    style: AppTheme.dmSans(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  // Description
+                  Text(
+                    description,
+                    style: AppTheme.dmSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: AppTheme.textSecondary,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomButton() {
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceColor.withValues(alpha: 0.9),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 12,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _selectedSpaceId != null
+                        ? AppTheme.primaryColor
+                        : AppTheme.primaryColor.withValues(alpha: 0.5),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: _selectedSpaceId != null ? _onContinue : null,
+                  child: Text(
+                    'Continue',
+                    style: AppTheme.dmSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                      letterSpacing: 0.3,
                     ),
                   ),
                 ),
               ),
-            ],
+            ),
           ),
-
-          // Action buttons
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Back button
-              IconButtonWidget(
-                icon: IconsaxPlusLinear.arrow_left_2,
-                onPressed: widget.onBack ?? () => Navigator.pop(context),
-              ),
-
-              const SizedBox(width: 16),
-
-              // Continue button
-              CustomOutlinedButton(
-                text: 'Continue',
-                onPressed: _onContinue,
-                textColor: AppTheme.bodyTextColor,
-                borderColor: AppTheme.primaryColor,
-                iconColor: AppTheme.primaryColor,
-                iconAfterText: true,
-                icon: IconsaxPlusLinear.arrow_right_2,
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }

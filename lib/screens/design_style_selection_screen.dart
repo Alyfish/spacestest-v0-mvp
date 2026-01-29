@@ -1,96 +1,61 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/project_provider.dart';
 import '../theme.dart';
-import '../widgets/custom_outlined_button.dart';
-import '../widgets/icon_button.dart';
+import '../widgets/app_bottom_nav_bar.dart';
+import '../widgets/bottom_cta_bar.dart';
+import 'main_navigation_screen.dart';
 
-class DesignStyleSelectionScreen extends StatelessWidget {
-  const DesignStyleSelectionScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: DesignStyleSelectionContent(
-        onBack: () => Navigator.pop(context, false),
-        onSaved: () => Navigator.pop(context, true),
-      ),
-    );
-  }
-}
-
-class DesignStyleSelectionContent extends StatefulWidget {
-  final VoidCallback? onBack;
-  final VoidCallback? onSaved;
-
-  const DesignStyleSelectionContent({super.key, this.onBack, this.onSaved});
+/// Full-screen design style selection (new design)
+class ChooseStyleScreen extends StatefulWidget {
+  const ChooseStyleScreen({super.key});
 
   @override
-  State<DesignStyleSelectionContent> createState() =>
-      _DesignStyleSelectionContentState();
+  State<ChooseStyleScreen> createState() => _ChooseStyleScreenState();
 }
 
-class _DesignStyleSelectionContentState
-    extends State<DesignStyleSelectionContent> {
+class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
   String? _selectedStyle;
   bool _isSaving = false;
-  late final PageController _pageController;
-  int _currentPage = 0;
-
-  late final List<List<_DesignStyleOption>> _pages;
 
   final List<_DesignStyleOption> _styles = const [
     _DesignStyleOption(
       id: 'bohemian',
-      name: 'bohemian',
+      name: 'Bohemian',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_bohemian.png',
-      accentColor: Color(0xFFA00534),
     ),
     _DesignStyleOption(
       id: 'scandinavian',
-      name: 'scandinavian',
+      name: 'Scandinavian',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_scandinavian.png',
-      accentColor: Color(0xFF3F5870),
     ),
     _DesignStyleOption(
-      id: 'contemporary_dark',
-      name: 'contemporary',
+      id: 'contemporary',
+      name: 'Contemporary',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_contemporary_dark.png',
-      accentColor: Color(0xFF8C1C1C),
     ),
     _DesignStyleOption(
       id: 'coastal',
-      name: 'coastal',
+      name: 'Coastal',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_coastal.png',
-      accentColor: Color.fromARGB(255, 162, 133, 84),
     ),
     _DesignStyleOption(
-      id: 'modern_dark',
-      name: 'modern',
+      id: 'modern',
+      name: 'Modern',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_modern_dark.png',
-      accentColor: Color(0xFF2F2F2F),
     ),
     _DesignStyleOption(
       id: 'art_deco',
-      name: 'art deco',
+      name: 'Art Deco',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_art_deco.png',
-      accentColor: Color(0xFF0C3D37),
-    ),
-    _DesignStyleOption(
-      id: 'contemporary_light',
-      name: 'contemporary soft',
-      imagePath: 'assets/images/choose_style/style_contemporary_light.png',
-      accentColor: Color(0xFFB4833E),
-    ),
-    _DesignStyleOption(
-      id: 'modern_light',
-      name: 'modern warm',
-      imagePath: 'assets/images/choose_style/style_modern_light.png',
-      accentColor: Color(0xFFD38D2F),
     ),
   ];
 
@@ -99,29 +64,19 @@ class _DesignStyleSelectionContentState
     super.initState();
     final provider = Provider.of<ProjectProvider>(context, listen: false);
     _selectedStyle = provider.designStyle;
-
-    _pageController = PageController();
-    _pages = [];
-    for (int i = 0; i < _styles.length; i += 4) {
-      final end = math.min(i + 4, _styles.length);
-      _pages.add(_styles.sublist(i, end));
-    }
   }
 
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
+  void _clearSelection() {
+    setState(() => _selectedStyle = null);
   }
 
-  void _handleCardTap(String id) {
-    setState(() {
-      _selectedStyle = id;
-    });
+  void _selectStyle(String id) {
+    setState(() => _selectedStyle = id);
   }
 
   Future<void> _handleContinue() async {
-    if (_selectedStyle == null || _isSaving) {
+    if (_selectedStyle == null) {
+      Navigator.pop(context);
       return;
     }
 
@@ -136,174 +91,282 @@ class _DesignStyleSelectionContentState
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
-
+    setState(() => _isSaving = true);
     final success = await provider.saveDesignStyle(context, _selectedStyle!);
 
     if (mounted) {
-      setState(() {
-        _isSaving = false;
-      });
-
+      setState(() => _isSaving = false);
       if (success) {
-        if (widget.onSaved != null) {
-          widget.onSaved!();
-        } else {
-          Navigator.pop(context, true);
-        }
+        final style = _styles.firstWhere((s) => s.id == _selectedStyle);
+        Navigator.pop(context, {'id': _selectedStyle!, 'name': style.name});
       }
     }
   }
 
-  Widget _buildStyleCard(_DesignStyleOption option) {
-    final isSelected = option.id == _selectedStyle;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: () => _handleCardTap(option.id),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: isSelected
-                ? option.accentColor
-                : AppTheme.unselectedCardOutline,
-            width: isSelected ? 2 : 1.2,
+  void _handleNavTap(int index) {
+    if (index == 2) return;
+    if (index == 1) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.lock_outline, color: Colors.white, size: 18),
+              const SizedBox(width: 12),
+              Text('Coming soon', style: AppTheme.dmSans(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.white)),
+            ],
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 10,
-              offset: const Offset(0, 6),
+          backgroundColor: AppTheme.textSecondary,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _handleFabPressed() async {
+    try {
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      await projectProvider.createProject(context);
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start: ${e.toString()}'), backgroundColor: AppTheme.errorColor),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.backgroundColor,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header with logo and settings
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Spaces.',
+                    style: AppTheme.dmSans(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () {},
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceColor,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppTheme.dividerColor),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          IconsaxPlusLinear.setting_2,
+                          size: 22,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Title row with Clear All
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Choose Style.',
+                    style: AppTheme.dmSans(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: _clearSelection,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.textPrimary,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'Clear All',
+                        style: AppTheme.dmSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Style list
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                itemCount: _styles.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final style = _styles[index];
+                  final isSelected = _selectedStyle == style.id;
+                  return _DesignStyleRow(
+                    style: style,
+                    isSelected: isSelected,
+                    onTap: () => _selectStyle(style.id),
+                  );
+                },
+              ),
+            ),
+
+            // Bottom buttons
+            BottomCTABar(
+              secondaryText: 'Back',
+              onSecondaryPressed: () => Navigator.pop(context),
+              primaryText: 'Continue',
+              onPrimaryPressed: _handleContinue,
+              isLoading: _isSaving,
             ),
           ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      ),
+      bottomNavigationBar: AppBottomNavBar(
+        selectedIndex: 0,
+        onItemTapped: _handleNavTap,
+        onFabPressed: _handleFabPressed,
+      ),
+    );
+  }
+}
+
+/// Row widget for design style selection
+class _DesignStyleRow extends StatelessWidget {
+  final _DesignStyleOption style;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _DesignStyleRow({
+    required this.style,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceColor,
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : AppTheme.dividerColor,
+            width: isSelected ? 1.5 : 1,
+          ),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
           children: [
-            Expanded(
+            // Thumbnail image
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 child: Image.asset(
-                  option.imagePath,
+                  style.imagePath,
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) {
-                    return Center(
-                      child: Icon(
-                        IconsaxPlusLinear.gallery,
-                        size: 32,
-                        color: AppTheme.grayColor.withValues(alpha: 0.6),
+                    return Container(
+                      color: AppTheme.scaffoldBackground,
+                      child: const Center(
+                        child: Icon(
+                          IconsaxPlusLinear.home_2,
+                          size: 24,
+                          color: AppTheme.textTertiary,
+                        ),
                       ),
                     );
                   },
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            Align(
-              alignment: AlignmentGeometry.center,
-              child: Text(
-                option.name,
-                style: TextStyle(
-                  fontFamily: AppTheme.secondaryFont,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w100,
-                  color: AppTheme.bodyTextColor,
-                ),
+            const SizedBox(width: 14),
+            // Name and description
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    style.name,
+                    style: AppTheme.dmSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    style.description,
+                    style: AppTheme.dmSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                      color: AppTheme.textSecondary,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final cardWidth = (constraints.maxWidth - 14) / 2;
-          final cardHeight = cardWidth / 0.9;
-          final gridHeight = (cardHeight * 2) + 18;
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Choose Style.', style: AppTheme.sectionTitleStyle),
-              const SizedBox(height: 14),
-              SizedBox(
-                height: gridHeight.clamp(320, 560),
-                child: PageView.builder(
-                  controller: _pageController,
-                  itemCount: _pages.length,
-                  onPageChanged: (index) {
-                    setState(() => _currentPage = index);
-                  },
-                  itemBuilder: (context, pageIndex) {
-                    final pageItems = _pages[pageIndex];
-                    return GridView.builder(
-                      padding: EdgeInsets.zero,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 18,
-                            crossAxisSpacing: 14,
-                            childAspectRatio: 0.9,
-                          ),
-                      itemCount: pageItems.length,
-                      itemBuilder: (context, index) =>
-                          _buildStyleCard(pageItems[index]),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _pages.length,
-                  (index) => Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: _currentPage == index ? 12 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _currentPage == index
-                          ? AppTheme.primaryColor
-                          : AppTheme.grayColor.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButtonWidget(
-                    icon: IconsaxPlusLinear.arrow_left_2,
-                    onPressed: widget.onBack ?? () => Navigator.pop(context),
-                  ),
-                  const SizedBox(width: 16),
-                  CustomOutlinedButton(
-                    text: _isSaving ? 'Saving...' : 'Continue',
-                    onPressed: _selectedStyle == null ? () {} : _handleContinue,
-                    textColor: AppTheme.bodyTextColor,
-                    borderColor: AppTheme.primaryColor,
-                    iconColor: AppTheme.primaryColor,
-                    icon: IconsaxPlusLinear.arrow_right_2,
-                  ),
-                ],
-              ),
-            ],
-          );
-        },
       ),
     );
   }
@@ -312,13 +375,211 @@ class _DesignStyleSelectionContentState
 class _DesignStyleOption {
   final String id;
   final String name;
+  final String description;
   final String imagePath;
-  final Color accentColor;
 
   const _DesignStyleOption({
     required this.id,
     required this.name,
+    required this.description,
     required this.imagePath,
-    required this.accentColor,
   });
+}
+
+// Keep legacy classes for backward compatibility
+class DesignStyleSelectionScreen extends StatelessWidget {
+  const DesignStyleSelectionScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const ChooseStyleScreen();
+  }
+}
+
+class DesignStyleSelectionContent extends StatefulWidget {
+  final VoidCallback? onBack;
+  final VoidCallback? onSavedSimple;
+  final void Function(String id, String name)? onSaved;
+
+  const DesignStyleSelectionContent({
+    super.key,
+    this.onBack,
+    this.onSaved,
+    this.onSavedSimple,
+  });
+
+  @override
+  State<DesignStyleSelectionContent> createState() =>
+      _DesignStyleSelectionContentState();
+}
+
+class _DesignStyleSelectionContentState
+    extends State<DesignStyleSelectionContent> {
+  String? _selectedStyle;
+  bool _isSaving = false;
+
+  final List<_DesignStyleOption> _styles = const [
+    _DesignStyleOption(
+      id: 'bohemian',
+      name: 'Bohemian',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      imagePath: 'assets/images/choose_style/style_bohemian.png',
+    ),
+    _DesignStyleOption(
+      id: 'scandinavian',
+      name: 'Scandinavian',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      imagePath: 'assets/images/choose_style/style_scandinavian.png',
+    ),
+    _DesignStyleOption(
+      id: 'contemporary',
+      name: 'Contemporary',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      imagePath: 'assets/images/choose_style/style_contemporary_dark.png',
+    ),
+    _DesignStyleOption(
+      id: 'coastal',
+      name: 'Coastal',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      imagePath: 'assets/images/choose_style/style_coastal.png',
+    ),
+    _DesignStyleOption(
+      id: 'modern',
+      name: 'Modern',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      imagePath: 'assets/images/choose_style/style_modern_dark.png',
+    ),
+    _DesignStyleOption(
+      id: 'art_deco',
+      name: 'Art Deco',
+      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      imagePath: 'assets/images/choose_style/style_art_deco.png',
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    final provider = Provider.of<ProjectProvider>(context, listen: false);
+    _selectedStyle = provider.designStyle;
+  }
+
+  void _clearSelection() {
+    setState(() => _selectedStyle = null);
+  }
+
+  void _selectStyle(String id) {
+    setState(() => _selectedStyle = id);
+  }
+
+  Future<void> _handleContinue() async {
+    if (_selectedStyle == null) {
+      widget.onBack?.call();
+      return;
+    }
+
+    final provider = Provider.of<ProjectProvider>(context, listen: false);
+    if (!provider.hasProject) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Create a project first'),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    final success = await provider.saveDesignStyle(context, _selectedStyle!);
+
+    if (mounted) {
+      setState(() => _isSaving = false);
+      if (success) {
+        final style = _styles.firstWhere((s) => s.id == _selectedStyle);
+        if (widget.onSaved != null) {
+          widget.onSaved!(_selectedStyle!, style.name);
+        } else if (widget.onSavedSimple != null) {
+          widget.onSavedSimple!();
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Title row with Clear All
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Choose Style.',
+                style: AppTheme.dmSans(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              GestureDetector(
+                onTap: _clearSelection,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.textPrimary,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'Clear All',
+                    style: AppTheme.dmSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        // Style list (limited height for bottom sheet)
+        SizedBox(
+          height: 400,
+          child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            itemCount: _styles.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final style = _styles[index];
+              final isSelected = _selectedStyle == style.id;
+              return _DesignStyleRow(
+                style: style,
+                isSelected: isSelected,
+                onTap: () => _selectStyle(style.id),
+              );
+            },
+          ),
+        ),
+
+        // Bottom buttons
+        BottomCTABar(
+          secondaryText: 'Back',
+          onSecondaryPressed: widget.onBack,
+          primaryText: 'Continue',
+          onPrimaryPressed: _handleContinue,
+          isLoading: _isSaving,
+        ),
+      ],
+    );
+  }
 }

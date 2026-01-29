@@ -3,10 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:iconsax_plus/iconsax_plus.dart';
 import '../providers/project_provider.dart';
 import '../theme.dart';
-import '../utils/logger.dart';
 
 class UploadPhotoContent extends StatefulWidget {
   final VoidCallback? onBack;
@@ -19,34 +17,41 @@ class UploadPhotoContent extends StatefulWidget {
 }
 
 class _UploadPhotoContentState extends State<UploadPhotoContent> {
-  bool _isLoading = false;
+  bool _hasTriggeredPicker = false;
 
   @override
   void initState() {
     super.initState();
-    // Permissions will be requested when upload button is pressed
+    // Auto-trigger gallery picker when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_hasTriggeredPicker) {
+        _hasTriggeredPicker = true;
+        _pickFromGallery();
+      }
+    });
   }
 
   Future<void> _pickFromGallery() async {
-    setState(() {
-      _isLoading = true;
-    });
+    // Demo mode bypass
+    if (ProjectProvider.demoMode) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted && widget.onConfirmSelection != null) {
+        widget.onConfirmSelection!();
+      }
+      return;
+    }
 
     try {
-      // Always request permission when button is pressed
       final result = await Permission.photos.request();
-
-      if (result.isGranted) {
+      if (!result.isGranted && !result.isLimited) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Photo access permission is required to select images',
-              ),
-              backgroundColor: AppTheme.errorColor,
-              duration: Duration(seconds: 3),
-            ),
+            const SnackBar(content: Text('Photo access permission is required'), backgroundColor: AppTheme.errorColor),
           );
+          // Exit flow if permission denied
+          if (widget.onBack != null) {
+            widget.onBack!();
+          }
         }
         return;
       }
@@ -60,136 +65,51 @@ class _UploadPhotoContentState extends State<UploadPhotoContent> {
       );
 
       if (image != null && mounted) {
-        final projectProvider = Provider.of<ProjectProvider>(
-          context,
-          listen: false,
-        );
-        final File imageFile = File(image.path);
+        final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+        projectProvider.setProjectImage(File(image.path));
 
-        // Store the selected image only in project provider
-        projectProvider.setProjectImage(imageFile);
-
-        AppLogger.info('Gallery image selected and set as project image');
-
-        // Navigate to confirm selection screen
-        if (mounted) {
-          if (widget.onConfirmSelection != null) {
-            widget.onConfirmSelection!();
-          } else {
-            // Log that confirm screen navigation is not working
-            AppLogger.error('Confirm Screen is not passed.');
-          }
+        if (widget.onConfirmSelection != null) {
+          widget.onConfirmSelection!();
+        }
+      } else if (mounted) {
+        // User cancelled picker - exit flow
+        if (widget.onBack != null) {
+          widget.onBack!();
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to select image: ${e.toString()}'),
-            backgroundColor: AppTheme.errorColor,
-            duration: const Duration(seconds: 3),
-          ),
+          SnackBar(content: Text('Failed: $e'), backgroundColor: AppTheme.errorColor),
         );
+        // Exit flow on error
+        if (widget.onBack != null) {
+          widget.onBack!();
+        }
       }
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
+    // Minimal UI - just show loading while picker is open
+    // Note: Scaffold is provided by CreateFlowScreen
+    return Center(
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Title section
-          Row(
-            children: [
-              const Text('Upload Photo', style: AppTheme.sectionTitleStyle),
-            ],
+          const CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppTheme.primaryColor,
           ),
-
-          // Main content area
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Center image
-              SizedBox(
-                width: MediaQuery.of(context).size.width * 0.9,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: Image.asset(
-                    'assets/images/upload_photo_screen.png',
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: AppTheme.grayColor.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Center(
-                          child: Icon(
-                            IconsaxPlusLinear.gallery,
-                            size: 80,
-                            color: AppTheme.grayColor,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-
-              // Upload button
-              GestureDetector(
-                onTap: _isLoading ? null : _pickFromGallery,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _isLoading
-                        ? CircularProgressIndicator(
-                            color: AppTheme.bodyTextColor,
-                            strokeWidth: 2,
-                          )
-                        : const Icon(
-                            IconsaxPlusLinear.arrow_up_2,
-                            color: AppTheme.bodyTextColor,
-                            size: 32,
-                          ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'upload',
-                      style: TextStyle(
-                        fontFamily: AppTheme.secondaryFont,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w200,
-                        color: AppTheme.bodyTextColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          // Back button at bottom
-          if (widget.onBack != null)
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton(
-                  onPressed: widget.onBack,
-                  icon: const Icon(
-                    IconsaxPlusLinear.arrow_left_2,
-                    color: AppTheme.bodyTextColor,
-                    size: 32,
-                  ),
-                ),
-              ),
+          const SizedBox(height: 24),
+          Text(
+            'Opening gallery...',
+            style: AppTheme.dmSans(
+              fontSize: 16,
+              color: AppTheme.textSecondary,
             ),
+          ),
         ],
       ),
     );

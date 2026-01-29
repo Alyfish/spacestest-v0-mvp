@@ -11,6 +11,8 @@ import '../utils/logger.dart';
 enum ProjectStatus { idle, creating, loading, ready, uploading, error }
 
 class ProjectProvider extends ChangeNotifier {
+  /// Set to true to bypass all API calls and use mock data for UI testing
+  static const bool demoMode = true;
   Project? _currentProject;
   ProjectStatus _status = ProjectStatus.idle;
   String? _errorMessage;
@@ -72,6 +74,22 @@ class ProjectProvider extends ChangeNotifier {
     try {
       _setStatus(ProjectStatus.creating);
       _errorMessage = null;
+
+      // Demo mode: Create a mock project without API call
+      if (demoMode) {
+        AppLogger.info('DEMO MODE: Creating mock project...');
+        await Future.delayed(const Duration(milliseconds: 500));
+        _currentProject = Project(
+          id: 'demo-${DateTime.now().millisecondsSinceEpoch}',
+          userId: 'demo-user',
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          status: 'created',
+        );
+        _setStatus(ProjectStatus.ready);
+        AppLogger.info('DEMO MODE: Mock project created: ${_currentProject!.id}');
+        return true;
+      }
 
       final userProvider = Provider.of<UserProvider>(context, listen: false);
 
@@ -212,6 +230,22 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Set custom space description
+  void setCustomSpaceDescription(String description) {
+    if (_currentProject == null) {
+      AppLogger.warning('No active project to set custom space description for');
+      return;
+    }
+
+    _currentProject = _currentProject!.copyWith(
+      customSpaceDescription: description,
+      updatedAt: DateTime.now(),
+    );
+
+    AppLogger.info('Custom space description set');
+    notifyListeners();
+  }
+
   // Upload project image to server
   Future<bool> uploadProjectImage(BuildContext context) async {
     if (_currentProject?.localProjectImage == null) {
@@ -221,6 +255,16 @@ class ProjectProvider extends ChangeNotifier {
 
     try {
       _setStatus(ProjectStatus.uploading);
+
+      // Demo mode: Skip actual upload
+      if (demoMode) {
+        AppLogger.info('DEMO MODE: Simulating image upload...');
+        await Future.delayed(const Duration(milliseconds: 800));
+        _currentProject = _currentProject!.copyWith(updatedAt: DateTime.now());
+        _setStatus(ProjectStatus.ready);
+        AppLogger.info('DEMO MODE: Image upload simulated successfully');
+        return true;
+      }
 
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final authToken = userProvider.user.token;

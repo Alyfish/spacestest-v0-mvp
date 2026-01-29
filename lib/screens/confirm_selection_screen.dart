@@ -4,7 +4,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../providers/project_provider.dart';
 import '../theme.dart';
 import '../utils/logger.dart';
-import '../widgets/custom_outlined_button.dart';
+import '../widgets/step_progress_bar.dart';
 
 class ConfirmSelectionContent extends StatefulWidget {
   final VoidCallback? onBack;
@@ -18,7 +18,7 @@ class ConfirmSelectionContent extends StatefulWidget {
 }
 
 class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
-  final bool _isUploading = false;
+  bool _isUploading = false;
 
   void _retakePhoto() {
     if (widget.onBack != null) {
@@ -29,13 +29,15 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
   }
 
   Future<void> _confirmSelection() async {
+    setState(() => _isUploading = true);
+    
     try {
       // Call the success callback to move to choose space screen
       if (widget.onSuccess != null) {
         widget.onSuccess!();
       }
 
-      // Start upload in background (optional - can be removed if not needed)
+      // Start upload in background
       final projectProvider = Provider.of<ProjectProvider>(
         context,
         listen: false,
@@ -43,15 +45,10 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
       projectProvider
           .uploadProjectImage(context)
           .then((success) {
-            // Upload happens in background, no UI feedback needed
             if (success) {
-              AppLogger.info(
-                'Project image uploaded successfully in background',
-              );
+              AppLogger.info('Project image uploaded successfully in background');
             } else {
-              AppLogger.error(
-                'Background upload failed: ${projectProvider.errorMessage}',
-              );
+              AppLogger.error('Background upload failed: ${projectProvider.errorMessage}');
             }
           })
           .catchError((error) {
@@ -66,6 +63,10 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
           ),
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
     }
   }
 
@@ -73,136 +74,216 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
   Widget build(BuildContext context) {
     return Consumer<ProjectProvider>(
       builder: (context, projectProvider, child) {
-        if (!projectProvider.hasProjectImage) {
-          return const Center(
+        if (!projectProvider.hasProjectImage && !ProjectProvider.demoMode) {
+          return Center(
             child: Text(
               'No image selected',
-              style: TextStyle(
-                fontFamily: AppTheme.secondaryFont,
+              style: AppTheme.dmSans(
                 fontSize: 16,
-                color: AppTheme.grayColor,
+                color: AppTheme.textSecondary,
               ),
             ),
           );
         }
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
-          child: Column(
-            children: [
-              // Title section
-              Row(
+        return Column(
+          children: [
+            // Header with logo and settings
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Confirm Selection',
-                    style: AppTheme.sectionTitleStyle,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // Image preview
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: MediaQuery.of(context).size.width,
-                    height: MediaQuery.of(context).size.height * 0.52,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: projectProvider.getProjectImageProvider() != null
-                          ? Image(
-                              image: projectProvider.getProjectImageProvider()!,
-                              fit: BoxFit.cover,
-                            )
-                          : Container(
-                              decoration: BoxDecoration(
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: AppTheme.grayColor.withValues(
-                                      alpha: 0.2,
-                                    ),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Center(
-                                child: Icon(
-                                  IconsaxPlusLinear.image,
-                                  size: 48,
-                                  color: AppTheme.grayColor,
-                                ),
-                              ),
-                            ),
+                  // Spaces. logo
+                  Text(
+                    'Spaces.',
+                    style: AppTheme.dmSans(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary,
                     ),
                   ),
-
-                  const SizedBox(height: 20),
-
-                  // Action buttons
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Retake button
-                      CustomOutlinedButton(
-                        onPressed: () => _retakePhoto(),
-                        text: 'Retake',
-                        icon: IconsaxPlusLinear.camera,
-                      ),
-
-                      const SizedBox(width: 20),
-
-                      // Upload button
-                      _isUploading
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryColor,
-                                borderRadius: BorderRadius.circular(25),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        AppTheme.backgroundColor,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  const Text(
-                                    'Uploading...',
-                                    style: TextStyle(
-                                      color: AppTheme.backgroundColor,
-                                      fontSize: 16,
-                                      fontFamily: AppTheme.secondaryFont,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : CustomOutlinedButton(
-                              onPressed: () => _confirmSelection(),
-                              text: 'Upload',
-                              icon: IconsaxPlusLinear.arrow_up,
-                              borderColor: AppTheme.primaryColor,
-                            ),
-                    ],
+                  // Settings icon
+                  IconButton(
+                    icon: Icon(
+                      IconsaxPlusLinear.setting_2,
+                      size: 24,
+                      color: AppTheme.textPrimary,
+                    ),
+                    onPressed: () {
+                      // Settings action
+                    },
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+
+            // Progress bar
+            const StepProgressBar(currentStep: 2, totalSteps: 8),
+
+            // Scrollable content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 24),
+
+                    // Title
+                    Text(
+                      'Confirm Selection.',
+                      style: AppTheme.dmSans(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Large image preview
+                    Container(
+                      width: double.infinity,
+                      height: MediaQuery.of(context).size.height * 0.55,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 20,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: projectProvider.getProjectImageProvider() != null
+                            ? Image(
+                                image: projectProvider.getProjectImageProvider()!,
+                                fit: BoxFit.cover,
+                              )
+                            : Container(
+                                color: AppTheme.scaffoldBackground,
+                                child: Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        IconsaxPlusLinear.image,
+                                        size: 48,
+                                        color: AppTheme.textTertiary,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'Demo Mode',
+                                        style: AppTheme.dmSans(
+                                          fontSize: 14,
+                                          color: AppTheme.textTertiary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 100), // Space for bottom bar
+                  ],
+                ),
+              ),
+            ),
+
+            // Sticky bottom CTA bar
+            _buildBottomButtons(),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildBottomButtons() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            // Retake button
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.textPrimary,
+                    side: const BorderSide(color: AppTheme.dividerColor, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: _retakePhoto,
+                  child: Text(
+                    'Retake Photo',
+                    style: AppTheme.dmSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            // Use Photo button
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: _isUploading ? null : _confirmSelection,
+                  child: _isUploading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          'Continue',
+                          style: AppTheme.dmSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

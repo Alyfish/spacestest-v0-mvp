@@ -1,40 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:iconsax_plus/iconsax_plus.dart';
-import 'package:spaces/screens/confirm_inspiration_screen.dart';
-import 'package:spaces/screens/upload_inspiration_screen.dart';
 import '../theme.dart';
-import '../widgets/photo_action_widget.dart';
-import '../widgets/marketplace_item_widget.dart';
-import '../screens/take_picture_screen.dart';
-import '../screens/upload_photo_screen.dart';
-import '../screens/confirm_selection_screen.dart';
-import '../screens/choose_space_screen.dart';
-import '../screens/choose_items_screen.dart';
-import '../screens/preferred_stores_screen.dart';
-import '../screens/measure_room_screen.dart';
-import '../screens/choose_approach_screen.dart';
-import '../screens/analyzing_screen.dart';
-import '../screens/improvements_screen.dart';
 import '../providers/project_provider.dart';
 import '../utils/logger.dart';
-import 'package:video_player/video_player.dart';
+import 'create_flow_screen.dart';
 
-enum HomeContentType {
-  main,
-  uploadPhoto,
-  confirmSelection,
-  chooseSpace,
-  chooseItems,
-  measureRoom,
-  uploadInspiration,
-  confirmInspiration,
-  chooseApproach,
-  preferredStores,
-  analyzing,
-  improvements,
-}
-
+/// Home tab - redesigned with action cards and marketplace grid.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -43,219 +14,39 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  HomeContentType _currentContent = HomeContentType.main;
   bool _isCreatingProject = false;
-  VideoPlayerController? _analyzingController;
+  int _selectedActionCard = 1; // 0 = Take Photo, 1 = Upload Picture (default selected)
 
-  void _showUploadPhoto() {
-    setState(() {
-      _currentContent = HomeContentType.uploadPhoto;
-    });
-  }
-
-  void _showMainContent() {
-    setState(() {
-      _analyzingController?.dispose();
-      _analyzingController = null;
-      final projectProvider = Provider.of<ProjectProvider>(
-        context,
-        listen: false,
-      );
-      projectProvider.clearProject();
-      _currentContent = HomeContentType.main;
-    });
-  }
-
-  void _showConfirmSelection() {
-    setState(() {
-      _currentContent = HomeContentType.confirmSelection;
-    });
-  }
-
-  void _showChooseSpace() {
-    setState(() {
-      _currentContent = HomeContentType.chooseSpace;
-    });
-  }
-
-  void _showChooseItems() {
-    setState(() {
-      _currentContent = HomeContentType.chooseItems;
-    });
-  }
-
-  void _showPreferredStores() {
-    setState(() {
-      _currentContent = HomeContentType.preferredStores;
-    });
-  }
-
-  void _showAnalyzing() async {
-    // Preload the video before switching screens
-    final controller = await AnalyzingScreen.preloadController();
-    if (!mounted) {
-      controller.dispose();
-      return;
-    }
-
-    setState(() {
-      _analyzingController = controller;
-      _currentContent = HomeContentType.analyzing;
-    });
-  }
-
-  void _showMeasureRoom() {
-    setState(() {
-      _currentContent = HomeContentType.measureRoom;
-    });
-  }
-
-  void _showChooseApproach() {
-    setState(() {
-      _currentContent = HomeContentType.chooseApproach;
-    });
-  }
-
-  void _showImprovements() {
-    setState(() {
-      _analyzingController?.dispose();
-      _analyzingController = null;
-      _currentContent = HomeContentType.improvements;
-    });
-  }
-
-  void _showUploadInspiration() {
-    setState(() {
-      _currentContent = HomeContentType.uploadInspiration;
-    });
-  }
-
-  void _showConfirmInspiration() {
-    setState(() {
-      _currentContent = HomeContentType.confirmInspiration;
-    });
-  }
-
-  void _handleChooseApproachBack() {
-    final projectProvider = Provider.of<ProjectProvider>(
-      context,
-      listen: false,
-    );
-
-    final hasInspiration = projectProvider.inspirationImages.isNotEmpty;
-
-    setState(() {
-      _currentContent = hasInspiration
-          ? HomeContentType.confirmInspiration
-          : HomeContentType.uploadInspiration;
-    });
-  }
-
-  @override
-  void dispose() {
-    _analyzingController?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _createProjectAndNavigateToCamera() async {
+  Future<void> _startRedesignFlow({bool isCamera = false}) async {
     if (_isCreatingProject) return;
 
-    setState(() {
-      _isCreatingProject = true;
-    });
+    setState(() => _isCreatingProject = true);
 
     try {
-      final projectProvider = Provider.of<ProjectProvider>(
-        context,
-        listen: false,
-      );
-      final success = await projectProvider.createProject(context);
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      await projectProvider.createProject(context);
 
-      if (success && mounted) {
-        Navigator.push(
-          context,
+      if (mounted) {
+        Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (context) => TakePictureScreen(
-              onBack: () {
-                Navigator.pop(context);
-              },
-              onConfirmSelection: () {
-                Navigator.pop(context);
-                _showConfirmSelection();
-              },
-            ),
-          ),
-        );
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to create project: ${projectProvider.errorMessage ?? 'Unknown error'}',
-            ),
-            backgroundColor: AppTheme.errorColor,
+            builder: (_) => const CreateFlowScreen(),
+            fullscreenDialog: true,
           ),
         );
       }
     } catch (e) {
+      AppLogger.error('Failed to create project', e);
       if (mounted) {
-        AppLogger.error('Error creating project: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: ${e.toString()}'),
+            content: Text('Failed to start: ${e.toString()}'),
             backgroundColor: AppTheme.errorColor,
           ),
         );
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _isCreatingProject = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _createProjectAndShowUpload() async {
-    if (_isCreatingProject) return;
-
-    setState(() {
-      _isCreatingProject = true;
-    });
-
-    try {
-      final projectProvider = Provider.of<ProjectProvider>(
-        context,
-        listen: false,
-      );
-      final success = await projectProvider.createProject(context);
-
-      if (success && mounted) {
-        _showUploadPhoto();
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to create project: ${projectProvider.errorMessage ?? 'Unknown error'}',
-            ),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        AppLogger.error('Error creating project: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: ${e.toString()}'),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isCreatingProject = false;
-        });
+        setState(() => _isCreatingProject = false);
       }
     }
   }
@@ -263,184 +54,365 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
+      backgroundColor: AppTheme.scaffoldBackground,
       body: SafeArea(
-        child: _currentContent == HomeContentType.uploadPhoto
-            ? UploadPhotoContent(
-                onBack: _showMainContent,
-                onConfirmSelection: _showConfirmSelection,
-              )
-            : _currentContent == HomeContentType.confirmSelection
-            ? ConfirmSelectionContent(
-                onBack: _showUploadPhoto,
-                onSuccess: _showChooseSpace,
-              )
-            : _currentContent == HomeContentType.chooseSpace
-            ? ChooseSpaceContent(
-                onBack: _showConfirmSelection,
-                onContinue: _showChooseItems,
-              )
-            : _currentContent == HomeContentType.chooseItems
-            ? ChooseItemsContent(
-                onBack: _showChooseSpace,
-                onContinue: _showMeasureRoom,
-              )
-            : _currentContent == HomeContentType.preferredStores
-            ? PreferredStoresContent(
-                onBack: _showChooseApproach,
-                onContinue: _showAnalyzing,
-              )
-            : _currentContent == HomeContentType.measureRoom
-            ? MeasureRoomScreen(
-                onBack: _showChooseItems,
-                onContinue: _showUploadInspiration,
-              )
-            : _currentContent == HomeContentType.uploadInspiration
-            ? UploadInspirationContent(
-                onBack: _showMeasureRoom,
-                onConfirmSelection: _showConfirmInspiration,
-                onSkipToApproach: _showChooseApproach,
-              )
-            : _currentContent == HomeContentType.confirmInspiration
-            ? ConfirmInspirationContent(
-                onBack: _showUploadInspiration,
-                onSuccess: _showChooseApproach,
-              )
-            : _currentContent == HomeContentType.chooseApproach
-            ? ChooseApproachContent(
-                onBack: _handleChooseApproachBack,
-                onContinue: _showPreferredStores,
-              )
-            : _currentContent == HomeContentType.analyzing
-            ? AnalyzingScreen(
-                onBack: _showPreferredStores,
-                onComplete: _showImprovements,
-                controller: _analyzingController,
-              )
-            : _currentContent == HomeContentType.improvements
-            ? ImprovementsScreen(
-                onBack: _showPreferredStores,
-                onImprove: _showMainContent,
-              )
-            : _buildMainContent(),
-      ),
-    );
-  }
-
-  Widget _buildMainContent() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Redesign Section
-          Text('Redesign.', style: AppTheme.sectionTitleStyle),
-          const SizedBox(height: 24),
-
-          // Photo Action Buttons - 2 Column Grid
-          GridView.count(
-            crossAxisCount: 2,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: 0.65, // Reduced to give more height for content
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              PhotoActionWidget(
-                imagePath:
-                    'assets/images/home/take_photo.png', // Using existing logo as placeholder
-                scale: 1.7,
-                buttonText: 'take photo',
-                onPressed: _isCreatingProject
-                    ? () {}
-                    : _createProjectAndNavigateToCamera,
-              ),
-              PhotoActionWidget(
-                mirror: true,
-                scale: 1.8,
-                imagePath:
-                    'assets/images/home/upload_photo.png', // Using existing logo as placeholder
-                buttonText: 'upload picture',
-                onPressed: _isCreatingProject
-                    ? () {}
-                    : _createProjectAndShowUpload,
-              ),
-            ],
-          ),
+              // Header with logo and settings
+              _buildHeader(),
 
-          const SizedBox(height: 40),
+              const SizedBox(height: 24),
 
-          // Marketplace Section
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Marketplace.', style: AppTheme.sectionTitleStyle),
-              TextButton(
-                onPressed: () {
-                  AppLogger.info('View Products pressed');
-                  // TODO: Navigate to full marketplace
-                },
+              // Redesign section
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'Redesign.',
+                  style: AppTheme.dmSans(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Action cards row
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'View Products',
-                      style: TextStyle(
-                        fontFamily: AppTheme.secondaryFont,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: AppTheme.bodyTextColor,
+                    Expanded(
+                      child: _buildActionCard(
+                        index: 0,
+                        icon: Icons.image_outlined,
+                        title: 'Take a Photo',
+                        subtitle: 'Capture your space',
+                        isSelected: _selectedActionCard == 0,
+                        onTap: () {
+                          setState(() => _selectedActionCard = 0);
+                          _startRedesignFlow(isCamera: true);
+                        },
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      IconsaxPlusLinear.arrow_right,
-                      size: 16,
-                      color: AppTheme.bodyTextColor,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildActionCard(
+                        index: 1,
+                        icon: Icons.camera_alt_outlined,
+                        title: 'Upload Picture',
+                        subtitle: 'From your gallery',
+                        isSelected: _selectedActionCard == 1,
+                        onTap: () {
+                          setState(() => _selectedActionCard = 1);
+                          _startRedesignFlow(isCamera: false);
+                        },
+                      ),
                     ),
                   ],
                 ),
               ),
+
+              const SizedBox(height: 32),
+
+              // Marketplace section
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'Marketplace.',
+                  style: AppTheme.dmSans(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Marketplace grid - 2 items only for no-scroll layout
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _buildMarketplaceCard(
+                        imagePath: 'assets/images/extras/poster.jpg',
+                        title: 'Art Poster',
+                        description: 'Wall decor',
+                        price: '\$29.99',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildMarketplaceCard(
+                        imagePath: 'assets/images/extras/vase.png',
+                        title: 'Ceramic Vase',
+                        description: 'Home accent',
+                        price: '\$45.00',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 120), // Bottom padding for nav bar
             ],
           ),
+        ),
+      ),
+    );
+  }
 
-          const SizedBox(height: 16),
-
-          // Marketplace Items - 2 Column Grid
-          GridView.count(
-            crossAxisCount: 2,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: 0.8, // Adjust this to control height/width ratio
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            children: [
-              MarketplaceItemWidget(
-                imagePath: 'assets/images/extras/poster.jpg',
-                providerIconPath: 'assets/logo/amazon.png',
-                title: 'poster',
-                subtitle: '\$7',
-                comingSoon: true,
-                onTap: () {
-                  AppLogger.info('Wayfair item tapped');
-                },
-              ),
-              MarketplaceItemWidget(
-                imagePath:
-                    'assets/images/extras/vase.png', // Using existing logo as placeholder for actual item
-                providerIconPath:
-                    'assets/logo/ikea.png', // Provider icon overlay
-                title: 'vase',
-                subtitle: '\$5',
-                comingSoon: true,
-                onTap: () {
-                  AppLogger.info('Amazon item tapped');
-                },
-              ),
-            ],
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Spaces. logo
+          Image.asset(
+            'assets/logo/logo.png',
+            height: 32,
           ),
+          // Settings icon
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppTheme.dividerColor,
+                width: 1,
+              ),
+            ),
+            child: IconButton(
+              icon: const Icon(
+                Icons.settings_outlined,
+                color: AppTheme.textPrimary,
+                size: 22,
+              ),
+              onPressed: () {
+                AppLogger.info('Settings pressed');
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-          const SizedBox(height: 20),
+  Widget _buildActionCard({
+    required int index,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: _isCreatingProject ? null : onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : AppTheme.dividerColor,
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Icon container
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? AppTheme.primaryColor.withValues(alpha: 0.1)
+                    : AppTheme.scaffoldBackground,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary,
+                size: 24,
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Title
+            Text(
+              title,
+              style: AppTheme.dmSans(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Subtitle
+            Text(
+              subtitle,
+              style: AppTheme.dmSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarketplaceCard({
+    required String imagePath,
+    required String title,
+    required String description,
+    required String price,
+  }) {
+    return SizedBox(
+      height: 220,
+      child: Stack(
+        children: [
+          // Main card content
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppTheme.dividerColor,
+                width: 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Image section
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: AppTheme.scaffoldBackground,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(15),
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(15),
+                      ),
+                      child: Image.asset(
+                        imagePath,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ),
+                // Text section
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: AppTheme.dmSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        description,
+                        style: AppTheme.dmSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: AppTheme.textSecondary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        price,
+                        style: AppTheme.dmSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Coming soon overlay
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.7),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.lock_outline,
+                        size: 14,
+                        color: AppTheme.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Coming soon',
+                        style: AppTheme.dmSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

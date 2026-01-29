@@ -57,14 +57,14 @@ class CustomOutlinedButton extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: iconAfterText
             ? [
-                textWidget,
+                Flexible(child: textWidget),
                 const SizedBox(width: 8),
                 iconWidget,
               ]
             : [
                 iconWidget,
                 const SizedBox(width: 8),
-                textWidget,
+                Flexible(child: textWidget),
               ],
       ),
     );

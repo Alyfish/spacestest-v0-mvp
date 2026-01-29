@@ -8,7 +8,7 @@ class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  _SplashScreenState createState() => _SplashScreenState();
 }
 
 class _SplashScreenState extends State<SplashScreen>
@@ -40,6 +40,12 @@ class _SplashScreenState extends State<SplashScreen>
 
   // State flags
   bool _showFinalElements = false;
+  bool _showGoogleButton = false;
+
+  // Animation for Google button reveal
+  late AnimationController _googleButtonController;
+  late Animation<double> _googleButtonFade;
+  late Animation<Offset> _googleButtonSlide;
 
   @override
   void initState() {
@@ -66,11 +72,11 @@ class _SplashScreenState extends State<SplashScreen>
       // Stays centered
       TweenSequenceItem(tween: ConstantTween(Offset.zero), weight: 41),
       // Moves left by half its width
-      TweenSequenceItem(tween: Tween(begin: Offset.zero, end: const Offset(0.15, 0.012)).chain(CurveTween(curve: Curves.easeOut)),weight: 14),
+      TweenSequenceItem(tween: Tween(begin: Offset.zero, end: const Offset(0.16, 0.015)).chain(CurveTween(curve: Curves.easeOut)),weight: 14),
       // Stays there
-      TweenSequenceItem(tween: ConstantTween(const Offset(0.15, 0.012)), weight: 17),
+      TweenSequenceItem(tween: ConstantTween(const Offset(0.16, 0.015)), weight: 17),
       // Moves down off-screen
-      TweenSequenceItem(tween: Tween(begin: const Offset(0.15, 0.012), end: const Offset(0.15, 0.012)), weight: 28),
+      TweenSequenceItem(tween: Tween(begin: const Offset(0.16, 0.015), end: const Offset(0.16, 0.015)), weight: 28),
     ]).animate(CurvedAnimation(parent: _introController, curve: Curves.easeInOut));
         
     // Phase 3: Logo slides in to overlap
@@ -101,6 +107,18 @@ class _SplashScreenState extends State<SplashScreen>
     _buttonSlide = Tween<Offset>(begin: const Offset(0, -1), end: Offset.zero)
         .animate(CurvedAnimation(parent: _finalElementsController, curve: const Interval(0.7, 1.0, curve: Curves.easeOutBack)));
 
+    // Google button reveal animation
+    _googleButtonController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _googleButtonFade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _googleButtonController, curve: Curves.easeOut),
+    );
+    _googleButtonSlide = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
+      CurvedAnimation(parent: _googleButtonController, curve: Curves.easeOutCubic),
+    );
+
     _startAnimationSequence();
   }
 
@@ -123,7 +141,51 @@ class _SplashScreenState extends State<SplashScreen>
   void dispose() {
     _introController.dispose();
     _finalElementsController.dispose();
+    _googleButtonController.dispose();
     super.dispose();
+  }
+
+  void _onGetStartedPressed() {
+    setState(() {
+      _showGoogleButton = true;
+    });
+    _googleButtonController.forward();
+  }
+
+  Future<void> _handleGetStarted(UserProvider userProvider) async {
+    ScaffoldMessenger.of(context).clearSnackBars();
+
+    try {
+      await userProvider.signInWithGoogle();
+      if (mounted && userProvider.isAuthenticated) {
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (ctx, animation, secondary) => const MainNavigationScreen(),
+            transitionsBuilder: (ctx, animation, secondary, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 500),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Sign in failed. Please try again.',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: AppTheme.errorColor,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -183,126 +245,169 @@ class _SplashScreenState extends State<SplashScreen>
               },
             ),
 
-          // Final Sign-In Elements
+          // Final Welcome Screen Elements
           if (_showFinalElements) ...[
+            // Main content - centered vertically with logo, image, and text
             FadeTransition(
               opacity: _finalElementsFadeIn,
               child: SlideTransition(
                 position: _blockMoveUp,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SlideTransition(
-                      position: _logoFinalSlide,
-                      child: Image.asset('assets/logo/logo.png', width: 220),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 40),
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 48),
+                        // Logo with tagline
+                        SlideTransition(
+                          position: _logoFinalSlide,
+                          child: Image.asset('assets/logo/logo.png', width: 180),
+                        ),
+                        const SizedBox(height: 6),
+                        SlideTransition(
+                          position: _subtitleSlide,
+                          child: Text(
+                            'Reimagine Your World',
+                            style: AppTheme.headerStyle(
+                              fontSize: 20,
+                              color: AppTheme.primaryColor,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                        // Room image - prominent and centered
+                        Expanded(
+                          child: Center(
+                            child: Container(
+                              constraints: const BoxConstraints(
+                                maxWidth: 320,
+                                maxHeight: 320,
+                              ),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(24),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.08),
+                                    blurRadius: 32,
+                                    offset: const Offset(0, 16),
+                                    spreadRadius: 0,
+                                  ),
+                                ],
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(24),
+                                child: Image.asset(
+                                  'assets/images/choose_space/choose_living.png',
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 40),
+                        // Get Started button
+                        FadeTransition(
+                          opacity: _buttonFade,
+                          child: SlideTransition(
+                            position: _buttonSlide,
+                            child: SizedBox(
+                              width: double.infinity,
+                              height: 56,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.primaryColor,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  shadowColor: AppTheme.primaryColor.withValues(alpha: 0.3),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                onPressed: _showGoogleButton ? null : _onGetStartedPressed,
+                                child: Text(
+                                  'Get Started',
+                                  style: AppTheme.dmSans(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Continue with Google button (appears after Get Started)
+                        if (_showGoogleButton) ...[
+                          const SizedBox(height: 16),
+                          FadeTransition(
+                            opacity: _googleButtonFade,
+                            child: SlideTransition(
+                              position: _googleButtonSlide,
+                              child: SizedBox(
+                                width: double.infinity,
+                                height: 56,
+                                child: Consumer<UserProvider>(
+                                  builder: (context, userProvider, child) {
+                                    return OutlinedButton(
+                                      style: OutlinedButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: AppTheme.textPrimary,
+                                        side: BorderSide(
+                                          color: AppTheme.primaryColor.withValues(alpha: 0.4),
+                                          width: 1.5,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        elevation: 0,
+                                      ),
+                                      onPressed: userProvider.isAuthenticating
+                                          ? null
+                                          : () => _handleGetStarted(userProvider),
+                                      child: userProvider.isAuthenticating
+                                          ? SizedBox(
+                                              height: 22,
+                                              width: 22,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.5,
+                                                valueColor: AlwaysStoppedAnimation<Color>(
+                                                  AppTheme.primaryColor,
+                                                ),
+                                              ),
+                                            )
+                                          : Row(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Image.asset(
+                                                  'assets/logo/google_icon.png',
+                                                  height: 22,
+                                                  width: 22,
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Text(
+                                                  'Continue with Google',
+                                                  style: AppTheme.dmSans(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: AppTheme.textPrimary,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 40),
+                      ],
                     ),
-                    const SizedBox(height: 3), // Set space to 10px
-                    SlideTransition(
-                      position: _subtitleSlide,
-                      child: Text(
-                        'Reimagine Your World',
-                        style: AppTheme.accentSubtitleStyle.copyWith(fontSize: 28),
-                      ),
-                    ),
-                    const SizedBox(height: 140),
-                  ],
+                  ),
                 ),
               ),
             ),
-            SizedBox(height: 85),
-            Align(
-             alignment: Alignment.center,
-             child: Padding(
-               padding: const EdgeInsets.only(top: 85.0, left: 33.0, right: 33.0),
-               child: FadeTransition(
-                 opacity: _buttonFade,
-                 child: SlideTransition(
-                   position: _buttonSlide,
-                   child: SizedBox(
-                     width: double.infinity,
-                     child: Consumer<UserProvider>(
-                       builder: (context, userProvider, child) {
-                         return OutlinedButton.icon(
-                           icon: userProvider.isAuthenticating 
-                             ? const SizedBox(
-                                 height: 20,
-                                 width: 20,
-                                 child: CircularProgressIndicator(
-                                   strokeWidth: 2,
-                                   valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
-                                 ),
-                               )
-                             : Image.asset('assets/logo/google_icon.png', height: 20.0),
-                           label: Text(
-                             userProvider.isAuthenticating 
-                               ? 'Signing in...' 
-                               : 'Continue with Google',
-                             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                               color: AppTheme.bodyTextColor,
-                             ),
-                           ),
-                           style: OutlinedButton.styleFrom(
-                             shape: RoundedRectangleBorder(
-                               borderRadius: BorderRadius.circular(15),
-                             ),
-                           ),
-                           onPressed: userProvider.isAuthenticating 
-                             ? null 
-                             : () async {
-                                 // Clear any existing snackbars
-                                 ScaffoldMessenger.of(context).clearSnackBars();
-                                 
-                                 final navigator = Navigator.of(context);
-                                 final scaffoldMessenger = ScaffoldMessenger.of(context);
-                                 try {
-                                   await userProvider.signInWithGoogle();
-                                   if (mounted && userProvider.isAuthenticated) {
-                                     // Navigate to main app screen
-                                     navigator.pushReplacement(
-                                       PageRouteBuilder(
-                                         pageBuilder: (ctx, animation, secondary) => const MainNavigationScreen(),
-                                         transitionsBuilder: (ctx, animation, secondary, child) {
-                                           return FadeTransition(opacity: animation, child: child);
-                                         },
-                                         transitionDuration: const Duration(milliseconds: 500),
-                                       ),
-                                     );
-                                   }
-                                 } catch (e) {
-                                   // Handle error - show a snackbar
-                                   if (mounted) {
-                                     scaffoldMessenger.showSnackBar(
-                                       SnackBar(
-                                         content: Text(
-                                           'Sign in failed. Please try again.',
-                                           style: TextStyle(color: AppTheme.backgroundColor),
-                                         ),
-                                         backgroundColor: Colors.red,
-                                         duration: const Duration(seconds: 4),
-                                         behavior: SnackBarBehavior.floating,
-                                         shape: RoundedRectangleBorder(
-                                           borderRadius: BorderRadius.circular(10),
-                                         ),
-                                         action: SnackBarAction(
-                                           label: 'Dismiss',
-                                           textColor: AppTheme.backgroundColor,
-                                           onPressed: () {
-                                             ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                                           },
-                                         ),
-                                       ),
-                                     );
-                                   }
-                                 }
-                               },
-                         );
-                       },
-                     ),
-                   ),
-                 ),
-               ),
-             ),
-           )
           ]
         ],
       ),

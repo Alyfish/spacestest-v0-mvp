@@ -4,11 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
-import 'package:spaces/widgets/custom_outlined_button.dart';
-import 'package:spaces/widgets/icon_button.dart';
 import '../providers/project_provider.dart';
 import '../theme.dart';
-import '../utils/logger.dart';
+import '../widgets/step_progress_bar.dart';
 
 class UploadInspirationContent extends StatefulWidget {
   final VoidCallback? onBack;
@@ -30,60 +28,33 @@ class UploadInspirationContent extends StatefulWidget {
 class _UploadInspirationContentState extends State<UploadInspirationContent> {
   bool _isLoading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    // Permissions will be requested when upload button is pressed
-  }
+  Future<void> _pickMultipleFromGallery() async {
+    setState(() => _isLoading = true);
 
-  void _onContinue() {
-    if (!mounted) return;
-
-    final projectProvider = Provider.of<ProjectProvider>(
-      context,
-      listen: false,
-    );
-
-    final hasInspiration = projectProvider.inspirationImages.isNotEmpty;
-
-    if (hasInspiration) {
-      if (widget.onConfirmSelection != null) {
-        widget.onConfirmSelection!();
-      } else {
-        AppLogger.error('Confirm Screen is not passed.');
+    if (ProjectProvider.demoMode) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted) {
+        setState(() => _isLoading = false);
+        if (widget.onConfirmSelection != null) widget.onConfirmSelection!();
       }
       return;
     }
 
-    // Skip confirm step when nothing was uploaded
-    if (widget.onSkipToApproach != null) {
-      widget.onSkipToApproach!();
-    } else {
-      AppLogger.error('Skip-to-approach callback is not provided.');
-    }
-  }
-
-  Future<void> _pickMultipleFromGallery() async {
-    setState(() {
-      _isLoading = true;
-    });
-
     try {
-      // Always request permission when button is pressed
       final result = await Permission.photos.request();
-
-      if (result.isGranted) {
+      if (!result.isGranted && !result.isLimited) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                'Photo access permission is required to select images',
+                'Photo access permission required',
+                style: AppTheme.dmSans(color: Colors.white),
               ),
               backgroundColor: AppTheme.errorColor,
-              duration: Duration(seconds: 3),
             ),
           );
         }
+        setState(() => _isLoading = false);
         return;
       }
 
@@ -95,33 +66,30 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
       );
 
       if (images.isNotEmpty && mounted) {
-        final projectProvider = Provider.of<ProjectProvider>(
-          context,
-          listen: false,
-        );
-        final List<File> imageFiles = images
-            .map((xfile) => File(xfile.path))
-            .toList();
+        final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+        projectProvider.setInspirationImages(images.map((x) => File(x.path)).toList());
 
-        // Store the selected images in project provider
-        projectProvider.setInspirationImages(imageFiles);
-
-        AppLogger.info('${images.length} inspiration images selected and set');
+        // Navigate to confirm screen
+        if (widget.onConfirmSelection != null) {
+          widget.onConfirmSelection!();
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to select images: ${e.toString()}'),
+            content: Text(
+              'Failed to pick images: $e',
+              style: AppTheme.dmSans(color: Colors.white),
+            ),
             backgroundColor: AppTheme.errorColor,
-            duration: const Duration(seconds: 3),
           ),
         );
       }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -130,126 +98,279 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
     return Consumer<ProjectProvider>(
       builder: (context, projectProvider, child) {
         final selectedImages = projectProvider.inspirationImages;
+        final hasImages = selectedImages.isNotEmpty;
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12),
-          child: Column(
-            children: [
-              // Title section
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    const Text(
-                      'Upload Inspiration',
-                      style: AppTheme.sectionTitleStyle,
-                    ),
-                  ],
-                ),
-              ),
+        return Scaffold(
+          backgroundColor: AppTheme.scaffoldBackground,
+          body: SafeArea(
+            child: Column(
+              children: [
+                // Header with logo and settings
+                _buildHeader(),
 
-              // Main content area
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Center inspiration image (always shows the same image)
-                  SizedBox(
-                    width: MediaQuery.of(context).size.width,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: Image.asset(
-                        'assets/images/upload_inspiration.png',
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            decoration: BoxDecoration(
-                              color: AppTheme.grayColor.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: const Center(
-                              child: Icon(
-                                IconsaxPlusLinear.gallery,
-                                size: 80,
-                                color: AppTheme.grayColor,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
+                // Progress bar
+                const SizedBox(height: 8),
+                const StepProgressBar(currentStep: 5, totalSteps: 10),
 
-                  // const SizedBox(height: 12),
-
-                  // Show count if images are selected
-                  if (selectedImages.isNotEmpty) ...[
-                    Text(
-                      '${selectedImages.length} image${selectedImages.length == 1 ? '' : 's'} selected',
-                      style: TextStyle(
-                        fontFamily: AppTheme.secondaryFont,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w300,
-                        color: AppTheme.bodyTextColor.withValues(alpha: 0.7),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-
-                  // Upload button
-                  GestureDetector(
-                    onTap: _isLoading ? null : _pickMultipleFromGallery,
+                // Content
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _isLoading
-                            ? CircularProgressIndicator(
-                                color: AppTheme.bodyTextColor,
-                                strokeWidth: 2,
-                              )
-                            : const Icon(
-                                IconsaxPlusLinear.arrow_up_2,
-                                color: AppTheme.bodyTextColor,
-                                size: 32,
-                              ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 24),
+
+                        // Title
                         Text(
-                          'upload',
-                          style: TextStyle(
-                            fontFamily: AppTheme.secondaryFont,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w200,
-                            color: AppTheme.bodyTextColor,
+                          'Upload Inspiration.',
+                          style: AppTheme.dmSans(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.textPrimary,
                           ),
                         ),
+
+                        const SizedBox(height: 8),
+
+                        // Subtitle
+                        Text(
+                          'Add photos that inspire your vision',
+                          style: AppTheme.dmSans(
+                            fontSize: 15,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+
+                        const SizedBox(height: 32),
+
+                        // Upload Card
+                        _buildUploadCard(),
+
+                        // Selected images grid
+                        if (hasImages) ...[
+                          const SizedBox(height: 24),
+                          Text(
+                            '${selectedImages.length} image${selectedImages.length == 1 ? '' : 's'} selected',
+                            style: AppTheme.dmSans(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.primaryColor,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          _buildSelectedImagesGrid(selectedImages),
+                        ],
+
+                        const SizedBox(height: 100),
                       ],
                     ),
                   ),
-                ],
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Back button at bottom
-                  IconButtonWidget(
-                    icon: IconsaxPlusLinear.arrow_left_2,
-                    onPressed: widget.onBack ?? () => Navigator.pop(context),
-                  ),
+                ),
 
-                  const SizedBox(width: 16),
-                  CustomOutlinedButton(
-                    text: 'Continue',
-                    icon: IconsaxPlusLinear.arrow_right_2,
-                    onPressed: _onContinue,
-                    textColor: AppTheme.primaryColor,
-                    borderColor: AppTheme.bodyTextColor,
-                    iconColor: AppTheme.primaryColor,
-                  ),
-                ],
-              ),
-            ],
+                // Bottom Buttons
+                _buildBottomButtons(hasImages),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Spaces. logo
+          Image.asset(
+            'assets/logo/logo.png',
+            height: 32,
+          ),
+          // Settings icon
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppTheme.dividerColor,
+                width: 1,
+              ),
+            ),
+            child: IconButton(
+              icon: const Icon(
+                Icons.settings_outlined,
+                color: AppTheme.textPrimary,
+                size: 22,
+              ),
+              onPressed: () {},
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUploadCard() {
+    return GestureDetector(
+      onTap: _isLoading ? null : _pickMultipleFromGallery,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: AppTheme.dividerColor,
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: _isLoading
+                  ? Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: AppTheme.primaryColor,
+                      ),
+                    )
+                  : Icon(
+                      IconsaxPlusLinear.gallery_add,
+                      size: 32,
+                      color: AppTheme.primaryColor,
+                    ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Tap to add photos',
+              style: AppTheme.dmSans(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Select multiple inspiration images',
+              style: AppTheme.dmSans(
+                fontSize: 14,
+                color: AppTheme.textTertiary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectedImagesGrid(List<File> images) {
+    return SizedBox(
+      height: 80,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: images.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.file(
+              images[index],
+              width: 80,
+              height: 80,
+              fit: BoxFit.cover,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBottomButtons(bool hasImages) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            // Cancel button
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.textPrimary,
+                    side: const BorderSide(color: AppTheme.dividerColor, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: widget.onBack,
+                  child: Text(
+                    'Back',
+                    style: AppTheme.dmSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            // Continue/Skip button
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: hasImages
+                      ? widget.onConfirmSelection
+                      : widget.onSkipToApproach,
+                  child: Text(
+                    hasImages ? 'Continue' : 'Skip',
+                    style: AppTheme.dmSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

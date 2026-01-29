@@ -105,62 +105,47 @@ class ApiService {
   static Future<List<PreferredStore>> fetchPreferredStores() async {
     await Future.delayed(const Duration(milliseconds: 500));
 
+    // Demo mode: using local assets where available, empty for fallback icon
     const mockResponse = [
       {
-        // Real API call placeholder; add auth token and endpoint when backend is ready.
-        // final url = Uri.parse('${ApiConstants.baseUrl}/preferred-stores');
-        // final response = await http.get(
-        //   url,
-        //   headers: ApiConstants.authHeaders('<authToken>'),
-        // );
-        // if (response.statusCode == 200) {
-        //   final data = jsonDecode(response.body) as List<dynamic>;
-        //   return data
-        //       .cast<Map<String, dynamic>>()
-        //       .map((storeJson) => PreferredStore.fromJson(storeJson))
-        //       .toList();
-        // } else {
-        //   AppLogger.error(
-        //     'Failed to fetch preferred stores: ${response.statusCode} - ${response.body}',
-        //   );
-        //   throw Exception(
-        //     'Failed to fetch preferred stores: ${response.statusCode}',
-        //   );
-        // }
         'id': 'walmart',
-        'name': 'walmart',
-        'logoUrl':
-            'https://upload.wikimedia.org/wikipedia/commons/5/5f/Walmart_logo.png',
+        'name': 'Walmart',
+        'logoUrl': '', // Uses fallback icon for demo
       },
       {
         'id': 'amazon',
-        'name': 'amazon',
-        'logoUrl':
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Amazon_logo.svg/512px-Amazon_logo.svg.png',
+        'name': 'Amazon',
+        'logoUrl': 'assets/logo/amazon.png',
       },
       {
         'id': 'ikea',
-        'name': 'ikea',
-        'logoUrl':
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/IKEA_Logo.svg/512px-IKEA_Logo.svg.png',
+        'name': 'IKEA',
+        'logoUrl': 'assets/logo/ikea.png',
       },
       {
         'id': 'ashley',
-        'name': 'ashley',
-        'logoUrl':
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Ashley_Furniture_logo.svg/512px-Ashley_Furniture_logo.svg.png',
+        'name': 'Ashley',
+        'logoUrl': '', // Uses fallback icon for demo
       },
       {
         'id': 'target',
-        'name': 'target',
-        'logoUrl':
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Target_logo.svg/512px-Target_logo.svg.png',
+        'name': 'Target',
+        'logoUrl': 'assets/logo/target.png',
       },
       {
         'id': 'wayfair',
-        'name': 'wayfair',
-        'logoUrl':
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Wayfair_logo.svg/512px-Wayfair_logo.svg.png',
+        'name': 'Wayfair',
+        'logoUrl': '', // Uses fallback icon for demo
+      },
+      {
+        'id': 'etsy',
+        'name': 'Etsy',
+        'logoUrl': 'assets/logo/etsy.png',
+      },
+      {
+        'id': 'other',
+        'name': 'Other',
+        'logoUrl': '', // Uses fallback icon
       },
     ];
 
@@ -443,38 +428,43 @@ class ApiService {
     }
   }
 
-  /// Save improvement markers for a project
+  /// Mocked save improvement markers for a project (demo mode)
   static Future<void> saveImprovementMarkers(
     String projectId,
     List<Map<String, dynamic>> markers,
     String authToken,
   ) async {
-    try {
-      final url = Uri.parse(
-        '${ApiConstants.baseUrl}/projects/$projectId/improvement-markers',
-      );
+    // Demo mode: simulate network delay and succeed
+    await Future.delayed(const Duration(milliseconds: 300));
 
-      AppLogger.info(
-        'Saving ${markers.length} markers for project: $projectId',
-      );
+    AppLogger.info(
+      'Saving ${markers.length} markers for project: $projectId (demo mode)',
+    );
+    AppLogger.info('Markers saved successfully (demo mode - local only)');
 
-      final response = await http.post(
-        url,
-        headers: ApiConstants.authHeaders(authToken),
-        body: jsonEncode({'markers': markers}),
-      );
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        AppLogger.info('Markers saved successfully');
-      } else {
-        AppLogger.error(
-          'Failed to save markers: ${response.statusCode} - ${response.body}',
-        );
-        throw Exception('Failed to save markers: ${response.statusCode}');
-      }
-    } catch (e) {
-      AppLogger.error('Error saving markers', e);
-      rethrow;
-    }
+    // Real API call placeholder; wire up when backend is ready.
+    // try {
+    //   final url = Uri.parse(
+    //     '${ApiConstants.baseUrl}/projects/$projectId/improvement-markers',
+    //   );
+    //
+    //   final response = await http.post(
+    //     url,
+    //     headers: ApiConstants.authHeaders(authToken),
+    //     body: jsonEncode({'markers': markers}),
+    //   );
+    //
+    //   if (response.statusCode == 200 || response.statusCode == 201) {
+    //     AppLogger.info('Markers saved successfully');
+    //   } else {
+    //     AppLogger.error(
+    //       'Failed to save markers: ${response.statusCode} - ${response.body}',
+    //     );
+    //     throw Exception('Failed to save markers: ${response.statusCode}');
+    //   }
+    // } catch (e) {
+    //   AppLogger.error('Error saving markers', e);
+    //   rethrow;
+    // }
   }
 }

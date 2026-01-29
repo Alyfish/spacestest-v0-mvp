@@ -1,34 +1,31 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
+import '../providers/project_provider.dart';
 import '../theme.dart';
-import '../widgets/icon_button.dart';
+import '../widgets/app_bottom_nav_bar.dart';
+import 'main_navigation_screen.dart';
 
 class AnalyzingScreen extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onComplete;
   final VideoPlayerController? controller;
+  final String? title;
+  final String? subtitle;
 
   const AnalyzingScreen({
     super.key,
     this.onBack,
     this.onComplete,
     this.controller,
+    this.title,
+    this.subtitle,
   });
 
-  /// Preload a video controller so playback is ready before showing the screen.
   static Future<VideoPlayerController> preloadController() async {
-    final controller = VideoPlayerController.asset(
-      'assets/animations/analyzing/analyzing_animation.mp4',
-    );
-    await controller.initialize();
-    controller
-      ..setLooping(true)
-      ..setVolume(0)
-      ..play();
-    return controller;
+    return VideoPlayerController.networkUrl(Uri.parse(''));
   }
 
   @override
@@ -36,87 +33,104 @@ class AnalyzingScreen extends StatefulWidget {
 }
 
 class _AnalyzingScreenState extends State<AnalyzingScreen>
-    with SingleTickerProviderStateMixin {
-  late VideoPlayerController _videoController;
-  bool _ownsController = true;
-  bool _isVideoReady = false;
-  Timer? _textTimer;
-  int _textIndex = 0;
-  static const _textRotation = <String>[
-    'analyzing your SPACE...',
-    'finding what MATTERS most...',
-    'spotting patterns YOU LOVE...',
-    'checking PRACTICALITY...',
-    'balancing COMFORT and STYLE...',
-    'curating pieces that FIT...',
-    'measuring VIBE vs. FUNCTION...',
-    'optimizing LAYOUT choices...',
-    'almost THERE...',
+    with TickerProviderStateMixin {
+
+  // Animation controllers for each icon
+  late List<AnimationController> _iconControllers;
+  late List<Animation<double>> _fadeAnimations;
+  late List<Animation<double>> _scaleAnimations;
+
+  // Breathing animation for after all icons appear
+  late AnimationController _breathingController;
+  late Animation<double> _breathingAnimation;
+
+  // Icon configuration - furniture icons for loading animation
+  static const List<_LoadingIcon> _icons = [
+    _LoadingIcon(icon: IconsaxPlusLinear.lamp_on, label: 'Sofa'),
+    _LoadingIcon(icon: IconsaxPlusLinear.lamp_1, label: 'Bed'),
+    _LoadingIcon(icon: IconsaxPlusLinear.lamp_charge, label: 'Lamp'),
+    _LoadingIcon(icon: IconsaxPlusLinear.home_2, label: 'House'),
   ];
+
+  // Timing constants
+  static const Duration _iconAppearDuration = Duration(milliseconds: 600);
+  static const Duration _staggerDelay = Duration(milliseconds: 1250);
+  static const Duration _totalDuration = Duration(milliseconds: 5500);
 
   @override
   void initState() {
     super.initState();
-    _initVideo();
-    _startTextRotation();
-    _mockApiComplete();
+    _initAnimations();
+    _startStaggeredAnimation();
+    _scheduleCompletion();
   }
 
-  Future<void> _initVideo() async {
-    if (widget.controller != null) {
-      _videoController = widget.controller!;
-      _ownsController = false;
-      _isVideoReady = _videoController.value.isInitialized;
-      if (_isVideoReady) {
-        _videoController
-          ..setLooping(true)
-          ..setVolume(0)
-          ..play();
-      }
-      setState(() {});
-      return;
-    }
+  void _initAnimations() {
+    // Create controllers for each icon
+    _iconControllers = List.generate(
+      _icons.length,
+      (index) => AnimationController(
+        vsync: this,
+        duration: _iconAppearDuration,
+      ),
+    );
 
-    _videoController = await AnalyzingScreen.preloadController();
-    if (mounted) {
-      setState(() {
-        _isVideoReady = true;
-      });
-    }
-  }
-
-  void _startTextRotation() {
-    _textTimer = Timer.periodic(const Duration(milliseconds: 1800), (_) {
-      if (!mounted) return;
-      setState(() {
-        _textIndex = (_textIndex + 1) % _textRotation.length;
-      });
-    });
-  }
-
-  InlineSpan _buildColoredText(String text) {
-    final parts = text.split(' ');
-    final spans = <TextSpan>[];
-    for (var i = 0; i < parts.length; i++) {
-      final word = parts[i];
-      final isAllCaps = word.isNotEmpty && word.toUpperCase() == word;
-      spans.add(
-        TextSpan(
-          text: word + (i == parts.length - 1 ? '' : ' '),
-          style: TextStyle(
-            color: isAllCaps ? AppTheme.primaryColor : AppTheme.bodyTextColor,
-            fontFamily: AppTheme.secondaryFont,
-            fontSize: 16,
-            fontWeight: FontWeight.w200,
-          ),
+    // Create fade animations with easeOut curve
+    _fadeAnimations = _iconControllers.map((controller) {
+      return Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(
+          parent: controller,
+          curve: Curves.easeOut,
         ),
       );
-    }
-    return TextSpan(children: spans);
+    }).toList();
+
+    // Create scale animations with slight overshoot for playful feel
+    _scaleAnimations = _iconControllers.map((controller) {
+      return Tween<double>(begin: 0.5, end: 1.0).animate(
+        CurvedAnimation(
+          parent: controller,
+          curve: Curves.elasticOut,
+        ),
+      );
+    }).toList();
+
+    // Breathing animation for subtle life after reveal
+    _breathingController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    );
+
+    _breathingAnimation = Tween<double>(begin: 1.0, end: 1.08).animate(
+      CurvedAnimation(
+        parent: _breathingController,
+        curve: Curves.easeInOut,
+      ),
+    );
   }
 
-  void _mockApiComplete() {
-    Future.delayed(const Duration(seconds: 7), () {
+  void _startStaggeredAnimation() async {
+    for (int i = 0; i < _icons.length; i++) {
+      if (!mounted) return;
+
+      // Start this icon's animation
+      _iconControllers[i].forward();
+
+      // Wait before starting next icon (except for last)
+      if (i < _icons.length - 1) {
+        await Future.delayed(_staggerDelay);
+      }
+    }
+
+    // Start breathing animation after all icons appear
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (mounted) {
+      _breathingController.repeat(reverse: true);
+    }
+  }
+
+  void _scheduleCompletion() {
+    Future.delayed(_totalDuration, () {
       if (mounted && widget.onComplete != null) {
         widget.onComplete!();
       }
@@ -125,11 +139,58 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
 
   @override
   void dispose() {
-    _textTimer?.cancel();
-    if (_ownsController) {
-      _videoController.dispose();
+    for (final controller in _iconControllers) {
+      controller.dispose();
     }
+    _breathingController.dispose();
     super.dispose();
+  }
+
+  void _handleNavTap(int index) {
+    if (index == 2) return;
+    if (index == 1) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.lock_outline, color: Colors.white, size: 18),
+              const SizedBox(width: 12),
+              Text('Coming soon', style: AppTheme.dmSans(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.white)),
+            ],
+          ),
+          backgroundColor: AppTheme.textSecondary,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _handleFabPressed() async {
+    try {
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      await projectProvider.createProject(context);
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start: ${e.toString()}'), backgroundColor: AppTheme.errorColor),
+        );
+      }
+    }
   }
 
   @override
@@ -137,170 +198,129 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+        bottom: false,
+        child: Center(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.start,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Header row
-              const Text('Analyzing...', style: AppTheme.sectionTitleStyle),
-              SizedBox(height: MediaQuery.of(context).size.height * 0.03),
+              const Spacer(flex: 3),
 
-              // Top text (fixed to top-right)
-              Container(
-                height: 44,
-                margin: EdgeInsets.only(
-                  left: MediaQuery.of(context).size.width * 0.12,
-                ),
-
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 1000),
-                    transitionBuilder: (child, anim) =>
-                        FadeTransition(opacity: anim, child: child),
-                    layoutBuilder: (currentChild, previousChildren) {
-                      return Stack(
-                        alignment: Alignment.centerLeft,
-                        children: <Widget>[
-                          ...previousChildren,
-                          if (currentChild != null) currentChild,
-                        ],
-                      );
-                    },
-                    child: RichText(
-                      key: ValueKey('top-text-$_textIndex'),
-                      textAlign: TextAlign.left,
-                      text: _buildColoredText(_textRotation[_textIndex]),
-                    ),
-                  ),
+              // Animated icons row
+              AnimatedBuilder(
+                animation: _breathingController,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: _breathingAnimation.value,
+                    child: child,
+                  );
+                },
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(_icons.length, (index) {
+                    return Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: index == 0 || index == _icons.length - 1
+                            ? 12.0
+                            : 16.0,
+                      ),
+                      child: _buildAnimatedIcon(index),
+                    );
+                  }),
                 ),
               ),
 
-              SizedBox(height: 12),
-              // Video area with locked aspect ratio (vertical)
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final aspect =
-                      _isVideoReady && _videoController.value.aspectRatio != 0
-                      ? _videoController.value.aspectRatio
-                      : 3 / 4;
-                  final maxHeight = constraints.maxHeight
-                      .clamp(0, 300)
-                      .toDouble();
-                  final height = maxHeight > 0.0 ? maxHeight : 300.0;
-                  final width = height * aspect;
+              const SizedBox(height: 56),
 
-                  return Center(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: SizedBox(
-                        height: height,
-                        width: width,
-                        child: _isVideoReady
-                            ? FittedBox(
-                                fit: BoxFit.cover,
-                                alignment: Alignment.center,
-                                child: SizedBox(
-                                  width: _videoController.value.size.width,
-                                  height: _videoController.value.size.height,
-                                  child: VideoPlayer(_videoController),
-                                ),
-                              )
-                            : Container(
-                                color: AppTheme.grayColor.withValues(
-                                  alpha: 0.1,
-                                ),
-                                child: const Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                              ),
-                      ),
+              // Title with fade-in
+              FadeTransition(
+                opacity: _fadeAnimations.isNotEmpty
+                    ? _fadeAnimations[0]
+                    : const AlwaysStoppedAnimation(1.0),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Text(
+                    widget.title ?? 'Creating your space',
+                    style: AppTheme.dmSans(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
                     ),
-                  );
-                },
+                    textAlign: TextAlign.center,
+                  ),
+                ),
               ),
 
               const SizedBox(height: 12),
 
-              // Bottom floating texts (kept outside video)
-              SizedBox(
-                height: 20,
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 1000),
-                    transitionBuilder: (child, anim) =>
-                        FadeTransition(opacity: anim, child: child),
-                    layoutBuilder: (currentChild, previousChildren) {
-                      return Stack(
-                        alignment: Alignment.centerRight,
-                        children: <Widget>[
-                          ...previousChildren,
-                          if (currentChild != null) currentChild,
-                        ],
-                      );
-                    },
-                    child: RichText(
-                      key: ValueKey('bottom-text-$_textIndex'),
-                      textAlign: TextAlign.right,
-                      text: _buildColoredText(
-                        _textRotation[(_textIndex + 2) % _textRotation.length],
-                      ),
+              // Subtitle
+              FadeTransition(
+                opacity: _fadeAnimations.length > 1
+                    ? _fadeAnimations[1]
+                    : const AlwaysStoppedAnimation(1.0),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  child: Text(
+                    widget.subtitle ?? 'Finding the perfect pieces for you',
+                    style: AppTheme.dmSans(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: AppTheme.textSecondary,
                     ),
+                    textAlign: TextAlign.center,
                   ),
                 ),
               ),
 
-              const SizedBox(height: 40),
-
-              // Third rotating text line (adds depth to the status feel)
-              Container(
-                height: 20,
-                margin: EdgeInsets.only(
-                  left: MediaQuery.of(context).size.width * 0.06,
-                ),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 1000),
-                    transitionBuilder: (child, anim) =>
-                        FadeTransition(opacity: anim, child: child),
-                    layoutBuilder: (currentChild, previousChildren) {
-                      return Stack(
-                        alignment: Alignment.centerLeft,
-                        children: <Widget>[
-                          ...previousChildren,
-                          if (currentChild != null) currentChild,
-                        ],
-                      );
-                    },
-                    child: RichText(
-                      key: ValueKey('third-text-$_textIndex'),
-                      textAlign: TextAlign.left,
-                      text: _buildColoredText(
-                        _textRotation[(_textIndex + 4) % _textRotation.length],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Back button
-              Align(
-                alignment: Alignment.centerLeft,
-                child: IconButtonWidget(
-                  onPressed: widget.onBack ?? () => Navigator.pop(context),
-                  icon: IconsaxPlusLinear.arrow_left_2,
-                ),
-              ),
+              const Spacer(flex: 4),
             ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: AppBottomNavBar(
+        selectedIndex: 0,
+        onItemTapped: _handleNavTap,
+        onFabPressed: _handleFabPressed,
+      ),
+    );
+  }
+
+  Widget _buildAnimatedIcon(int index) {
+    return AnimatedBuilder(
+      animation: _iconControllers[index],
+      builder: (context, child) {
+        return Opacity(
+          opacity: _fadeAnimations[index].value,
+          child: Transform.scale(
+            scale: _scaleAnimations[index].value,
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          color: AppTheme.primaryColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Center(
+          child: Icon(
+            _icons[index].icon,
+            size: 28,
+            color: AppTheme.primaryColor,
           ),
         ),
       ),
     );
   }
+}
+
+class _LoadingIcon {
+  final IconData icon;
+  final String label;
+
+  const _LoadingIcon({
+    required this.icon,
+    required this.label,
+  });
 }

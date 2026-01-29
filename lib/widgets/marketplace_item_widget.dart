@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import '../theme.dart';
+import 'app_card.dart';
 
 class MarketplaceItemWidget extends StatelessWidget {
   final String imagePath;
@@ -21,118 +23,133 @@ class MarketplaceItemWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return AppCard(
       onTap: comingSoon ? null : onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: AppTheme.primaryColor,
-            width: 2,
-          ),
-          color: AppTheme.backgroundColor,
-        ),
-        child: Stack(
-          children: [
-            // Content
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Image with provider icon overlay
-                Expanded(
-                  flex: 3,
-                  child: Stack(
-                    children: [
-                      // Main item image
-                      Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-                          child: Container(
-                            color: Colors.transparent,
-                            child: Image.asset(
-                              imagePath,
-                              fit: BoxFit.contain, // Show full image without cropping
-                              color: comingSoon ? AppTheme.grayColor.withValues(alpha: 0.5) : null,
-                              colorBlendMode: comingSoon ? BlendMode.srcATop : null,
-                            ),
+      padding: EdgeInsets.zero,
+      showBorder: !comingSoon, // Hide border if coming soon (overlay handles visuals)
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Main Content
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Image Section
+              Expanded(
+                flex: 4,
+                child: Stack(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.grayColor.withOpacity(0.05),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                      ),
+                      child: Image.asset(
+                        imagePath,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                    if (providerIconPath != null)
+                      Positioned(
+                        top: 8,
+                        left: 8, // Moved to top-left as per plan "Store badge smaller, top-left"
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 4,
+                              ),
+                            ],
                           ),
+                          padding: const EdgeInsets.all(4),
+                          child: Image.asset(providerIconPath!),
                         ),
                       ),
-                      // Provider icon overlay
-                      if (providerIconPath != null)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Container(
-                            constraints: const BoxConstraints(
-                              maxWidth: 60,
-                            ),
-                            height: 23, // 10% of typical tile height (~230px)
-                            decoration: BoxDecoration(
-                              color: AppTheme.backgroundColor,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.1),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              child: Image.asset(
-                                providerIconPath!,
-                                fit: BoxFit.contain, // Show full logo without cropping
-                              ),
-                            ),
-                          ),
+                  ],
+                ),
+              ),
+              
+              // Text Section
+              Expanded(
+                flex: 2,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontFamily: AppTheme.secondaryFont,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.bodyTextColor,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          fontFamily: AppTheme.secondaryFont,
+                          fontSize: 14,
+                          color: AppTheme.grayColor,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                // Item name
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontFamily: AppTheme.primaryFont,
-                      fontSize: 30,
-                      fontWeight: FontWeight.normal,
-                      color: comingSoon ? AppTheme.grayColor : AppTheme.bodyTextColor,
-                    ),
-                    textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+
+          // Coming Soon Overlay
+          if (comingSoon)
+            Container(
+              decoration: BoxDecoration(
+                color: AppTheme.grayColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                ),
-              ],
-            ),
-            // Coming Soon Overlay
-            if (comingSoon)
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  color: AppTheme.backgroundColor.withValues(alpha: 0.9),
-                ),
-                child: const Center(
-                  child: Text(
-                    'coming soon...',
-                    style: TextStyle(
-                      fontFamily: AppTheme.primaryFont,
-                      fontSize: 30,
-                      fontWeight: FontWeight.normal,
-                      color: AppTheme.grayColor,
-                      fontStyle: FontStyle.italic,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        IconsaxPlusLinear.lock,
+                        size: 16,
+                        color: AppTheme.grayColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Coming soon',
+                        style: const TextStyle(
+                          fontFamily: AppTheme.secondaryFont,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.grayColor,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

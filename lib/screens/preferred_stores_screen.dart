@@ -1,15 +1,10 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
-import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:provider/provider.dart';
-
 import '../models/preferred_store.dart';
 import '../providers/project_provider.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
-import '../widgets/custom_outlined_button.dart';
-import '../widgets/icon_button.dart';
+import '../widgets/step_progress_bar.dart';
 
 class PreferredStoresScreen extends StatelessWidget {
   final VoidCallback? onBack;
@@ -20,72 +15,9 @@ class PreferredStoresScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppTheme.backgroundColor,
-        elevation: 0,
-        toolbarHeight: 70,
-        automaticallyImplyLeading: false,
-        title: Row(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10.0),
-              child: Image.asset(
-                'assets/logo/logo.png',
-                height: 100,
-                width: 100,
-              ),
-            ),
-          ],
-        ),
-      ),
-      backgroundColor: AppTheme.backgroundColor,
+      backgroundColor: AppTheme.scaffoldBackground,
       body: SafeArea(
         child: PreferredStoresContent(onBack: onBack, onContinue: onContinue),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: AppTheme.backgroundColor,
-        selectedItemColor: AppTheme.primaryColor,
-        unselectedItemColor: AppTheme.grayColor,
-        selectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-        ),
-        unselectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w400,
-        ),
-        currentIndex: 0,
-        onTap: (_) {},
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.home),
-            activeIcon: Icon(IconsaxPlusBold.home),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.discover),
-            activeIcon: Icon(IconsaxPlusBold.discover),
-            label: 'Discover',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bag_2),
-            activeIcon: Icon(IconsaxPlusBold.bag_2),
-            label: 'Cart',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bookmark),
-            activeIcon: Icon(IconsaxPlusBold.bookmark),
-            label: 'Saved',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.profile_circle),
-            activeIcon: Icon(IconsaxPlusBold.profile_circle),
-            label: 'Profile',
-          ),
-        ],
       ),
     );
   }
@@ -107,20 +39,11 @@ class _PreferredStoresContentState extends State<PreferredStoresContent> {
   String? _errorMessage;
   List<PreferredStore> _stores = [];
   Set<String> _selectedStoreIds = {};
-  int _currentPage = 0;
-  late PageController _pageController;
 
   @override
   void initState() {
     super.initState();
-    _pageController = PageController();
     _loadStores();
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
   }
 
   Future<void> _loadStores() async {
@@ -128,42 +51,21 @@ class _PreferredStoresContentState extends State<PreferredStoresContent> {
       _isLoading = true;
       _errorMessage = null;
     });
-
     try {
       final stores = await ApiService.fetchPreferredStores();
-      final projectProvider = Provider.of<ProjectProvider>(
-        context,
-        listen: false,
-      );
+      final projectProvider =
+          Provider.of<ProjectProvider>(context, listen: false);
       final existingSelection = projectProvider.preferredStores;
-
       setState(() {
         _stores = stores;
-        _selectedStoreIds = existingSelection.isNotEmpty
-            ? existingSelection.toSet()
-            : {};
+        _selectedStoreIds =
+            existingSelection.isNotEmpty ? existingSelection.toSet() : {};
       });
     } catch (e) {
-      setState(() {
-        _errorMessage = 'Could not load stores. Pull to retry later.';
-      });
+      setState(() => _errorMessage = 'Could not load stores.');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  List<List<PreferredStore>> get _storePages {
-    if (_stores.isEmpty) return [];
-
-    final List<List<PreferredStore>> pages = [];
-    for (int i = 0; i < _stores.length; i += 4) {
-      pages.add(_stores.sublist(i, min(i + 4, _stores.length)));
-    }
-    return pages;
   }
 
   void _toggleSelection(String storeId) {
@@ -178,259 +80,330 @@ class _PreferredStoresContentState extends State<PreferredStoresContent> {
 
   Future<void> _handleContinue() async {
     if (_isSaving || _isLoading) return;
-
-    final projectProvider = Provider.of<ProjectProvider>(
-      context,
-      listen: false,
-    );
+    final projectProvider =
+        Provider.of<ProjectProvider>(context, listen: false);
 
     if (!projectProvider.hasProject) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Create a project before selecting stores'),
+        SnackBar(
+          content: Text(
+            'Create a project first',
+            style: AppTheme.dmSans(color: Colors.white),
+          ),
           backgroundColor: AppTheme.errorColor,
         ),
       );
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
-
+    setState(() => _isSaving = true);
     final success = await projectProvider.savePreferredStores(
-      context,
-      _selectedStoreIds.toList(),
-    );
+        context, _selectedStoreIds.toList());
 
     if (mounted) {
-      setState(() {
-        _isSaving = false;
-      });
-
-      if (success) {
-        if (widget.onContinue != null) {
-          widget.onContinue!();
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Couldn't save your selection"),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
-      }
+      setState(() => _isSaving = false);
+      if (success) widget.onContinue?.call();
     }
-  }
-
-  void _onContinueTap() {
-    _handleContinue();
-  }
-
-  Widget _buildStoreCard(PreferredStore store) {
-    final isSelected = _selectedStoreIds.contains(store.id);
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      decoration: isSelected
-          ? AppTheme.selectedCardDecoration
-          : AppTheme.unselectedCardDecoration,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _toggleSelection(store.id),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppTheme.backgroundColor,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
-                      store.logoUrl,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          alignment: Alignment.center,
-                          color: AppTheme.grayColor.withValues(alpha: 0.1),
-                          child: Icon(
-                            IconsaxPlusLinear.image,
-                            color: AppTheme.grayColor,
-                            size: 32,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                store.name,
-                style: TextStyle(
-                  fontFamily: AppTheme.secondaryFont,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w400,
-                  color: isSelected
-                      ? AppTheme.selectedCardOutline
-                      : AppTheme.grayColor,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContent() {
-    if (_isLoading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 80),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    if (_errorMessage != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40),
-        child: Column(
-          children: [
-            Text(
-              _errorMessage!,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: AppTheme.secondaryFont,
-                fontSize: 16,
-                color: AppTheme.grayColor,
-              ),
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton(onPressed: _loadStores, child: const Text('Retry')),
-          ],
-        ),
-      );
-    }
-
-    if (_storePages.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 60),
-        child: Column(
-          children: [
-            Icon(IconsaxPlusLinear.box_remove, color: AppTheme.grayColor),
-            const SizedBox(height: 12),
-            Text(
-              'No stores available right now',
-              style: TextStyle(
-                fontFamily: AppTheme.secondaryFont,
-                fontSize: 16,
-                color: AppTheme.grayColor,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        SizedBox(
-          height: MediaQuery.of(context).size.height * 0.55,
-          child: PageView.builder(
-            controller: _pageController,
-            itemCount: _storePages.length,
-            onPageChanged: (index) {
-              setState(() {
-                _currentPage = index;
-              });
-            },
-            itemBuilder: (context, index) {
-              final pageStores = _storePages[index];
-              return _buildStoreGrid(pageStores);
-            },
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(
-            _storePages.length,
-            (index) => Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              width: _currentPage == index ? 12 : 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: _currentPage == index
-                    ? AppTheme.primaryColor
-                    : AppTheme.grayColor.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStoreGrid(List<PreferredStore> stores) {
-    return GridView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 16,
-        crossAxisSpacing: 16,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: stores.length,
-      physics: const NeverScrollableScrollPhysics(),
-      itemBuilder: (context, index) {
-        return _buildStoreCard(stores[index]);
-      },
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _loadStores,
-      color: AppTheme.primaryColor,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+    return Column(
+      children: [
+        // Header with logo and settings
+        _buildHeader(),
+
+        // Progress bar
+        const SizedBox(height: 8),
+        const StepProgressBar(currentStep: 6, totalSteps: 8),
+
+        // Content
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _errorMessage != null
+                  ? _buildErrorState()
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 24),
+
+                          // Title
+                          Text(
+                            'Preferred Store(s).',
+                            style: AppTheme.dmSans(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.textPrimary,
+                            ),
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          // Stores grid
+                          _buildStoresGrid(),
+
+                          const SizedBox(height: 100),
+                        ],
+                      ),
+                    ),
+        ),
+
+        // Bottom Buttons
+        _buildBottomButtons(),
+      ],
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Spaces. logo
+          Image.asset(
+            'assets/logo/logo.png',
+            height: 32,
+          ),
+          // Settings icon
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppTheme.dividerColor,
+                width: 1,
+              ),
+            ),
+            child: IconButton(
+              icon: const Icon(
+                Icons.settings_outlined,
+                color: AppTheme.textPrimary,
+                size: 22,
+              ),
+              onPressed: () {},
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _errorMessage!,
+            style: AppTheme.dmSans(
+              fontSize: 16,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextButton(
+            onPressed: _loadStores,
+            child: Text(
+              'Retry',
+              style: AppTheme.dmSans(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStoresGrid() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 16,
+        crossAxisSpacing: 16,
+        childAspectRatio: 1.0,
+      ),
+      itemCount: _stores.length,
+      itemBuilder: (context, index) {
+        final store = _stores[index];
+        final isSelected = _selectedStoreIds.contains(store.id);
+
+        return _buildStoreCard(store, isSelected);
+      },
+    );
+  }
+
+  Widget _buildStoreCard(PreferredStore store, bool isSelected) {
+    return GestureDetector(
+      onTap: () => _toggleSelection(store.id),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : AppTheme.dividerColor,
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Row(
-              children: const [
-                Text('Preferred Store(s).', style: AppTheme.sectionTitleStyle),
-              ],
+            // Store logo - supports both local assets and network URLs
+            SizedBox(
+              height: 60,
+              child: store.logoUrl.isNotEmpty
+                  ? (store.logoUrl.startsWith('assets/')
+                      ? Image.asset(
+                          store.logoUrl,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => _buildFallbackLogo(),
+                        )
+                      : Image.network(
+                          store.logoUrl,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => _buildFallbackLogo(),
+                        ))
+                  : _buildFallbackLogo(),
             ),
-            const SizedBox(height: 20),
-            _buildContent(),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButtonWidget(
-                  onPressed: widget.onBack ?? () => Navigator.pop(context),
-                  icon: IconsaxPlusLinear.arrow_left_2,
-                ),
-                const SizedBox(width: 16),
-                CustomOutlinedButton(
-                  text: _isSaving ? 'Saving...' : 'Continue',
-                  icon: IconsaxPlusLinear.arrow_right_2,
-                  onPressed: _isSaving ? () {} : _onContinueTap,
-                  textColor: AppTheme.bodyTextColor,
-                  borderColor: AppTheme.primaryColor,
-                  iconColor: AppTheme.primaryColor,
-                ),
-              ],
-            ),
+
             const SizedBox(height: 12),
+
+            // Store name
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                store.name,
+                style: AppTheme.dmSans(
+                  fontSize: 14,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: isSelected ? AppTheme.primaryColor : AppTheme.textPrimary,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFallbackLogo() {
+    return Container(
+      width: 60,
+      height: 60,
+      decoration: BoxDecoration(
+        color: AppTheme.scaffoldBackground,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(
+        Icons.store_outlined,
+        size: 32,
+        color: AppTheme.textTertiary,
+      ),
+    );
+  }
+
+  Widget _buildBottomButtons() {
+    final hasSelection = _selectedStoreIds.isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            // Back button
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.textPrimary,
+                    side:
+                        const BorderSide(color: AppTheme.dividerColor, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: widget.onBack,
+                  child: Text(
+                    'Back',
+                    style: AppTheme.dmSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            // Skip/Continue button - changes based on selection
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: _isSaving ? null : _handleContinue,
+                  child: _isSaving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          hasSelection ? 'Continue' : 'Skip',
+                          style: AppTheme.dmSans(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                ),
+              ),
+            ),
           ],
         ),
       ),

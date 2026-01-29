@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:iconsax_plus/iconsax_plus.dart';
-import 'package:spaces/utils/logger.dart';
-import 'package:spaces/widgets/icon_button.dart';
 import '../providers/project_provider.dart';
 import '../providers/user_provider.dart';
 import '../models/marker.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
-import '../widgets/custom_outlined_button.dart';
+import '../utils/logger.dart';
 import '../widgets/interactive_image_widget.dart';
 import '../widgets/marker_input_dialog.dart';
 import '../widgets/marker_widget.dart';
+import '../widgets/step_progress_bar.dart';
 
+/// Choose Items to Redesign - Marker placement screen
+/// Users tap on the image to mark items they want to change
 class ChooseItemsScreen extends StatelessWidget {
   final VoidCallback? onBack;
   final VoidCallback? onContinue;
@@ -22,72 +22,9 @@ class ChooseItemsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppTheme.backgroundColor,
-        elevation: 0,
-        toolbarHeight: 70,
-        automaticallyImplyLeading: false,
-        title: Row(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10.0),
-              child: Image.asset(
-                'assets/logo/logo.png',
-                height: 100,
-                width: 100,
-              ),
-            ),
-          ],
-        ),
-      ),
-      backgroundColor: AppTheme.backgroundColor,
+      backgroundColor: AppTheme.scaffoldBackground,
       body: SafeArea(
         child: ChooseItemsContent(onBack: onBack, onContinue: onContinue),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: AppTheme.backgroundColor,
-        selectedItemColor: AppTheme.primaryColor,
-        unselectedItemColor: AppTheme.grayColor,
-        selectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-        ),
-        unselectedLabelStyle: const TextStyle(
-          fontFamily: AppTheme.secondaryFont,
-          fontSize: 12,
-          fontWeight: FontWeight.w400,
-        ),
-        currentIndex: 0, // Home tab stays selected during flow
-        onTap: (_) {}, // Disabled during flow
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.home),
-            activeIcon: Icon(IconsaxPlusBold.home),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.discover),
-            activeIcon: Icon(IconsaxPlusBold.discover),
-            label: 'Discover',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bag_2),
-            activeIcon: Icon(IconsaxPlusBold.bag_2),
-            label: 'Cart',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.bookmark),
-            activeIcon: Icon(IconsaxPlusBold.bookmark),
-            label: 'Saved',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(IconsaxPlusLinear.profile_circle),
-            activeIcon: Icon(IconsaxPlusBold.profile_circle),
-            label: 'Profile',
-          ),
-        ],
       ),
     );
   }
@@ -109,8 +46,6 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
   @override
   void initState() {
     super.initState();
-
-    // Trigger a rebuild to ensure markers are displayed when screen loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
       setState(() {});
     });
@@ -159,7 +94,7 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
     );
   }
 
-  void _onContinue() async {
+  Future<void> _onContinue() async {
     if (_isLoading) return;
 
     final projectProvider = Provider.of<ProjectProvider>(
@@ -167,10 +102,9 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
       listen: false,
     );
     final userProvider = Provider.of<UserProvider>(context, listen: false);
-    AppLogger.info(projectProvider.getMarkersJson().toString());
-    // Check if there are any markers to save
+
+    // If no markers, just skip to next step
     if (!projectProvider.hasMarkers) {
-      // Allow continuing without markers
       if (widget.onContinue != null) {
         widget.onContinue!();
       }
@@ -182,7 +116,6 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
     });
 
     try {
-      // Save markers to API when continue is pressed
       final authToken = userProvider.user.token;
       if (authToken != null && projectProvider.currentProject != null) {
         await ApiService.saveImprovementMarkers(
@@ -196,11 +129,17 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
         widget.onContinue!();
       }
     } catch (e) {
+      AppLogger.error('Failed to save markers', e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Couldn\'t save the data'),
+          SnackBar(
+            content: const Text('Couldn\'t save the data'),
             backgroundColor: AppTheme.errorColor,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            margin: const EdgeInsets.all(16),
           ),
         );
       }
@@ -213,132 +152,315 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
     }
   }
 
+  void _onSkip() {
+    if (widget.onContinue != null) {
+      widget.onContinue!();
+    }
+  }
+
+  void _onCancel() {
+    if (widget.onBack != null) {
+      widget.onBack!();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-      child: Column(
-        children: [
-          // Title and subtitle section
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    'Choose Items to Redesign.',
-                    style: AppTheme.sectionTitleStyle.copyWith(fontSize: 36),
+    return Column(
+      children: [
+        // Header with logo and settings
+        _buildHeader(),
+
+        // Progress bar
+        const SizedBox(height: 8),
+        const StepProgressBar(currentStep: 4, totalSteps: 8),
+
+        // Content
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 20),
+
+                // Title
+                Text(
+                  'Choose Items to Redesign.',
+                  style: AppTheme.dmSans(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Unselected items remain unchanged in your design',
-                style: TextStyle(
-                  fontFamily: AppTheme.secondaryFont,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w100,
-                  color: AppTheme.bodyTextColor,
                 ),
-              ),
-            ],
-          ),
 
-          const SizedBox(height: 20),
+                const SizedBox(height: 8),
 
-          // Image section with markers
-          SizedBox(
-            width: MediaQuery.of(context).size.width,
-            height: MediaQuery.of(context).size.height * 0.5,
-            child: Consumer<ProjectProvider>(
-              builder: (context, projectProvider, child) {
-                final imageProvider = projectProvider.getProjectImageProvider();
-
-                if (imageProvider == null) {
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: AppTheme.grayColor.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            IconsaxPlusLinear.gallery,
-                            size: 48,
-                            color: AppTheme.grayColor,
-                          ),
-                          SizedBox(height: 16),
-                          Text(
-                            'No image available',
-                            style: TextStyle(
-                              fontFamily: AppTheme.secondaryFont,
-                              fontSize: 16,
-                              color: AppTheme.grayColor,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-                AppLogger.info(
-                  'Displaying project image with markers ${projectProvider.markers.toString()}',
-                );
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: InteractiveImageWidget(
-                    imageProvider: imageProvider,
-                    onImageTap: _showMarkerDialog,
-                    overlayBuilder:
-                        (imageWidth, imageHeight, displaySize, displayOffset) {
-                          return Consumer<ProjectProvider>(
-                            builder: (context, provider, child) {
-                              return MarkerOverlay(
-                                markers: provider.markers,
-                                onMarkerTap: _editMarker,
-                                imageWidth: imageWidth,
-                                imageHeight: imageHeight,
-                                displaySize: displaySize,
-                                displayOffset: displayOffset,
-                              );
-                            },
-                          );
-                        },
+                // Subtitle
+                Text(
+                  'Unselected items remain unchanged in your design',
+                  style: AppTheme.dmSans(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                    color: AppTheme.textSecondary,
                   ),
-                );
+                ),
+
+                const SizedBox(height: 24),
+
+                // Interactive Image with Markers
+                _buildInteractiveImage(),
+
+                const SizedBox(height: 100), // Space for bottom buttons
+              ],
+            ),
+          ),
+        ),
+
+        // Bottom Buttons
+        _buildBottomButtons(),
+      ],
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Spaces. logo
+          Image.asset(
+            'assets/logo/logo.png',
+            height: 32,
+          ),
+          // Settings icon
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppTheme.dividerColor,
+                width: 1,
+              ),
+            ),
+            child: IconButton(
+              icon: const Icon(
+                Icons.settings_outlined,
+                color: AppTheme.textPrimary,
+                size: 22,
+              ),
+              onPressed: () {
+                AppLogger.info('Settings pressed');
               },
             ),
           ),
-
-          const SizedBox(height: 20),
-
-          // Action buttons
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Back button
-              IconButtonWidget(
-                onPressed: widget.onBack ?? () => Navigator.pop(context),
-                icon: IconsaxPlusLinear.arrow_left_2,
-              ),
-
-              const SizedBox(width: 16),
-              CustomOutlinedButton(
-                text: 'Continue',
-                icon: IconsaxPlusLinear.arrow_right_2,
-                onPressed: _onContinue,
-                textColor: AppTheme.primaryColor,
-                borderColor: AppTheme.bodyTextColor,
-                iconColor: AppTheme.primaryColor,
-              ),
-
-              // Continue button
-            ],
-          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildInteractiveImage() {
+    return Consumer<ProjectProvider>(
+      builder: (context, projectProvider, child) {
+        final imageProvider = projectProvider.getProjectImageProvider();
+
+        // Demo mode: use placeholder image when no project image
+        final isDemoMode = imageProvider == null || ProjectProvider.demoMode;
+        final displayProvider = isDemoMode
+            ? const AssetImage('assets/images_for_choose_spaces_new/1_pb_8pa89uOlXOTsrM8sFWg.jpg') as ImageProvider
+            : imageProvider;
+
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.52,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: InteractiveImageWidget(
+                  imageProvider: displayProvider,
+                  onImageTap: _showMarkerDialog,
+                  overlayBuilder: (imageWidth, imageHeight, displaySize, displayOffset) {
+                    return Consumer<ProjectProvider>(
+                      builder: (context, provider, child) {
+                        return MarkerOverlay(
+                          markers: provider.markers,
+                          onMarkerTap: _editMarker,
+                          imageWidth: imageWidth,
+                          imageHeight: imageHeight,
+                          displaySize: displaySize,
+                          displayOffset: displayOffset,
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              // Demo mode badge
+              if (isDemoMode)
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Demo Mode',
+                      style: AppTheme.dmSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBottomButtons() {
+    return Consumer<ProjectProvider>(
+      builder: (context, projectProvider, child) {
+        final hasMarkers = projectProvider.hasMarkers;
+
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceColor,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 12,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: hasMarkers
+                ? _buildCancelContinueButtons()
+                : _buildSkipButton(),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSkipButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTheme.textSecondary,
+          side: BorderSide(
+            color: AppTheme.dividerColor,
+            width: 1.5,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        onPressed: _onSkip,
+        child: Text(
+          'Skip',
+          style: AppTheme.dmSans(
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCancelContinueButtons() {
+    return Row(
+      children: [
+        // Cancel button
+        Expanded(
+          child: SizedBox(
+            height: 56,
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.textPrimary,
+                backgroundColor: AppTheme.scaffoldBackground,
+                side: BorderSide(
+                  color: AppTheme.dividerColor,
+                  width: 1.5,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: _onCancel,
+              child: Text(
+                'Back',
+                style: AppTheme.dmSans(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        const SizedBox(width: 12),
+
+        // Continue button
+        Expanded(
+          child: SizedBox(
+            height: 56,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: _isLoading ? null : _onContinue,
+              child: _isLoading
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Text(
+                      'Continue',
+                      style: AppTheme.dmSans(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
