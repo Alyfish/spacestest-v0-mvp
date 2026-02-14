@@ -15,6 +15,7 @@ class AnalyzingScreen extends StatefulWidget {
   final String? title;
   final String? subtitle;
   final Future<void> Function()? asyncWork;
+  final ValueNotifier<String?>? subtitleNotifier;
 
   const AnalyzingScreen({
     super.key,
@@ -24,6 +25,7 @@ class AnalyzingScreen extends StatefulWidget {
     this.title,
     this.subtitle,
     this.asyncWork,
+    this.subtitleNotifier,
   });
 
   static Future<VideoPlayerController> preloadController() async {
@@ -63,6 +65,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
   static const Duration _totalDuration = Duration(milliseconds: 2500);
 
   String? _asyncError;
+  String? _dynamicSubtitle;
 
   @override
   void initState() {
@@ -70,6 +73,15 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
     _initAnimations();
     _startStaggeredAnimation();
     _scheduleCompletion();
+    widget.subtitleNotifier?.addListener(_onSubtitleChanged);
+  }
+
+  void _onSubtitleChanged() {
+    if (mounted) {
+      setState(() {
+        _dynamicSubtitle = widget.subtitleNotifier?.value;
+      });
+    }
   }
 
   void _initAnimations() {
@@ -179,6 +191,7 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
 
   @override
   void dispose() {
+    widget.subtitleNotifier?.removeListener(_onSubtitleChanged);
     for (final controller in _iconControllers) {
       controller.dispose();
     }
@@ -329,7 +342,8 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 40),
                         child: Text(
-                          widget.subtitle ??
+                          _dynamicSubtitle ??
+                              widget.subtitle ??
                               'Finding the perfect pieces for you',
                           style: AppTheme.dmSans(
                             fontSize: 15,

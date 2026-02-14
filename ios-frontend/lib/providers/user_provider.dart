@@ -112,4 +112,29 @@ class UserProvider extends ChangeNotifier {
     _user = User.empty();
     notifyListeners();
   }
+
+  @visibleForTesting
+  void seedTestUser({
+    required String userId,
+    required String token,
+    String? email,
+    String? name,
+    String? photoUrl,
+  }) {
+    final normalizedUserId = userId.trim();
+    final normalizedToken = token.trim();
+    if (normalizedUserId.isEmpty || normalizedToken.isEmpty) {
+      throw ArgumentError('userId and token must be non-empty');
+    }
+
+    _user = User(
+      id: normalizedUserId,
+      name: name ?? email ?? normalizedUserId,
+      email: email ?? '$normalizedUserId@spaces.local',
+      photoUrl: photoUrl,
+      token: normalizedToken,
+    );
+    _authState = AuthState.authenticated;
+    notifyListeners();
+  }
 }

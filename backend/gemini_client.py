@@ -845,8 +845,11 @@ MATCH THE PRODUCTS EXACTLY:
 - DO NOT improvise or change any aspect of the product appearance
 - Use the product images as authoritative reference for how these items should look"""
 
-            # Add technical requirement for aspect ratio
-            final_prompt = f"{prompt}{product_reference_text}\n\nTechnical Requirement: Generate the image with a 1:1 Square Aspect Ratio."
+            # Keep generated output aligned with source framing/aspect.
+            final_prompt = (
+                f"{prompt}{product_reference_text}\n\n"
+                "Technical Requirement: Preserve the exact input image aspect ratio."
+            )
 
             # Prepare contents: Image FIRST for structure preservation, then prompt, then product images
             contents = [original_room_image, final_prompt] + downloaded_product_images
@@ -1017,7 +1020,7 @@ Before generating, plan your edit:
 ### OUTPUT
 Generate the edited room image with professionally designed placement of requested changes.
 
-Technical Requirement: Generate the image with a 1:1 Square Aspect Ratio."""
+Technical Requirement: Preserve the exact input image aspect ratio."""
 
             # Model configuration
             primary_model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
@@ -1182,8 +1185,11 @@ Technical Requirement: Generate the image with a 1:1 Square Aspect Ratio."""
                 temperature=0.3,  # Low temperature for structure preservation
             )
 
-            # Add aspect ratio instruction
-            final_prompt = f"{generation_prompt}\n\nTechnical Requirement: Generate the image with a 1:1 Square Aspect Ratio."
+            # Keep generated output aligned with source framing/aspect.
+            final_prompt = (
+                f"{generation_prompt}\n\n"
+                "Technical Requirement: Preserve the exact input image aspect ratio."
+            )
 
             # Prepare contents: Image FIRST for structure preservation, then prompt, then product images
             # Order matters: putting original room image first forces model to preserve its structure
@@ -1452,7 +1458,7 @@ Before finalizing, verify against the original photo:
 - Would a person of average height fit the same way in both images?
 
 ### OUTPUT REQUIREMENT
-- Output a 1:1 square image.
+- Preserve the exact input image aspect ratio.
 - Must look like a mundane, realistic phone photo of the SAME ROOM, same camera, same lighting.
 - Preserve original ISO grain + color cast across inserted items.
 
@@ -1619,7 +1625,7 @@ Before finalizing, verify against the original photo:
 - Would a person of average height fit the same way in both images?
 
 ### OUTPUT REQUIREMENT
-- Output a 1:1 square image.
+- Preserve the exact input image aspect ratio.
 - Must look like the SAME photo, same camera, same lighting—but noticeably improved with cohesive styling.
 - Keep background clutter unless explicitly instructed.
 - The result should feel like a professional stylist made targeted upgrades.
@@ -1634,4 +1640,3 @@ Before finalizing, verify against the original photo:
 - Do NOT assume or infer structural features — only what is VISIBLE in the photo exists."""
 
         return prompt
-

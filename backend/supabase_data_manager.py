@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import UploadFile
 
@@ -342,6 +342,107 @@ class SupabaseDataManager:
             .execute()
         )
         return [r["public_url"] for r in (result.data or [])]
+
+    def _storage_type_to_image_type(self, storage_type: str) -> str:
+        """Map storage image type to public API image_type values."""
+        if storage_type == "inspiration_generated":
+            return "inspiration"
+        return "product"
+
+    def _has_image_type(self, project_id: str, image_type: str) -> bool:
+        """Check whether an image type exists for a project."""
+        try:
+            return bool(self._get_image_url(project_id, image_type))
+        except Exception:
+            # Test doubles may not have Supabase wired; fall back to a storage probe.
+            try:
+                self._get_pil_image_from_storage(project_id, image_type)
+                return True
+            except Exception:
+                return False
+
+    def _resolve_generated_storage_type(
+        self,
+        project_id: str,
+        requested_image_type: str,
+    ) -> str:
+        """Resolve requested image_type to generated storage type.
+
+        Rules:
+        - active -> inspiration_generated if available, otherwise generated
+        - inspiration -> inspiration_generated
+        - product -> generated
+        """
+        normalized = (requested_image_type or "active").strip().lower()
+        if normalized in ("inspiration", "inspiration_generated"):
+            return "inspiration_generated"
+        if normalized in ("product", "generated"):
+            return "generated"
+        if normalized == "active":
+            if self._has_image_type(project_id, "inspiration_generated"):
+                return "inspiration_generated"
+            if self._has_image_type(project_id, "generated"):
+                return "generated"
+            raise ValueError(f"No generated image found for project {project_id}")
+        raise ValueError(f"Unsupported image_type: {requested_image_type}")
+
+    def _normalize_generated_image_aspect(
+        self,
+        project_id: str,
+        generated_bytes: bytes,
+    ) -> Tuple[bytes, bool]:
+        """Pad generated image to base image aspect ratio without cropping content."""
+        try:
+            from PIL import Image
+        except Exception:
+            return generated_bytes, False
+
+        try:
+            base_img, _ = self._get_pil_image_from_storage(project_id, "base")
+            base_w, base_h = base_img.size
+            if base_w <= 0 or base_h <= 0:
+                return generated_bytes, False
+
+            generated = Image.open(BytesIO(generated_bytes))
+            generated.load()
+            if generated.mode not in ("RGB", "RGBA"):
+                generated = generated.convert("RGB")
+            if generated.mode == "RGBA":
+                generated = generated.convert("RGB")
+
+            gen_w, gen_h = generated.size
+            if gen_w <= 0 or gen_h <= 0:
+                return generated_bytes, False
+
+            target_ratio = base_w / base_h
+            current_ratio = gen_w / gen_h
+            if abs(current_ratio - target_ratio) < 0.01:
+                return generated_bytes, False
+
+            if current_ratio > target_ratio:
+                target_w = gen_w
+                target_h = max(1, int(round(gen_w / target_ratio)))
+            else:
+                target_h = gen_h
+                target_w = max(1, int(round(gen_h * target_ratio)))
+
+            corners = [
+                generated.getpixel((0, 0)),
+                generated.getpixel((gen_w - 1, 0)),
+                generated.getpixel((0, gen_h - 1)),
+                generated.getpixel((gen_w - 1, gen_h - 1)),
+            ]
+            fill = tuple(int(sum(px[i] for px in corners) / len(corners)) for i in range(3))
+            canvas = Image.new("RGB", (target_w, target_h), fill)
+            offset = ((target_w - gen_w) // 2, (target_h - gen_h) // 2)
+            canvas.paste(generated, offset)
+
+            out = BytesIO()
+            canvas.save(out, format="PNG")
+            return out.getvalue(), True
+        except Exception as exc:
+            self.logger.warning(f"Aspect normalization skipped (non-fatal): {exc}")
+            return generated_bytes, False
 
     def _delete_project_storage(self, project_id: str) -> None:
         """Delete all Storage files for a project (cascade only clears DB rows)."""
@@ -2973,6 +3074,15 @@ Create a photorealistic complete redesign of this room."""
 
         # Upload to Storage
         file_bytes = base64.b64decode(generated_b64)
+        file_bytes, aspect_adjusted = self._normalize_generated_image_aspect(
+            project_id,
+            file_bytes,
+        )
+        if aspect_adjusted:
+            self.logger.info(
+                f"Applied aspect normalization for inspiration redesign image ({project_id})"
+            )
+            generated_b64 = base64.b64encode(file_bytes).decode("utf-8")
         ts = int(time.time())
         public_url = self._replace_image_in_storage(project_id, user_id, "inspiration_generated", file_bytes, f"inspiration_generated_{ts}.png")
         self._save_project_fields(project_id, {
@@ -3010,6 +3120,15 @@ Create a photorealistic complete redesign of this room."""
         )
         # Upload edited image
         file_bytes = base64.b64decode(edited_b64)
+        file_bytes, aspect_adjusted = self._normalize_generated_image_aspect(
+            project_id,
+            file_bytes,
+        )
+        if aspect_adjusted:
+            self.logger.info(
+                f"Applied aspect normalization for retry redesign image ({project_id})"
+            )
+            edited_b64 = base64.b64encode(file_bytes).decode("utf-8")
         ts = int(time.time())
         public_url = self._replace_image_in_storage(project_id, user_id, "inspiration_generated", file_bytes, f"inspiration_generated_{ts}.png")
         self._save_project_fields(project_id, {
@@ -3381,8 +3500,8 @@ Create a photorealistic complete redesign of this room."""
         normalized_mode = self._normalize_analysis_mode(mode)
         profile = self._analysis_mode_profile(normalized_mode)
 
-        use_inspiration = image_type in ("inspiration", "inspiration_generated")
-        storage_type = "inspiration_generated" if use_inspiration else "generated"
+        storage_type = self._resolve_generated_storage_type(project_id, image_type)
+        resolved_image_type = self._storage_type_to_image_type(storage_type)
         pil_img, raw_bytes = self._get_pil_image_from_storage(project_id, storage_type)
         width, height = pil_img.size
 
@@ -3775,6 +3894,8 @@ Create a photorealistic complete redesign of this room."""
                 "project_id": project_id,
                 "extra_data": {
                     "mode": normalized_mode,
+                    "requested_image_type": image_type,
+                    "resolved_image_type": resolved_image_type,
                     "selection_count": len(selections),
                     "completed_count": completed_count,
                     "timeouts_by_step": timeout_counts,
@@ -3790,6 +3911,7 @@ Create a photorealistic complete redesign of this room."""
                 f"(mode={normalized_mode})"
             ),
             "status": "success",
+            "resolved_image_type": resolved_image_type,
         }
 
     def reverse_search_batch(self, project_id: str, selections: List[Any], image_type: str = "generated") -> Dict[str, Any]:
@@ -4020,7 +4142,7 @@ Create a photorealistic complete redesign of this room."""
         detections: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Add synthetic hotspots when only one huge detection is available."""
-        if len(detections) >= 4 or not detections:
+        if len(detections) >= 5 or not detections:
             return detections
 
         def _area(det: Dict[str, Any]) -> float:
@@ -4066,8 +4188,63 @@ Create a photorealistic complete redesign of this room."""
             if any(self._rect_iou(synthetic, existing) > 0.70 for existing in result):
                 continue
             result.append(synthetic)
-            if len(result) >= 4:
+            if len(result) >= 5:
                 break
+        return result
+
+    def _center_distance(self, a: Dict[str, Any], b: Dict[str, Any]) -> float:
+        """Distance between detection centers in normalized coordinates."""
+        ac = a.get("center") or {}
+        bc = b.get("center") or {}
+        ax = float(ac.get("x", 0.5))
+        ay = float(ac.get("y", 0.5))
+        bx = float(bc.get("x", 0.5))
+        by = float(bc.get("y", 0.5))
+        return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+    def _ensure_min_auto_hotspot_count(
+        self,
+        detections: List[Dict[str, Any]],
+        min_count: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Guarantee at least min_count detections using deterministic anchors."""
+        if len(detections) >= min_count:
+            return detections
+
+        anchors = [
+            (0.20, 0.30),
+            (0.50, 0.28),
+            (0.80, 0.30),
+            (0.25, 0.58),
+            (0.50, 0.56),
+            (0.75, 0.58),
+            (0.34, 0.80),
+            (0.66, 0.80),
+        ]
+        result = list(detections)
+        for idx, (cx, cy) in enumerate(anchors):
+            if len(result) >= min_count:
+                break
+            synthetic = {
+                "label": "Furniture",
+                "rect": {
+                    "x": max(0.0, min(0.86, cx - 0.07)),
+                    "y": max(0.0, min(0.86, cy - 0.07)),
+                    "width": 0.14,
+                    "height": 0.14,
+                },
+                "center": {"x": cx, "y": cy},
+                "confidence": 0.25,
+                "source": "synthetic_anchor",
+                "anchor_index": idx,
+            }
+            if any(
+                self._rect_iou(synthetic, existing) >= 0.55
+                or self._center_distance(synthetic, existing) < 0.12
+                for existing in result
+            ):
+                continue
+            result.append(synthetic)
         return result
 
     def auto_detect_furniture(
@@ -4077,8 +4254,8 @@ Create a photorealistic complete redesign of this room."""
     ) -> Dict[str, Any]:
         """Auto-detect furniture with Gemini-first and YOLO fallback."""
         detect_started = time.monotonic()
-        use_inspiration = image_type in ("inspiration", "inspiration_generated")
-        storage_type = "inspiration_generated" if use_inspiration else "generated"
+        storage_type = self._resolve_generated_storage_type(project_id, image_type)
+        resolved_image_type = self._storage_type_to_image_type(storage_type)
         pil_img, raw_bytes = self._get_pil_image_from_storage(project_id, storage_type)
 
         timeout_counts: Dict[str, int] = {}
@@ -4111,22 +4288,37 @@ Create a photorealistic complete redesign of this room."""
         merged = self._merge_and_dedupe_detections(gemini_detections + yolo_detections)
         final_detections = self._synthesize_sub_hotspots_for_large_box(merged)
         final_detections = self._merge_and_dedupe_detections(final_detections, iou_threshold=0.65)
+        final_detections = self._ensure_min_auto_hotspot_count(final_detections, min_count=5)
+        synthetic_count = sum(
+            1
+            for d in final_detections
+            if str(d.get("source", "")).startswith("synthetic")
+        )
 
         self.logger.info(
             "Auto-detect furniture complete",
             extra={
                 "project_id": project_id,
                 "extra_data": {
-                    "image_type": image_type,
+                    "requested_image_type": image_type,
+                    "resolved_image_type": resolved_image_type,
+                    "resolved_storage_type": storage_type,
                     "gemini_count": len(gemini_detections),
                     "yolo_count": len(yolo_detections),
                     "final_count": len(final_detections),
+                    "synthetic_count": synthetic_count,
                     "timeouts_by_step": timeout_counts,
                     "total_duration_ms": round((time.monotonic() - detect_started) * 1000, 2),
                 },
             },
         )
-        return {"project_id": project_id, "detections": final_detections, "status": "success"}
+        return {
+            "project_id": project_id,
+            "detections": final_detections,
+            "status": "success",
+            "resolved_image_type": resolved_image_type,
+            "resolved_storage_type": storage_type,
+        }
 
     def process_furniture_selection(self, project_id: str, selected_products: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Process selected furniture products with URL resolution and affiliate cart."""

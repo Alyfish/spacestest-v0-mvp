@@ -61,6 +61,13 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
   CreateFlowStep _currentStep = CreateFlowStep.uploadPhoto;
   ProductHotspot? _selectedHotspot;
   String? _pendingRetryFeedback;
+  ValueNotifier<String?>? _analyzingSubtitleNotifier;
+
+  @override
+  void dispose() {
+    _analyzingSubtitleNotifier?.dispose();
+    super.dispose();
+  }
 
   void _setFlowState(VoidCallback fn) {
     if (!mounted) return;
@@ -87,6 +94,30 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
       _selectedHotspot = hotspot;
       _currentStep = CreateFlowStep.chooseProducts;
     });
+  }
+
+  List<String> _extractProductImageUrls(ProjectProvider provider) {
+    final urls = <String>[];
+    void extract(Map<String, dynamic>? payload) {
+      if (payload == null) return;
+      final categories = payload['categories'] as List? ?? const [];
+      for (final raw in categories) {
+        if (raw is! Map) continue;
+        final products = raw['products'] as List? ?? const [];
+        for (final product in products) {
+          if (product is! Map) continue;
+          final url =
+              (product['image_url'] ?? product['imageUrl'] ?? product['thumbnail'])
+                  ?.toString()
+                  .trim();
+          if (url != null && url.isNotEmpty) urls.add(url);
+        }
+      }
+    }
+
+    extract(provider.productSuggestions);
+    extract(provider.trendingProducts);
+    return urls;
   }
 
   void _goBack() {
@@ -323,6 +354,10 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
             if (provider.approach == 'inspiration') {
               _goToStep(CreateFlowStep.uploadInspiration);
             } else {
+              // Fire recommendations early — they only need base_image,
+              // space_type, markers, and improvement_mode (all saved by now).
+              // Gives ~10-20s head start while user picks stores.
+              unawaited(provider.ensureRecommendationsLoaded(context));
               _goToStep(CreateFlowStep.preferredStores);
             }
           },
@@ -344,46 +379,96 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
         );
 
       case CreateFlowStep.analyzing:
+        _analyzingSubtitleNotifier ??= ValueNotifier<String?>(null);
         return AnalyzingScreen(
           onBack: _goBack,
           onComplete: () => _goToStep(CreateFlowStep.improvements),
+          subtitleNotifier: _analyzingSubtitleNotifier,
           asyncWork: () async {
             final provider = Provider.of<ProjectProvider>(
               context,
               listen: false,
             );
-            const maxBlockingWait = Duration(seconds: 8);
+            final stopwatch = Stopwatch()..start();
+            const maxWait = Duration(seconds: 45);
+            const pollInterval = Duration(seconds: 2);
 
-            final results =
-                await Future.wait<bool>([
-                  provider.ensurePreferredStoresSynced(context),
-                  provider.ensureRecommendationsLoaded(context),
-                ]).timeout(
-                  maxBlockingWait,
-                  onTimeout: () => const <bool>[false, false],
+            // Phase 1: Sync preferred stores (~500ms)
+            await provider
+                .ensurePreferredStoresSynced(context)
+                .timeout(
+                  const Duration(seconds: 5),
+                  onTimeout: () => false,
                 );
-            final storesSynced = results[0];
-            final recommendationsReady = results[1];
 
-            if (!storesSynced) {
-              AppLogger.warning(
-                'Preferred stores sync is still in progress or failed; continuing flow non-fatally.',
-              );
-            }
+            // Phase 2: Ensure recommendations loaded
+            // (likely already done — started at Choose Approach ~10-20s ago)
+            await provider
+                .ensureRecommendationsLoaded(context)
+                .timeout(
+                  const Duration(seconds: 15),
+                  onTimeout: () => false,
+                );
 
-            if (!recommendationsReady && provider.isRecommendationsLoading) {
-              AppLogger.warning(
-                'Recommendations still running after ${maxBlockingWait.inSeconds}s; continuing flow without blocking.',
-              );
-            }
-
-            // If recommendations are ready, prewarm product search in background.
-            if (provider.productRecommendations.isNotEmpty) {
+            // Phase 3: Ensure search job is running
+            final searchRecs = provider.productRecommendations;
+            if (searchRecs.isNotEmpty) {
               unawaited(
-                provider.ensureSearchJobStarted(
-                  null,
-                  provider.productRecommendations,
-                ),
+                provider.ensureSearchJobStarted(null, searchRecs),
+              );
+            }
+
+            // Phase 4: Poll until image-backed products are ready.
+            // This is the GATE — we stay on the analyzing screen until
+            // products arrive or we hit the 45s max timeout.
+            final deadline = DateTime.now().add(maxWait);
+
+            while (!provider.hasImageBackedSuggestions &&
+                DateTime.now().isBefore(deadline)) {
+              final elapsed = stopwatch.elapsed;
+              if (elapsed.inSeconds > 25) {
+                _analyzingSubtitleNotifier?.value = 'Almost there...';
+              } else if (elapsed.inSeconds > 10) {
+                _analyzingSubtitleNotifier?.value =
+                    'Finding your perfect products...';
+              }
+
+              await Future.wait([
+                provider.refreshProductSuggestionsSnapshot(context),
+                provider.preloadTrendingProducts(context),
+              ]);
+
+              if (provider.hasImageBackedSuggestions) break;
+
+              final remaining = deadline.difference(DateTime.now());
+              if (remaining <= Duration.zero) break;
+              await Future.delayed(
+                remaining < pollInterval ? remaining : pollInterval,
+              );
+            }
+
+            // Phase 5: Pre-cache product images so they display instantly
+            if (provider.hasImageBackedSuggestions) {
+              _analyzingSubtitleNotifier?.value = 'Preparing your results...';
+              try {
+                final imageUrls = _extractProductImageUrls(provider);
+                if (imageUrls.isNotEmpty && mounted) {
+                  await Future.wait(
+                    imageUrls.take(8).map(
+                      (url) => precacheImage(NetworkImage(url), context),
+                    ),
+                  ).timeout(
+                    const Duration(seconds: 5),
+                    onTimeout: () => <void>[],
+                  );
+                }
+              } catch (e) {
+                AppLogger.warning('Image pre-cache failed (non-fatal): $e');
+              }
+            } else {
+              AppLogger.warning(
+                'Analyzing timed out after ${stopwatch.elapsed.inSeconds}s '
+                'waiting for image-backed suggestions; transitioning anyway.',
               );
             }
           },

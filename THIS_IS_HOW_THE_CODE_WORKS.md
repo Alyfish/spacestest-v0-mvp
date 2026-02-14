@@ -26,6 +26,14 @@ These are the current UX/sync rules implemented in `ios-frontend`:
 - Recommendation warmup timing logs on create-flow are intentionally non-fatal (`info`/`debug`), including the "still warming" and "0 products" cases.
 - Improvements cards use looping border hint animation for unselected rows; selected cards stay stable.
 
+### Global Mobile UI Rule - Floating Action Buttons (2026-02-14)
+
+Apply this to all screens in `ios-frontend`:
+
+- Do not render any border ring, outline, or background plate behind floating buttons.
+- Floating action buttons must appear as standalone floating buttons only.
+- Remove the white circular border/backdrop treatment shown behind the center `+` button in previous layouts.
+
 ### Recovery Reconcile (2026-02-14)
 
 Restoration checkpoint metadata:
@@ -47,6 +55,19 @@ Manual reconcile patches applied:
 - `ios-frontend/lib/screens/confirm_selection_screen.dart`: upload fires in background (fire-and-forget); navigation occurs immediately without waiting.
 - `ios-frontend/lib/models/project.dart`: `Project.fromJson` now accepts snake_case fallbacks (`user_id`, `created_at`, `updated_at`, `space_type`, `improvement_mode`, `preferred_stores`) in addition to camelCase.
 - `ios-frontend/lib/screens/home_screen.dart`: home action cards restored to looping border behavior (`animateOnce: false`).
+
+### Post-Reconcile Fixes (2026-02-14)
+
+Full 9-fix bundle is now implemented across mobile + backend:
+
+- **Fix 3** `ios-frontend/lib/screens/confirm_selection_screen.dart`: removed `_isUploading` spinner; `_confirmSelection()` fires `uploadProjectImage()` without await and navigates immediately. Upload-readiness is checked downstream on analyzing.
+- **Fix 8** `ios-frontend/lib/screens/choose_items_screen.dart`: subtitle updated to "Tap on items you'd like to change".
+- **Fix 9**:
+  - `ios-frontend/lib/screens/like_these_screen.dart` and `ios-frontend/lib/screens/improvements_screen.dart` poll snapshot + trending in parallel via `Future.wait`.
+  - `ios-frontend/lib/services/api_service.dart` supports `auto_search=true` on recommendations requests.
+  - `ios-frontend/lib/providers/project_provider.dart` stores `search_job_id`, polls existing jobs first, and avoids duplicate `/search-recommendations` kickoff when auto-search already started.
+  - `ios-frontend/lib/screens/create_flow_screen.dart` runs preferred-store sync + recommendation warmup concurrently with capped wait to preserve non-blocking UX.
+- **E2E reliability layer**: backend now has env-gated test auth bypass, trace-buffer APIs (`/e2e/status`, `/e2e/traces/{run_id}`), and deterministic stub mode for critical-path endpoints.
 
 Unchanged by design:
 - RevenueCat bypass behavior remains as currently implemented in `ios-frontend/lib/providers/subscription_provider.dart`.
@@ -805,6 +826,74 @@ This is a sophisticated, production-ready AI interior design platform featuring:
 ---
 
 ## 16. CHANGELOG
+
+### 2026-02-14: Dream Space Auto-Pins Stabilization (Generated-Only Source, 5 Visible Pins, Contain Fit)
+
+#### Problem
+Dream Space had three reliability issues during redesign flow:
+- Auto-detect prefetch could call `image_type=product` and fail with `400 No generated image found` when only `inspiration_generated` existed.
+- Marker coordinate mapping could drift when original and generated images had different aspect ratios and the UI used cover-style rendering.
+- Auto-markers were not guaranteed to provide enough tappable entry points for users.
+
+#### What Was Implemented
+- Backend now supports canonical generated-image resolution for Dream Space:
+  - Added `active` image type resolution in Supabase path:
+    - `active -> inspiration_generated (preferred) -> generated`
+    - `inspiration -> inspiration_generated`
+    - `product -> generated`
+  - Added `resolved_image_type` to auto-detect payloads for diagnostics and routing visibility.
+- Backend now guarantees marker density:
+  - Auto-detect pipeline merges Gemini + YOLO, applies dedupe, then enforces a minimum of 5 detections.
+  - Added deterministic `synthetic_anchor` fallback hotspots with IoU + center-distance guards.
+- Backend now preserves source framing better:
+  - Updated Gemini prompts from forced 1:1 output to "preserve input aspect ratio".
+  - Added post-generation aspect normalization in Supabase manager to pad/letterbox generated outputs to base-image ratio (no cropping).
+- Flutter Dream Space rendering is now aspect-safe:
+  - `InteractiveImageWidget` now accepts a `fit` parameter and computes overlay bounds per fit mode.
+  - Dream Space generated and original pages use `BoxFit.contain` with consistent mapping.
+- Flutter analysis flow is now source-consistent for Dream Space:
+  - Prefetch + robust hotspot analysis use `imageType='active'` (no hardcoded `inspiration -> product` retry loop).
+  - Manual tap analysis in Choose Products uses provider Dream Space image type (`active`) and no secondary `product` retry.
+- Dream Space marker rendering now targets exactly 5:
+  - Provider parses both `rect` and `bbox` detection shapes defensively.
+  - Selection/distance logic tuned for contain-layout behavior.
+  - Fallback anchors fill remaining slots to ensure 5 tappable markers.
+- Added observability:
+  - Logs now include requested/resolved image type, raw/parsed/rendered detection counts, synthetic count, and prefetch success count.
+
+#### How The Runtime Flow Works Now
+1. Redesign job completes and generated image is downloaded.
+2. Backend stores normalized generated image (aspect padded to base ratio when needed).
+3. Provider resets hotspot cache and calls auto-detect with `imageType='active'`.
+4. Backend resolves `active` to available generated source and returns detections + `resolved_image_type`.
+5. Provider converts detections (`rect`/`bbox`) to centers, ranks + spaces them, and enforces exactly 5 hotspots (fallback anchors if needed).
+6. Provider prefetches product analysis for those 5 hotspots using the same Dream Space image type (`active`).
+7. On marker tap, Choose Products first uses prefetched cache; manual taps run one analysis pass on `active` and render results.
+
+#### Files Modified (This Stabilization)
+- Backend:
+  - `backend/supabase_data_manager.py`
+  - `backend/main.py`
+  - `backend/models.py`
+  - `backend/gemini_client.py`
+  - `backend/tests/test_supabase_furniture_batch_modes.py`
+- iOS Flutter:
+  - `ios-frontend/lib/providers/project_provider.dart`
+  - `ios-frontend/lib/screens/choose_products_screen.dart`
+  - `ios-frontend/lib/widgets/interactive_image_widget.dart`
+  - `ios-frontend/lib/screens/dream_space_screen.dart`
+  - `ios-frontend/test/providers/project_provider_furniture_prefetch_test.dart`
+  - `ios-frontend/test/screens/choose_products_screen_test.dart`
+  - `ios-frontend/test/screens/dream_to_choose_flow_smoke_test.dart`
+  - `ios-frontend/test/widgets/interactive_image_widget_fit_test.dart`
+
+#### Verification
+- Backend:
+  - `uv run pytest -q backend/tests/test_supabase_furniture_batch_modes.py` -> passed
+- Flutter:
+  - Provider + Dream Space + Choose Products + widget fit tests passed.
+- Syntax:
+  - `uv run python -m py_compile` on modified backend modules passed.
 
 ### 2026-02-14: Structural Preservation Lockdown for Revamp & Iterative Prompts
 
@@ -4470,3 +4559,148 @@ flutter run --dart-define=API_BASE_URL=http://<mac-ip>:8000/api
 #### Rollback
 - Like These screen: `git checkout -- ios-frontend/lib/screens/like_these_screen.dart`
 - All Tier 1 fixes: `git stash pop` (user's pre-restore stash)
+
+---
+
+### 2026-02-14: Keep Analyzing Screen Until Products Are Ready (Product-Ready Gate)
+
+#### Problem
+The Improvements screen showed product recommendation cards with loading spinners and "Preparing live product images..." status messages because the analyzing screen transitioned after only 8 seconds, but the product search pipeline takes 15-30+ seconds to return image-backed results.
+
+This was attempted 5+ times before (Feb 13-14 changelog entries). Every prior attempt either:
+- Extended the analyzing timeout (still too short)
+- Added polling timers to the improvements screen (user still sees loading states)
+- Capped the analyzing timeout and moved work to background (transitions before data ready)
+- Started preloads earlier (trending reads from search results — no data yet until search runs)
+
+None of these approaches actually **kept the loading screen visible until products arrived**.
+
+#### Root Cause
+The analyzing screen's `asyncWork` completed after syncing stores + loading recommendations (8s max timeout), then immediately transitioned to Improvements via `onComplete`. Nobody waited for the search job's actual results (`pre_searched_categories` with image-backed products). The search job typically needs 15-30s after recommendations are generated.
+
+#### Solution
+
+**1. Start recommendations at Choose Approach (10-20s head start)**
+- `ios-frontend/lib/screens/create_flow_screen.dart` — Added `unawaited(provider.ensureRecommendationsLoaded(context))` to `chooseApproach.onContinue` (non-inspiration paths)
+- Recommendations only need `space_type + markers + improvement_mode` — NOT preferred stores
+- With `auto_search=true` (already enabled), backend auto-starts the search job when recommendations complete
+- By the time user finishes picking stores (~10-20s later), search is well underway
+- Existing call at `preferredStores.onContinue` stays as no-op safety net (Completer lock)
+
+**2. Dynamic subtitle on AnalyzingScreen**
+- `ios-frontend/lib/screens/analyzing_screen.dart` — Added `ValueNotifier<String?>? subtitleNotifier` parameter
+- Widget listens to notifier and updates displayed subtitle dynamically
+- Falls back to `widget.subtitle` → default when notifier value is null
+- Listener added in `initState`, removed in `dispose`
+
+**3. Analyzing asyncWork rewritten as 5-phase product-ready gate**
+- `ios-frontend/lib/screens/create_flow_screen.dart` — Replaced 8s-timeout `asyncWork` with:
+  - **Phase 1**: Sync preferred stores (5s timeout, non-fatal)
+  - **Phase 2**: Ensure recommendations loaded (15s timeout — usually instant since started at Choose Approach ~10-20s ago)
+  - **Phase 3**: Ensure search job running (fire-and-forget via `ensureSearchJobStarted`)
+  - **Phase 4**: **POLL for `hasImageBackedSuggestions` every 2s** (max 45s total) — this is the gate. Dynamic subtitle updates: "Finding your perfect products..." at 10s, "Almost there..." at 25s
+  - **Phase 5**: Pre-cache up to 8 product images via `precacheImage(NetworkImage(url), context)` (5s timeout, non-fatal)
+- `asyncWork` does NOT return until Phase 4 finds products or hits 45s timeout
+- `AnalyzingScreen._scheduleCompletion()` waits for asyncWork, so screen stays visible the entire time
+- Added `_analyzingSubtitleNotifier` field to `_CreateFlowScreenState` (with dispose)
+- Added `_extractProductImageUrls(provider)` helper that pulls image URLs from `productSuggestions` and `trendingProducts` payloads
+
+**4. Improvements screen unchanged (safety net)**
+- Existing 3s polling timer (lines 110-115 of `improvements_screen.dart`) stays as safety net for the rare 45s-timeout edge case
+- In the happy path, `hasImageBackedSuggestions` is already true when improvements appears, so neither warmup nor polling timer activate
+
+#### Expected Timing
+
+**Before**:
+```
+Choose Approach → Preferred Stores (10-20s) → Analyzing (8s max) → Improvements (BROKEN)
+                                                                    ↳ products arrive 15-30s later
+```
+
+**After**:
+```
+Choose Approach → Preferred Stores (10-20s) → Analyzing (polls until ready) → Improvements (READY)
+  ↳ recs start     ↳ search running            ↳ waits ~0-15s for products
+                                                ↳ pre-caches images
+```
+
+Typical analyzing screen wait: **5-15 seconds** (since search started 10-20s ago during stores).
+
+#### Files Modified
+- `ios-frontend/lib/screens/create_flow_screen.dart` — Early recs trigger at Choose Approach, `_analyzingSubtitleNotifier` field + dispose, rewritten analyzing asyncWork with 5-phase polling gate + image precache, `_extractProductImageUrls` helper
+- `ios-frontend/lib/screens/analyzing_screen.dart` — `subtitleNotifier` param, `_dynamicSubtitle` state with listener, dynamic subtitle display
+
+#### Verification
+```bash
+# 1. flutter analyze (0 errors on analyzing_screen, 3 pre-existing info lints on create_flow_screen)
+cd ios-frontend && flutter analyze lib/screens/analyzing_screen.dart lib/screens/create_flow_screen.dart
+
+# 2. Run on physical device
+flutter run --dart-define=API_BASE_URL=http://<mac-ip>:8000/api
+
+# 3. Test flow: Choose Approach → Preferred Stores → Analyzing screen stays visible
+#    with dynamic subtitle → Improvements appears with all product cards populated
+#    and images loaded (no spinners)
+```
+
+#### Rollback
+- Restore from git: `git checkout -- ios-frontend/lib/screens/create_flow_screen.dart ios-frontend/lib/screens/analyzing_screen.dart`
+
+*Last updated: February 14, 2026 — keep analyzing screen visible until products are ready via product-ready polling gate with early recommendation trigger and image pre-caching*
+
+---
+
+### 2026-02-14: Fix EXA Products Missing Images — "Like These?" Stuck on Second Category
+
+#### Problem
+The "Like These?" screen loaded products for the FIRST improvement category but stayed stuck on "Searching for matching products..." spinner for the SECOND category. The backend search job completed successfully — EXA found 10-12 products per category — but the frontend received 0 products.
+
+This was a **different root cause** from the 5+ previous Like These fixes (all documented above). Those addressed timing, polling, duplicate jobs, error handling, and category matching. This time the pipeline found products but they were silently discarded before reaching the frontend.
+
+#### Root Cause
+The EXA SDK's `Result` class has an `image` attribute (the page's og:image / primary image), but the code completely ignored it. The image pipeline relied entirely on HTML regex extraction (`_extract_product_images()`), which parsed 10 patterns against the crawled HTML text. Modern e-commerce sites (Houzz, IKEA, Article, West Elm, Society6, Room&Board) render images via JavaScript — the raw HTML from EXA's `get_contents()` (truncated to 3000-4000 chars) contains zero `<img>` tags with product image URLs.
+
+**Failure chain:**
+1. `exa_client.py:search_products()` — Conversion step created result dicts with `url`, `title`, `text`, `score`, `shopping_signals` — **no `image` field** (EXA's `Result.image` attribute dropped)
+2. `exa_client.py:_extract_product_info()` → `_extract_product_images(text, url, store_name)` — All 10 regex patterns returned 0 matches → `images = []`
+3. `data_manager.py` formatting — `images_array[0]` → None → `image_url = ""`
+4. `data_manager.py:_filter_products_with_images()` — All products landed in `without_images` pile → `result = []`
+5. `/product-suggestions` endpoint returned empty categories → frontend polled 18 times, got 0 products each time
+
+**Why one category worked:** `hasImageBackedSuggestions` returns `true` if ANY category has image-backed products. Category A happened to have products where HTML extraction succeeded (e.g., Amazon pages with CDN image URLs in HTML). Category B's retailer pages (Houzz, IKEA, etc.) all had JS-rendered images. The product-ready gate passed because of Category A, but Category B remained empty.
+
+#### Solution
+Two changes in `backend/exa_client.py` (~6 lines total):
+
+**1. Pass EXA's native `image` field through the conversion step** (line 194)
+```python
+# In search_products() converted results dict:
+"image": (getattr(content_item, "image", "") if content_item else "") or getattr(item, "image", "") or "",
+```
+Both `content_item` (from `get_contents()`) and `item` (from `search()`) have an `image` attribute. Prefers `content_item` since it's fetched with full page metadata.
+
+**2. Use EXA `image` as fallback when HTML extraction fails** (lines 299-303)
+```python
+images = self._extract_product_images(text, url, store_name)
+# Fallback: use EXA's native page image (og:image) if HTML extraction fails
+if not images:
+    exa_image = content_result.get("image", "")
+    if exa_image and len(exa_image) > 10:
+        images = [exa_image]
+```
+
+**No other files needed changes.** The existing `data_manager.py` formatting (line 2506-2525) already has a fallback chain that picks up `images_array[0]`, and `_filter_products_with_images()` correctly passes products with valid `image_url` fields.
+
+#### Files Modified
+- `backend/exa_client.py` — Added `image` field to search result conversion + og:image fallback in `_extract_product_info()`
+
+#### Verification
+- 61 backend tests pass (2 pre-existing failures in `test_recommendation_search_order.py` unrelated)
+- 6 targeted unit tests confirm: content_item image preferred, fallback to item.image, None content_item handled, og:image fallback works, HTML extraction not overridden when successful, short URLs rejected
+
+#### Rollback
+```bash
+git checkout -- backend/exa_client.py
+```
+
+*Last updated: February 14, 2026 — fix EXA products missing images by using SDK's native image attribute as fallback when HTML regex extraction fails*

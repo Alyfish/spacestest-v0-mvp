@@ -16,12 +16,16 @@ Project _dummyProject() {
 }
 
 class _PrefetchSuccessProvider extends ProjectProvider {
+  String? lastDetectImageType;
+  String? lastAnalyzeImageType;
+
   @override
   Future<Map<String, dynamic>> autoDetectFurnitureForPrefetch(
     String projectId,
     String authToken, {
     required String imageType,
   }) async {
+    lastDetectImageType = imageType;
     return {
       'detections': [
         {
@@ -70,6 +74,7 @@ class _PrefetchSuccessProvider extends ProjectProvider {
     List<Map<String, dynamic>> selections, {
     required String imageType,
   }) async {
+    lastAnalyzeImageType = imageType;
     final rows = selections
         .map(
           (selection) => {
@@ -189,8 +194,16 @@ void main() {
 
       expect(ok, isTrue);
       expect(provider.detectedHotspots, isNotEmpty);
-      expect(provider.detectedHotspots.length, inInclusiveRange(4, 6));
+      expect(
+        provider.detectedHotspots.length,
+        ProjectProvider.dreamSpaceHotspotCount,
+      );
       expect(provider.prefetchedFurnitureByHotspotId, isNotEmpty);
+      expect(provider.lastDetectImageType, ProjectProvider.dreamSpaceImageType);
+      expect(
+        provider.lastAnalyzeImageType,
+        ProjectProvider.dreamSpaceImageType,
+      );
       expect(provider.errorMessage, isNull);
       expect(provider.status, isNot(ProjectStatus.error));
     });
@@ -222,7 +235,10 @@ void main() {
       );
 
       expect(ok, isTrue);
-      expect(provider.detectedHotspots.length, inInclusiveRange(4, 6));
+      expect(
+        provider.detectedHotspots.length,
+        ProjectProvider.dreamSpaceHotspotCount,
+      );
       expect(provider.lastSelectionCount, provider.detectedHotspots.length);
     });
 

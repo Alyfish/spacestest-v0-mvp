@@ -1212,7 +1212,7 @@ class ApiService {
       AppLogger.info('Fetching generated image for $projectId');
 
       final response = await http
-          .get(url, headers: {'Authorization': 'Bearer $authToken'})
+          .get(url, headers: ApiConstants.authHeaders(authToken))
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {

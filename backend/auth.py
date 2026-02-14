@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from logger_config import setup_logging
 from errors import ErrorCode
+from e2e_test_support import load_e2e_config, is_secret_valid
 
 logger = setup_logging()
 
@@ -42,6 +43,8 @@ def _get_jwks_client() -> PyJWKClient:
 
 async def get_current_user(
     authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+    x_e2e_user_id: Optional[str] = Header(None, alias="X-E2E-User-Id"),
 ) -> AuthenticatedUser:
     """
     FastAPI dependency to extract and verify the JWT token.
@@ -54,6 +57,20 @@ async def get_current_user(
     Raises:
         HTTPException: 401 if token is missing, invalid, or expired
     """
+    e2e_config = load_e2e_config()
+    if is_secret_valid(e2e_config, x_e2e_test_secret):
+        user_id = (x_e2e_user_id or e2e_config.default_user_id or "").strip()
+        if not user_id:
+            user_id = "e2e-user"
+        email = e2e_config.default_user_email
+        if "@" not in email:
+            email = f"{user_id}@spaces.local"
+        return AuthenticatedUser(
+            id=user_id,
+            email=email,
+            role="authenticated",
+        )
+
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

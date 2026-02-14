@@ -107,6 +107,7 @@ class _ChooseProductsScreenState extends State<ChooseProductsScreen> {
   }
 
   Future<void> _loadManualTapProducts(ProjectProvider provider) async {
+    final imageType = provider.dreamSpaceAnalysisImageType;
     final selections = [
       {
         'id': 'tap_${DateTime.now().millisecondsSinceEpoch}',
@@ -119,24 +120,23 @@ class _ChooseProductsScreenState extends State<ChooseProductsScreen> {
     final success = await provider.analyzeFurniture(
       context,
       selections,
-      imageType: 'inspiration',
+      imageType: imageType,
     );
 
-    var finalSuccess = success;
-    if (!finalSuccess) {
-      final firstError = provider.errorMessage ?? '';
-      if (firstError.isNotEmpty) {
-        debugPrint('analyzeFurniture(inspiration) failed: $firstError');
+    if (!success) {
+      final error = provider.errorMessage ?? '';
+      if (error.isNotEmpty) {
+        debugPrint('analyzeFurniture($imageType) failed: $error');
       }
-      if (!mounted) return;
-      finalSuccess = await provider.analyzeFurniture(
-        context,
-        selections,
-        imageType: 'product',
-      );
+      if (mounted) {
+        setState(() {
+          _analysisError = provider.errorMessage ?? 'Analysis failed';
+        });
+      }
+      return;
     }
 
-    if (finalSuccess && provider.furnitureAnalysis != null) {
+    if (provider.furnitureAnalysis != null) {
       final analysis = provider.furnitureAnalysis!;
       final selectionsList = _extractSelectionResults(analysis);
       final allProducts = _mapProductsFromSelections(selectionsList);

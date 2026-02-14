@@ -106,14 +106,53 @@ class ApiConstants {
     'Accept': 'application/json',
   };
 
+  // Optional E2E test headers (disabled by default in production).
+  static const String _e2eRunId = String.fromEnvironment(
+    'E2E_RUN_ID',
+    defaultValue: '',
+  );
+  static const String _e2eTestSecret = String.fromEnvironment(
+    'E2E_TEST_SECRET',
+    defaultValue: '',
+  );
+  static const String _e2eTestUserId = String.fromEnvironment(
+    'E2E_TEST_USER_ID',
+    defaultValue: '',
+  );
+
+  static String get e2eRunId => _e2eRunId;
+  static String get e2eTestSecret => _e2eTestSecret;
+  static String get e2eTestUserId => _e2eTestUserId;
+
+  static Map<String, String> e2eHeaders() {
+    final headers = <String, String>{};
+    if (_e2eRunId.isNotEmpty) {
+      headers['X-E2E-Run-ID'] = _e2eRunId;
+    }
+    if (_e2eTestSecret.isNotEmpty) {
+      headers['X-E2E-Test-Secret'] = _e2eTestSecret;
+    }
+    if (_e2eTestUserId.isNotEmpty) {
+      headers['X-E2E-User-Id'] = _e2eTestUserId;
+    }
+    return headers;
+  }
+
+  static Map<String, String> e2eControlHeaders() => {
+    ...defaultHeaders,
+    ...e2eHeaders(),
+  };
+
   static Map<String, String> authHeaders(String token) => {
     ...defaultHeaders,
+    ...e2eHeaders(),
     'Authorization': 'Bearer $token',
   };
 
   /// Headers for multipart uploads — no Content-Type (Dart http sets it with boundary)
   static Map<String, String> authOnlyHeaders(String token) => {
     'Accept': 'application/json',
+    ...e2eHeaders(),
     'Authorization': 'Bearer $token',
   };
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 
@@ -10,16 +11,81 @@ typedef ImageBoundsCallback =
       Offset displayOffset,
     );
 
+@visibleForTesting
+class ImageDisplayBounds {
+  final Size displaySize;
+  final Offset displayOffset;
+
+  const ImageDisplayBounds({
+    required this.displaySize,
+    required this.displayOffset,
+  });
+}
+
+@visibleForTesting
+ImageDisplayBounds calculateImageDisplayBounds({
+  required Size imageSize,
+  required Size containerSize,
+  required BoxFit fit,
+}) {
+  final imageWidth = imageSize.width;
+  final imageHeight = imageSize.height;
+  final containerWidth = containerSize.width;
+  final containerHeight = containerSize.height;
+
+  if (imageWidth <= 0 ||
+      imageHeight <= 0 ||
+      containerWidth <= 0 ||
+      containerHeight <= 0) {
+    return const ImageDisplayBounds(
+      displaySize: Size.zero,
+      displayOffset: Offset.zero,
+    );
+  }
+
+  final scaleX = containerWidth / imageWidth;
+  final scaleY = containerHeight / imageHeight;
+
+  double displayedWidth;
+  double displayedHeight;
+  switch (fit) {
+    case BoxFit.contain:
+      final scale = scaleX < scaleY ? scaleX : scaleY;
+      displayedWidth = imageWidth * scale;
+      displayedHeight = imageHeight * scale;
+      break;
+    case BoxFit.cover:
+      final scale = scaleX > scaleY ? scaleX : scaleY;
+      displayedWidth = imageWidth * scale;
+      displayedHeight = imageHeight * scale;
+      break;
+    default:
+      final scale = scaleX > scaleY ? scaleX : scaleY;
+      displayedWidth = imageWidth * scale;
+      displayedHeight = imageHeight * scale;
+      break;
+  }
+
+  final offsetX = (containerWidth - displayedWidth) / 2;
+  final offsetY = (containerHeight - displayedHeight) / 2;
+  return ImageDisplayBounds(
+    displaySize: Size(displayedWidth, displayedHeight),
+    displayOffset: Offset(offsetX, offsetY),
+  );
+}
+
 class InteractiveImageWidget extends StatefulWidget {
   final ImageProvider imageProvider;
   final Function(double x, double y) onImageTap;
   final ImageBoundsCallback? overlayBuilder;
+  final BoxFit fit;
 
   const InteractiveImageWidget({
     super.key,
     required this.imageProvider,
     required this.onImageTap,
     this.overlayBuilder,
+    this.fit = BoxFit.cover,
   });
 
   @override
@@ -76,26 +142,13 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
   void _calculateImageBounds(Size containerSize) {
     final imageWidth = _image?.width.toDouble() ?? containerSize.width;
     final imageHeight = _image?.height.toDouble() ?? containerSize.height;
-    final containerWidth = containerSize.width;
-    final containerHeight = containerSize.height;
-
-    // Calculate scale factors for both width and height
-    final scaleX = containerWidth / imageWidth;
-    final scaleY = containerHeight / imageHeight;
-
-    // Use the smaller scale to maintain aspect ratio (BoxFit.cover behavior)
-    final scale = scaleX > scaleY ? scaleX : scaleY;
-
-    // Calculate actual displayed image size
-    final displayedWidth = imageWidth * scale;
-    final displayedHeight = imageHeight * scale;
-
-    // Calculate offset to center the image
-    final offsetX = (containerWidth - displayedWidth) / 2;
-    final offsetY = (containerHeight - displayedHeight) / 2;
-
-    final newSize = Size(displayedWidth, displayedHeight);
-    final newOffset = Offset(offsetX, offsetY);
+    final bounds = calculateImageDisplayBounds(
+      imageSize: Size(imageWidth, imageHeight),
+      containerSize: containerSize,
+      fit: widget.fit,
+    );
+    final newSize = bounds.displaySize;
+    final newOffset = bounds.displayOffset;
 
     // Only update and trigger rebuild if values have changed
     if (_imageSize != newSize || _imageOffset != newOffset) {
@@ -155,7 +208,7 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
                 // Main image
                 Image(
                   image: widget.imageProvider,
-                  fit: BoxFit.cover,
+                  fit: widget.fit,
                   errorBuilder: (context, error, stackTrace) {
                     return Container(
                       color: Colors.grey[300],

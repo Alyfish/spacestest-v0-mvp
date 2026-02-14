@@ -168,3 +168,123 @@ def test_synthetic_sub_hotspots_added_for_single_large_box():
 
     assert len(output) > 1
     assert any(d.get("source") == "synthetic_split" for d in output)
+
+
+def test_auto_detect_active_resolves_to_inspiration_generated_when_generated_missing():
+    dm = _build_dm()
+    image = Image.new("RGB", (1200, 800), color="white")
+    image_buf = BytesIO()
+    image.save(image_buf, format="JPEG")
+    raw_bytes = image_buf.getvalue()
+
+    seen_storage_types = []
+
+    def _get_pil(project_id: str, storage_type: str):
+        seen_storage_types.append(storage_type)
+        return image, raw_bytes
+
+    dm._has_image_type = (
+        lambda project_id, image_type: image_type == "inspiration_generated"
+    )
+    dm._get_pil_image_from_storage = _get_pil
+    dm.gemini_client = None
+    dm._auto_detect_with_yolo = lambda pil_img: []
+
+    result = dm.auto_detect_furniture("project_1", image_type="active")
+
+    assert seen_storage_types[0] == "inspiration_generated"
+    assert result["resolved_image_type"] == "inspiration"
+    assert len(result["detections"]) >= 5
+
+
+def test_analyze_batch_active_resolves_generated_source_without_400_path():
+    dm = _build_dm()
+    image = Image.new("RGB", (1200, 800), color="white")
+    image_buf = BytesIO()
+    image.save(image_buf, format="JPEG")
+    raw_bytes = image_buf.getvalue()
+
+    seen_storage_types = []
+
+    def _get_pil(project_id: str, storage_type: str):
+        seen_storage_types.append(storage_type)
+        return image, raw_bytes
+
+    dm._has_image_type = (
+        lambda project_id, image_type: image_type == "inspiration_generated"
+    )
+    dm._get_pil_image_from_storage = _get_pil
+    dm.serp_client = _LensSerpClient()
+
+    result = dm.analyze_furniture_batch(
+        "project_1",
+        _selection_payload(),
+        image_type="active",
+        mode="fast_prefetch",
+    )
+
+    assert seen_storage_types[0] == "inspiration_generated"
+    assert result["resolved_image_type"] == "inspiration"
+    assert len(result["selections"]) == 1
+
+
+def test_min_hotspot_logic_returns_at_least_five_candidates():
+    dm = _build_dm()
+
+    output = dm._ensure_min_auto_hotspot_count([], min_count=5)
+
+    assert len(output) >= 5
+    assert any(d.get("source") == "synthetic_anchor" for d in output)
+
+
+def test_synthetic_anchor_generation_obeys_overlap_and_distance_guards():
+    dm = _build_dm()
+    base = [
+        {
+            "label": "sofa",
+            "rect": {"x": 0.12, "y": 0.20, "width": 0.18, "height": 0.14},
+            "center": {"x": 0.21, "y": 0.27},
+            "confidence": 0.9,
+            "source": "gemini",
+        }
+    ]
+
+    output = dm._ensure_min_auto_hotspot_count(base, min_count=5)
+    synthetic = [d for d in output if d.get("source") == "synthetic_anchor"]
+
+    assert len(output) >= 5
+    assert synthetic
+    for candidate in synthetic:
+        for existing in output:
+            if candidate is existing:
+                continue
+            assert dm._rect_iou(candidate, existing) < 0.55
+            assert dm._center_distance(candidate, existing) >= 0.12
+
+
+def test_aspect_normalization_preserves_base_aspect_ratio():
+    dm = _build_dm()
+    base_img = Image.new("RGB", (1200, 800), color="white")
+    base_buf = BytesIO()
+    base_img.save(base_buf, format="JPEG")
+    base_bytes = base_buf.getvalue()
+
+    dm._get_pil_image_from_storage = lambda project_id, storage_type: (
+        base_img,
+        base_bytes,
+    )
+
+    generated_img = Image.new("RGB", (1000, 1000), color="gray")
+    generated_buf = BytesIO()
+    generated_img.save(generated_buf, format="PNG")
+
+    normalized, adjusted = dm._normalize_generated_image_aspect(
+        "project_1",
+        generated_buf.getvalue(),
+    )
+    output_img = Image.open(BytesIO(normalized))
+
+    assert adjusted is True
+    assert abs((output_img.width / output_img.height) - (1200 / 800)) < 0.01
+    assert output_img.width >= generated_img.width
+    assert output_img.height >= generated_img.height

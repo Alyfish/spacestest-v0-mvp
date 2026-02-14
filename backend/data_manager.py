@@ -722,7 +722,7 @@ class DataManager:
             return base_image_path
 
     @log_api_call("create_project")
-    def create_project(self) -> str:
+    def create_project(self, user_id: str | None = None) -> str:
         """Create a new project and return its ID"""
         projects = self._load_projects()
         project_id = str(uuid.uuid4())
@@ -740,16 +740,16 @@ class DataManager:
         log_user_action("project_created", project_id=project_id)
         return project_id
 
-    def get_project(self, project_id: str) -> dict | None:
+    def get_project(self, project_id: str, user_id: str | None = None) -> dict | None:
         """Get a project by ID"""
         projects = self._load_projects()
         return projects.get(project_id)
 
-    def get_all_projects(self) -> dict:
+    def get_all_projects(self, user_id: str | None = None) -> dict:
         """Get all projects"""
         return self._load_projects()
 
-    def delete_project(self, project_id: str) -> bool:
+    def delete_project(self, project_id: str, user_id: str | None = None) -> bool:
         """
         Delete a project and its associated files
         

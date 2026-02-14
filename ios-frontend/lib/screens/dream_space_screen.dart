@@ -131,30 +131,34 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen> {
     ProjectProvider provider,
     List<ProductHotspot> hotspots,
   ) {
-    return InteractiveImageWidget(
-      imageProvider: _getGeneratedImageProvider(provider),
-      onImageTap: _handleImageTap,
-      overlayBuilder: (imageWidth, imageHeight, displaySize, displayOffset) {
-        return Stack(
-          children: hotspots.map((hotspot) {
-            final markerTopLeft = mapHotspotToRenderedImageTopLeft(
-              hotspot,
-              displaySize,
-              displayOffset,
-            );
-            return Positioned(
-              left: markerTopLeft.dx,
-              top: markerTopLeft.dy,
-              child: GestureDetector(
-                key: ValueKey<String>('auto_hotspot_${hotspot.id}'),
-                behavior: HitTestBehavior.opaque,
-                onTap: () => widget.onHotspotTap?.call(hotspot),
-                child: _HotspotMarker(label: hotspot.label),
-              ),
-            );
-          }).toList(),
-        );
-      },
+    return Container(
+      color: Colors.black,
+      child: InteractiveImageWidget(
+        imageProvider: _getGeneratedImageProvider(provider),
+        fit: BoxFit.contain,
+        onImageTap: _handleImageTap,
+        overlayBuilder: (imageWidth, imageHeight, displaySize, displayOffset) {
+          return Stack(
+            children: hotspots.map((hotspot) {
+              final markerTopLeft = mapHotspotToRenderedImageTopLeft(
+                hotspot,
+                displaySize,
+                displayOffset,
+              );
+              return Positioned(
+                left: markerTopLeft.dx,
+                top: markerTopLeft.dy,
+                child: GestureDetector(
+                  key: ValueKey<String>('auto_hotspot_${hotspot.id}'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => widget.onHotspotTap?.call(hotspot),
+                  child: _HotspotMarker(label: hotspot.label),
+                ),
+              );
+            }).toList(),
+          );
+        },
+      ),
     );
   }
 
@@ -243,11 +247,14 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen> {
     final imageProvider = provider.getProjectImageProvider();
 
     if (imageProvider != null) {
-      return Image(
-        image: imageProvider,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
+      return Container(
+        color: Colors.black,
+        child: Image(
+          image: imageProvider,
+          fit: BoxFit.contain,
+          width: double.infinity,
+          height: double.infinity,
+        ),
       );
     }
 

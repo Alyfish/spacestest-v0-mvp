@@ -1035,7 +1035,7 @@ class BatchFurnitureAnalysisRequest(BaseModel):
     selections: List[FurnitureSelection]
     image_type: str = Field(
         default="product", 
-        description="Type of image: 'product' or 'inspiration'"
+        description="Type of image: 'product', 'inspiration', or 'active'"
     )
     mode: Literal["full", "fast_prefetch", "click"] = Field(
         default="full",
@@ -1080,7 +1080,7 @@ class ReverseSearchBatchRequest(BaseModel):
     selections: List[FurnitureSelection]
     image_type: str = Field(
         default="product",
-        description="Type of image: 'product' or 'inspiration'",
+        description="Type of image: 'product', 'inspiration', or 'active'",
     )
 
 

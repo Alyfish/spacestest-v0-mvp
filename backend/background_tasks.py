@@ -14,12 +14,70 @@ from __future__ import annotations
 import asyncio
 import os
 import traceback
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from job_manager import job_manager, JobType, JobStatus
 from logger_config import setup_logging
 
 logger = setup_logging()
+
+
+def _slugify(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() else "_" for ch in value.lower())
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned.strip("_") or "item"
+
+
+def _build_stub_search_result(
+    project_id: str,
+    recommendations: List[str],
+) -> Dict[str, Any]:
+    normalized = [r.strip() for r in recommendations if r and r.strip()]
+    if not normalized:
+        normalized = ["refresh lighting", "upgrade accent furniture"]
+
+    categories = []
+    for recommendation in normalized[:2]:
+        slug = _slugify(recommendation)
+        categories.append(
+            {
+                "recommendation": recommendation,
+                "search_query": f"modern {slug.replace('_', ' ')}",
+                "status": "complete",
+                "products": [
+                    {
+                        "url": f"https://example.com/{slug}/1",
+                        "title": f"{recommendation} Option 1",
+                        "image_url": f"https://example.com/images/{slug}-1.jpg",
+                        "store": "Target",
+                        "price_str": "$129",
+                        "price": 129.0,
+                        "similarity_score": 0.92,
+                    },
+                    {
+                        "url": f"https://example.com/{slug}/2",
+                        "title": f"{recommendation} Option 2",
+                        "image_url": f"https://example.com/images/{slug}-2.jpg",
+                        "store": "Wayfair",
+                        "price_str": "$179",
+                        "price": 179.0,
+                        "similarity_score": 0.88,
+                    },
+                ],
+                "searched_at": datetime.utcnow().isoformat(),
+                "error_message": None,
+            }
+        )
+
+    return {
+        "project_id": project_id,
+        "categories": categories,
+        "total_products": sum(len(cat["products"]) for cat in categories),
+        "status": "success",
+        "message": "Stub search completed for E2E",
+    }
 
 
 def _get_data_manager():
@@ -34,6 +92,7 @@ def _get_data_manager():
 async def execute_generate_image(
     job_id: str,
     project_id: str,
+    use_stub: bool = False,
 ):
     """
     Background task for generate-image endpoint.
@@ -70,10 +129,22 @@ async def execute_generate_image(
         # 50% - Generating
         await job_manager.update_progress(job_id, 50, "Generating image with AI")
 
-        # Run sync operation in thread pool
-        result = await asyncio.to_thread(
-            data_manager.generate_product_visualization, project_id
-        )
+        if use_stub:
+            await asyncio.sleep(0.05)
+            result = {
+                "project_id": project_id,
+                "selected_products": [],
+                "generation_prompt": "Stub generation prompt for E2E",
+                "status": "success",
+                "message": "Image generated successfully (stub)",
+                "model_used": "e2e_stub",
+                "generated_image_base64": "stub",
+            }
+        else:
+            # Run sync operation in thread pool
+            result = await asyncio.to_thread(
+                data_manager.generate_product_visualization, project_id
+            )
 
         # Check for cancellation
         if await job_manager.is_cancelled(job_id):
@@ -118,6 +189,7 @@ async def execute_generate_image(
 async def execute_inspiration_redesign(
     job_id: str,
     project_id: str,
+    use_stub: bool = False,
 ):
     """
     Background task for inspiration-redesign endpoint.
@@ -157,9 +229,24 @@ async def execute_inspiration_redesign(
         # 60% - Generating (this is the long part)
         await job_manager.update_progress(job_id, 60, "Generating redesigned image")
 
-        result = await asyncio.to_thread(
-            data_manager.generate_inspiration_redesign, project_id
-        )
+        if use_stub:
+            await asyncio.sleep(0.05)
+            result = {
+                "project_id": project_id,
+                "inspiration_prompt": "Stub inspiration prompt for E2E",
+                "inspiration_recommendations": [
+                    "Upgrade lighting layers",
+                    "Add textured statement rug",
+                ],
+                "status": "success",
+                "message": "Redesign completed successfully (stub)",
+                "model_used": "e2e_stub",
+                "generated_image_base64": "stub",
+            }
+        else:
+            result = await asyncio.to_thread(
+                data_manager.generate_inspiration_redesign, project_id
+            )
 
         if await job_manager.is_cancelled(job_id):
             return
@@ -202,6 +289,7 @@ async def execute_search_recommendations(
     project_id: str,
     recommendations: List[str],
     app_state: Optional[Any] = None,
+    use_stub: bool = False,
 ):
     """
     Background task for search-recommendations endpoint.
@@ -235,7 +323,10 @@ async def execute_search_recommendations(
         # 40% - Searching
         await job_manager.update_progress(job_id, 40, "Searching for products")
 
-        if (
+        if use_stub:
+            await asyncio.sleep(0.05)
+            result = _build_stub_search_result(project_id, recommendations)
+        elif (
             app_state is not None
             and hasattr(data_manager, "search_products_for_recommendations_async")
         ):

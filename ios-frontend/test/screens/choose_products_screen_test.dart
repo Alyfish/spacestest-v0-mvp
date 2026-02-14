@@ -104,6 +104,44 @@ class _FallbackEmptyProvider extends ProjectProvider {
   }
 }
 
+class _ManualTapActiveProbeProvider extends ProjectProvider {
+  final List<String> analyzeImageTypes = [];
+  int analyzeCallCount = 0;
+
+  final Map<String, dynamic> _analysisPayload = {
+    'selections': [
+      {
+        'id': 'manual_tap_sel',
+        'furniture_type': 'Pendant light',
+        'products': [
+          {
+            'id': 'manual_active_1',
+            'title': 'Manual Tap Pendant',
+            'url': 'https://example.com/manual-tap-pendant',
+            'image_url': '',
+            'store': 'West Elm',
+            'price': 249.0,
+          },
+        ],
+      },
+    ],
+  };
+
+  @override
+  Map<String, dynamic>? get furnitureAnalysis => _analysisPayload;
+
+  @override
+  Future<bool> analyzeFurniture(
+    BuildContext context,
+    List<Map<String, dynamic>> selections, {
+    String imageType = 'product',
+  }) async {
+    analyzeCallCount += 1;
+    analyzeImageTypes.add(imageType);
+    return true;
+  }
+}
+
 void main() {
   testWidgets(
     'ChooseProductsScreen renders prefetched hotspot products without analysis call',
@@ -156,6 +194,47 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('Cached Accent Chair'), findsOneWidget);
+      expect(find.text('Failed to analyze furniture'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'ChooseProductsScreen manual tap uses active image type and does not retry product',
+    (tester) async {
+      final projectProvider = _ManualTapActiveProbeProvider();
+      projectProvider.debugSetCurrentProject(_dummyProject());
+
+      const hotspot = ProductHotspot(
+        id: 'manual_tap_hotspot',
+        x: 0.48,
+        y: 0.62,
+        itemType: 'furniture',
+        label: 'Pendant light',
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<ProjectProvider>.value(
+              value: projectProvider,
+            ),
+            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
+          ],
+          child: const MaterialApp(
+            home: ChooseProductsScreen(hotspot: hotspot),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+
+      expect(projectProvider.analyzeCallCount, 1);
+      expect(
+        projectProvider.analyzeImageTypes,
+        equals(const [ProjectProvider.dreamSpaceImageType]),
+      );
+      expect(find.text('Manual Tap Pendant'), findsOneWidget);
       expect(find.text('Failed to analyze furniture'), findsNothing);
     },
   );

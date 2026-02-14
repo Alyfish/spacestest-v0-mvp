@@ -68,23 +68,53 @@ Widget _buildFlowApp() {
 
 void main() {
   testWidgets(
-    'smoke: DreamSpace hotspot tap opens ChooseProducts with prefetched cards',
+    'smoke: DreamSpace renders 5 markers and hotspot tap opens ChooseProducts',
     (tester) async {
       final provider = ProjectProvider();
       provider.debugSetCurrentProject(_dummyProject());
 
-      const hotspot = ProductHotspot(
-        id: 'auto_0_500_500',
-        x: 0.5,
-        y: 0.5,
-        itemType: 'furniture',
-        label: 'Chair',
-      );
+      const hotspots = <ProductHotspot>[
+        ProductHotspot(
+          id: 'auto_0_220_280',
+          x: 0.22,
+          y: 0.28,
+          itemType: 'furniture',
+          label: 'Pendant light',
+        ),
+        ProductHotspot(
+          id: 'auto_1_460_420',
+          x: 0.46,
+          y: 0.42,
+          itemType: 'furniture',
+          label: 'Bed frame',
+        ),
+        ProductHotspot(
+          id: 'auto_2_710_460',
+          x: 0.71,
+          y: 0.46,
+          itemType: 'furniture',
+          label: 'Nightstand',
+        ),
+        ProductHotspot(
+          id: 'auto_3_350_700',
+          x: 0.35,
+          y: 0.70,
+          itemType: 'furniture',
+          label: 'Rug',
+        ),
+        ProductHotspot(
+          id: 'auto_4_610_760',
+          x: 0.61,
+          y: 0.76,
+          itemType: 'furniture',
+          label: 'Bench',
+        ),
+      ];
       provider.debugSetFurniturePrefetchData(
-        hotspots: const [hotspot],
+        hotspots: hotspots,
         prefetchedByHotspotId: {
-          'auto_0_500_500': {
-            'id': 'auto_0_500_500',
+          'auto_1_460_420': {
+            'id': 'auto_1_460_420',
             'furniture_type': 'chair',
             'products': [
               {
@@ -112,14 +142,20 @@ void main() {
       );
 
       await tester.pump();
-      final markerFinder = find.byKey(
-        const ValueKey('auto_hotspot_auto_0_500_500'),
+      final targetMarkerFinder = find.byKey(
+        const ValueKey('auto_hotspot_auto_1_460_420'),
       );
-      for (var i = 0; i < 20 && markerFinder.evaluate().isEmpty; i++) {
+      for (var i = 0; i < 20 && targetMarkerFinder.evaluate().isEmpty; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
-      expect(markerFinder, findsOneWidget);
-      await tester.tap(markerFinder);
+      for (final hotspot in hotspots) {
+        expect(
+          find.byKey(ValueKey('auto_hotspot_${hotspot.id}')),
+          findsOneWidget,
+        );
+      }
+
+      await tester.tap(targetMarkerFinder);
       await tester.pumpAndSettle(const Duration(milliseconds: 800));
 
       expect(find.text('Flow Cached Chair'), findsOneWidget);

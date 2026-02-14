@@ -191,6 +191,7 @@ class ExaClient:
                         else getattr(item, "highlights", []),
                         "score": getattr(item, "score", None),
                         "shopping_signals": has_shopping_signals,
+                        "image": (getattr(content_item, "image", "") if content_item else "") or getattr(item, "image", "") or "",
                     }
                 )
 
@@ -294,6 +295,12 @@ class ExaClient:
 
             # Extract product images
             images = self._extract_product_images(text, url, store_name)
+
+            # Fallback: use EXA's native page image (og:image) if HTML extraction fails
+            if not images:
+                exa_image = content_result.get("image", "")
+                if exa_image and len(exa_image) > 10:
+                    images = [exa_image]
 
             # Format to match frontend expectations (same as SERP client)
             product = {

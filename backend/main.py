@@ -3,8 +3,10 @@ from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 from datetime import datetime
 import asyncio
+import base64
 import json
 import os
+import time
 import uuid
 
 import httpx
@@ -33,6 +35,13 @@ from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 from logger_config import setup_logging, add_request_id_middleware
 from async_utils import TTLCache
+from e2e_test_support import (
+    E2ETraceStore,
+    load_e2e_config,
+    is_secret_valid,
+    normalize_path,
+    should_use_stub_mode,
+)
 from models import (
     AutoSelectProductResponse,
     ImageGenerationResponse,
@@ -116,6 +125,97 @@ logger = setup_logging()
 
 # Job TTL for cleanup (30 minutes)
 JOB_TTL_MINUTES = 30
+_E2E_STUB_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMBAAOb5QkAAAAASUVORK5CYII="
+)
+
+
+def _e2e_config_from_request(request: Optional[Request] = None):
+    if request is not None and hasattr(request.app.state, "e2e_config"):
+        return request.app.state.e2e_config
+    return load_e2e_config()
+
+
+def _is_e2e_secret_authorized(
+    secret: Optional[str],
+    request: Optional[Request] = None,
+) -> bool:
+    return is_secret_valid(_e2e_config_from_request(request), secret)
+
+
+def _is_e2e_stub_enabled(
+    secret: Optional[str],
+    request: Optional[Request] = None,
+) -> bool:
+    return should_use_stub_mode(_e2e_config_from_request(request), secret)
+
+
+def _e2e_stub_recommendations(space_type: Optional[str] = None) -> List[str]:
+    space = (space_type or "room").replace("_", " ").strip() or "room"
+    return [
+        f"Replace statement sofa in {space}",
+        "Add layered ambient lighting",
+        "Introduce textured accent rug",
+        "Upgrade wall art composition",
+    ]
+
+
+def _slugify(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() else "_" for ch in value.lower())
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned.strip("_") or "item"
+
+
+def _e2e_stub_categories(recommendations: Optional[List[str]] = None):
+    source = [r.strip() for r in (recommendations or []) if r and r.strip()]
+    if not source:
+        source = _e2e_stub_recommendations()[:2]
+    categories = []
+    for rec in source[:2]:
+        slug = _slugify(rec)
+        categories.append(
+            {
+                "recommendation": rec,
+                "search_query": f"modern {slug.replace('_', ' ')}",
+                "status": "complete",
+                "products": [
+                    {
+                        "url": f"https://example.com/{slug}/1",
+                        "title": f"{rec} Option 1",
+                        "image_url": f"https://example.com/images/{slug}-1.jpg",
+                        "store": "Target",
+                        "price_str": "$129",
+                        "price": 129.0,
+                        "similarity_score": 0.92,
+                    },
+                    {
+                        "url": f"https://example.com/{slug}/2",
+                        "title": f"{rec} Option 2",
+                        "image_url": f"https://example.com/images/{slug}-2.jpg",
+                        "store": "Wayfair",
+                        "price_str": "$179",
+                        "price": 179.0,
+                        "similarity_score": 0.88,
+                    },
+                ],
+                "searched_at": datetime.utcnow().isoformat(),
+                "error_message": None,
+            }
+        )
+    return categories
+
+
+def _e2e_stub_trending(project_id: str):
+    categories = _e2e_stub_categories()
+    return {
+        "project_id": project_id,
+        "categories": categories,
+        "selected_products": [],
+        "favorite_products": [],
+        "status": "success",
+        "message": "Stub trending products generated for E2E",
+    }
 
 
 @asynccontextmanager
@@ -155,6 +255,22 @@ async def lifespan(app: FastAPI):
 
     # In-flight dedupe (prevents duplicate concurrent requests)
     app.state.in_flight: Dict[str, asyncio.Future] = {}
+
+    # E2E test harness state (disabled unless env flags are set)
+    app.state.e2e_config = load_e2e_config()
+    app.state.e2e_trace_store = E2ETraceStore(
+        max_runs=app.state.e2e_config.max_runs,
+        max_events_per_run=app.state.e2e_config.max_events_per_run,
+    )
+    if app.state.e2e_config.enabled:
+        logger.info(
+            "E2E test mode enabled",
+            extra={
+                "stub_mode": app.state.e2e_config.stub_mode,
+                "max_runs": app.state.e2e_config.max_runs,
+                "max_events_per_run": app.state.e2e_config.max_events_per_run,
+            },
+        )
 
     # Initialize Supabase-backed job system
     if is_supabase_configured():
@@ -204,6 +320,136 @@ app.add_middleware(
 
 # Add request ID middleware for correlation
 add_request_id_middleware(app)
+
+
+@app.middleware("http")
+async def e2e_trace_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+
+    config = _e2e_config_from_request(request)
+    if not config.enabled:
+        return response
+
+    if normalize_path(request.url.path).startswith("/e2e/"):
+        return response
+
+    run_id = request.headers.get("X-E2E-Run-ID", "").strip()
+    if not run_id:
+        return response
+
+    if not _is_e2e_secret_authorized(
+        request.headers.get("X-E2E-Test-Secret"),
+        request=request,
+    ):
+        return response
+
+    trace_store = getattr(request.app.state, "e2e_trace_store", None)
+    if trace_store is None:
+        return response
+
+    trace_store.record(
+        run_id,
+        method=request.method,
+        path=request.url.path,
+        query=dict(request.query_params),
+        status_code=response.status_code,
+        duration_ms=(time.perf_counter() - start) * 1000,
+        request_id=response.headers.get("X-Request-ID")
+        or request.headers.get("X-Request-ID"),
+    )
+    return response
+
+
+def _require_e2e_access(
+    *,
+    request: Request,
+    provided_secret: Optional[str],
+) -> Optional[JSONResponse]:
+    config = _e2e_config_from_request(request)
+    if not config.enabled:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "status": "disabled",
+                "reason": "E2E_TEST_MODE is not enabled",
+            },
+        )
+    if not _is_e2e_secret_authorized(provided_secret, request=request):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "denied",
+                "reason": "Invalid E2E test secret",
+            },
+        )
+    return None
+
+
+@app.get("/e2e/status")
+async def e2e_status(
+    request: Request,
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
+    denied = _require_e2e_access(
+        request=request,
+        provided_secret=x_e2e_test_secret,
+    )
+    if denied is not None:
+        return denied
+
+    config = _e2e_config_from_request(request)
+    trace_store = request.app.state.e2e_trace_store
+    return {
+        "status": "ok",
+        "enabled": config.enabled,
+        "stub_mode": config.stub_mode,
+        "trace_limits": trace_store.stats(),
+        "server_time": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/e2e/traces/{run_id}")
+async def e2e_get_traces(
+    run_id: str,
+    request: Request,
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
+    denied = _require_e2e_access(
+        request=request,
+        provided_secret=x_e2e_test_secret,
+    )
+    if denied is not None:
+        return denied
+
+    traces = request.app.state.e2e_trace_store.list(run_id)
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "count": len(traces),
+        "traces": traces,
+    }
+
+
+@app.delete("/e2e/traces/{run_id}")
+async def e2e_clear_traces(
+    run_id: str,
+    request: Request,
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
+    denied = _require_e2e_access(
+        request=request,
+        provided_secret=x_e2e_test_secret,
+    )
+    if denied is not None:
+        return denied
+
+    deleted = request.app.state.e2e_trace_store.clear(run_id)
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "deleted": deleted,
+    }
 
 
 # ============================================================================
@@ -700,9 +946,11 @@ async def generate_inspiration_recommendations(project_id: str, user: Authentica
 )
 async def generate_inspiration_redesign(
     project_id: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     user: AuthenticatedUser = Depends(get_current_user),
     x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
 ):
     """
     Start background inspiration redesign, returns job_id for polling.
@@ -717,6 +965,8 @@ async def generate_inspiration_redesign(
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    use_stub = _is_e2e_stub_enabled(x_e2e_test_secret, request=request)
 
     # Check if project has inspiration images, inspiration recs, OR product recs
     context = ProjectContext.model_validate(project["context"])
@@ -733,7 +983,12 @@ async def generate_inspiration_redesign(
         and len(context.inspiration_images) > 0
     )
 
-    if not has_inspiration_recs and not has_product_recs and not has_inspiration_images:
+    if (
+        not use_stub
+        and not has_inspiration_recs
+        and not has_product_recs
+        and not has_inspiration_images
+    ):
         logger.warning(
             "Project has no inspiration images, inspiration recs, or product recs",
             extra={
@@ -762,6 +1017,7 @@ async def generate_inspiration_redesign(
         execute_inspiration_redesign,
         job_id=job_id,
         project_id=project_id,
+        use_stub=use_stub,
     )
 
     logger.info(
@@ -1211,6 +1467,7 @@ async def generate_product_recommendations(
     background_tasks: BackgroundTasks,
     user: AuthenticatedUser = Depends(get_current_user),
     auto_search: bool = Query(False, description="Auto-start product search after generating recommendations"),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
 ):
     """Generate AI product recommendations based on project context"""
     logger.info(
@@ -1222,14 +1479,24 @@ async def generate_product_recommendations(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    use_stub = _is_e2e_stub_enabled(x_e2e_test_secret, request=request)
+
     try:
         logger.info(
             "Generating product recommendations",
-            extra={"project_id": project_id, "current_status": project["status"]},
+            extra={
+                "project_id": project_id,
+                "current_status": project["status"],
+                "use_stub": use_stub,
+            },
         )
 
-        recommendations = data_manager.generate_product_recommendations(project_id)
-        project = data_manager.get_project(project_id, user_id=user.id)
+        if use_stub:
+            context = ProjectContext.model_validate(project["context"])
+            recommendations = _e2e_stub_recommendations(context.space_type)
+        else:
+            recommendations = data_manager.generate_product_recommendations(project_id)
+            project = data_manager.get_project(project_id, user_id=user.id)
         context = ProjectContext.model_validate(project["context"])
 
         logger.info(
@@ -1283,6 +1550,7 @@ async def generate_product_recommendations(
                         project_id=project_id,
                         recommendations=visible,
                         app_state=request.app.state,
+                        use_stub=use_stub,
                     )
 
                     logger.info(
@@ -1303,7 +1571,7 @@ async def generate_product_recommendations(
             project_id=project_id,
             space_type=context.space_type or "unknown",
             recommendations=recommendations,
-            status=project["status"],
+            status=project.get("status", "PRODUCT_RECOMMENDATIONS_READY"),
             search_job_id=search_job_id,
         )
     except ValueError as e:
@@ -1512,6 +1780,7 @@ async def search_products_for_recommendations(
     background_tasks: BackgroundTasks,
     user: AuthenticatedUser = Depends(get_current_user),
     x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
 ):
     """
     Start background product search, returns job_id for polling.
@@ -1522,6 +1791,8 @@ async def search_products_for_recommendations(
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    use_stub = _is_e2e_stub_enabled(x_e2e_test_secret, request=request)
 
     # Create job in Supabase (idempotent)
     job_id = await job_manager.create_job(
@@ -1539,6 +1810,7 @@ async def search_products_for_recommendations(
         project_id=project_id,
         recommendations=payload.recommendations,
         app_state=request.app.state,
+        use_stub=use_stub,
     )
 
     logger.info(
@@ -1561,7 +1833,12 @@ async def search_products_for_recommendations(
     "/projects/{project_id}/product-suggestions",
     response_model=ProductSuggestionsResponse,
 )
-async def get_product_suggestions(project_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+async def get_product_suggestions(
+    project_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
     """
     Get pre-searched products organized by recommendation category.
     """
@@ -1569,6 +1846,16 @@ async def get_product_suggestions(project_id: str, user: AuthenticatedUser = Dep
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if _is_e2e_stub_enabled(x_e2e_test_secret, request=request):
+        categories = _e2e_stub_categories()
+        return ProductSuggestionsResponse(
+            project_id=project_id,
+            categories=[PreSearchedCategory(**cat) for cat in categories],
+            total_products=sum(len(cat["products"]) for cat in categories),
+            overall_status="all_complete",
+            message="Stub product suggestions for E2E",
+        )
 
     try:
         result = data_manager.get_pre_searched_suggestions(project_id)
@@ -1764,7 +2051,12 @@ async def get_style_analysis(project_id: str, user: AuthenticatedUser = Depends(
     "/projects/{project_id}/trending-products",
     response_model=TrendingProductsResponse,
 )
-async def get_trending_products(project_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+async def get_trending_products(
+    project_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
     """
     Get trending products data for Flutter app.
     Returns pre-searched categories, selected trending products, and favorite products.
@@ -1773,6 +2065,17 @@ async def get_trending_products(project_id: str, user: AuthenticatedUser = Depen
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if _is_e2e_stub_enabled(x_e2e_test_secret, request=request):
+        stub = _e2e_stub_trending(project_id)
+        return TrendingProductsResponse(
+            project_id=project_id,
+            categories=[PreSearchedCategory(**cat) for cat in stub["categories"]],
+            selected_products=[],
+            favorite_products=[],
+            status="success",
+            message=stub["message"],
+        )
 
     try:
         context = ProjectContext.model_validate(project["context"])
@@ -1863,9 +2166,11 @@ async def select_product_for_generation(
 )
 async def generate_product_visualization(
     project_id: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     user: AuthenticatedUser = Depends(get_current_user),
     x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
 ):
     """
     Start background image generation, returns job_id for polling.
@@ -1877,7 +2182,9 @@ async def generate_product_visualization(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if project["status"] != "PRODUCT_SELECTED":
+    use_stub = _is_e2e_stub_enabled(x_e2e_test_secret, request=request)
+
+    if not use_stub and project["status"] != "PRODUCT_SELECTED":
         raise HTTPException(
             status_code=400,
             detail="Project must have a selected product first",
@@ -1896,6 +2203,7 @@ async def generate_product_visualization(
         execute_generate_image,
         job_id=job_id,
         project_id=project_id,
+        use_stub=use_stub,
     )
 
     logger.info(
@@ -1911,7 +2219,12 @@ async def generate_product_visualization(
 
 
 @app.get("/projects/{project_id}/generated-image")
-async def get_generated_image(project_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+async def get_generated_image(
+    project_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
     """Serve the generated image for a project.
 
     Handles three storage formats:
@@ -1924,6 +2237,17 @@ async def get_generated_image(project_id: str, user: AuthenticatedUser = Depends
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if _is_e2e_stub_enabled(x_e2e_test_secret, request=request):
+        from fastapi.responses import Response
+
+        return Response(
+            content=base64.b64decode(_E2E_STUB_PNG_BASE64),
+            media_type="image/png",
+            headers={
+                "Content-Disposition": f'inline; filename="generated_visualization_{project_id}.png"'
+            },
+        )
 
     context = ProjectContext.model_validate(project["context"])
 
@@ -2006,11 +2330,49 @@ async def clip_search_products(project_id: str, req: ClipSearchRequest, user: Au
     "/projects/{project_id}/analyze-furniture-batch",
     response_model=BatchFurnitureAnalysisResponse,
 )
-async def analyze_furniture_batch(project_id: str, req: BatchFurnitureAnalysisRequest, user: AuthenticatedUser = Depends(get_current_user)):
+async def analyze_furniture_batch(
+    project_id: str,
+    req: BatchFurnitureAnalysisRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
     """Analyze multiple furniture items in a batch using CLIP and AI."""
     project = data_manager.get_project(project_id, user_id=user.id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if _is_e2e_stub_enabled(x_e2e_test_secret, request=request):
+        return BatchFurnitureAnalysisResponse(
+            project_id=project_id,
+            selections=[
+                {
+                    "id": item.id or f"sel_{idx}",
+                    "furniture_type": item.label or "furniture",
+                    "confidence": 0.91,
+                    "style": "modern",
+                    "material": "wood",
+                    "color": "neutral",
+                    "search_query": f"{item.label or 'furniture'} modern decor",
+                    "products": [
+                        {
+                            "url": f"https://example.com/{_slugify(item.label or 'furniture')}/1",
+                            "title": f"Stub {item.label or 'furniture'} 1",
+                            "image_url": "https://example.com/images/furniture-1.jpg",
+                            "store": "Target",
+                            "price_str": "$149",
+                        }
+                    ],
+                    "is_bed": False,
+                    "bed_components": None,
+                }
+                for idx, item in enumerate(req.selections)
+            ],
+            overall_analysis="Stub furniture analysis for E2E",
+            total_items=len(req.selections),
+            status="success",
+            message=f"Analyzed {len(req.selections)} furniture items (stub)",
+        )
 
     try:
         # Call data manager to analyze all selections
@@ -2043,7 +2405,9 @@ async def analyze_furniture_batch(project_id: str, req: BatchFurnitureAnalysisRe
 async def process_furniture_selection(
     project_id: str,
     request: ProcessFurnitureSelectionRequest,
-    user: AuthenticatedUser = Depends(get_current_user)
+    raw_request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
 ):
     """
     Process selected furniture products:
@@ -2057,6 +2421,32 @@ async def process_furniture_selection(
     project = data_manager.get_project(project_id, user_id=user.id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if _is_e2e_stub_enabled(x_e2e_test_secret, request=raw_request):
+        resolved_products = [
+            {
+                "original_url": prod.url,
+                "resolved_url": prod.url,
+                "title": prod.title,
+                "image_url": prod.image_url,
+                "store": prod.store,
+                "price_str": prod.price_str,
+                "was_google_shopping": "google.com" in (prod.url or ""),
+                "affiliate_url": f"https://affiliate.example.com/redirect?u={idx}",
+                "product_id": prod.furniture_id or f"prod_{idx}",
+            }
+            for idx, prod in enumerate(request.selected_products)
+        ]
+        return ProcessFurnitureSelectionResponse(
+            project_id=project_id,
+            resolved_products=[ResolvedProduct(**prod) for prod in resolved_products],
+            retailer_carts=[],
+            total_products=len(resolved_products),
+            resolved_count=len(resolved_products),
+            unresolved_count=0,
+            status="success",
+            message=f"Processed {len(resolved_products)} products (stub)",
+        )
 
     try:
         result = data_manager.process_furniture_selection(
@@ -2115,15 +2505,41 @@ async def reverse_search_batch(project_id: str, req: ReverseSearchBatchRequest, 
 
 
 @app.get("/projects/{project_id}/auto-detect")
-async def auto_detect(project_id: str, image_type: str = "product", user: AuthenticatedUser = Depends(get_current_user)):
+async def auto_detect(
+    project_id: str,
+    request: Request,
+    image_type: str = "product",
+    user: AuthenticatedUser = Depends(get_current_user),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
     """Auto-detect furniture objects (YOLO if available)."""
     project = data_manager.get_project(project_id, user_id=user.id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    if _is_e2e_stub_enabled(x_e2e_test_secret, request=request):
+        return {
+            "project_id": project_id,
+            "status": "success",
+            "detections": [
+                {
+                    "id": "stub_hotspot_1",
+                    "label": "chair",
+                    "confidence": 0.91,
+                    "bbox": {"x1": 0.2, "y1": 0.2, "x2": 0.45, "y2": 0.65},
+                    "x": 0.325,
+                    "y": 0.425,
+                }
+            ],
+            "image_type": image_type,
+            "resolved_image_type": image_type,
+        }
+
     try:
         result = data_manager.auto_detect_furniture(project_id, image_type=image_type)
-        return {"project_id": project_id, **result}
+        payload = {"project_id": project_id, **result}
+        payload.setdefault("resolved_image_type", image_type)
+        return payload
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -2152,7 +2568,12 @@ async def replicate_segment(project_id: str, image_type: str = "product", image_
 
 
 @app.post("/affiliate/generate-cart", response_model=AffiliateCartResponse)
-async def generate_affiliate_cart(request: AffiliateCartRequest, user: AuthenticatedUser = Depends(get_current_user)):
+async def generate_affiliate_cart(
+    request: AffiliateCartRequest,
+    raw_request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+):
     """
     Generate affiliate cart from product URLs with RETAILER-PRESERVING resolution.
 
@@ -2168,6 +2589,63 @@ async def generate_affiliate_cart(request: AffiliateCartRequest, user: Authentic
     from urllib.parse import urlparse
 
     try:
+        if _is_e2e_stub_enabled(x_e2e_test_secret, request=raw_request):
+            input_items = request.items or []
+            if not input_items and request.product_urls:
+                input_items = [
+                    AffiliateProductItem(
+                        shopping_url=url,
+                        retailer_hint="Stub Store",
+                        title=f"Stub Product {idx + 1}",
+                    )
+                    for idx, url in enumerate(request.product_urls)
+                ]
+            if not input_items:
+                input_items = [
+                    AffiliateProductItem(
+                        shopping_url="https://example.com/stub-product",
+                        retailer_hint="Stub Store",
+                        title="Stub Product",
+                    )
+                ]
+
+            products = []
+            for idx, item in enumerate(input_items):
+                base_url = item.shopping_url or f"https://example.com/product/{idx}"
+                products.append(
+                    AffiliateProduct(
+                        original_url=base_url,
+                        resolved_url=base_url,
+                        affiliate_url=f"https://affiliate.example.com/redirect?u={idx}",
+                        product_id=f"stub_{idx}",
+                        product_name=item.title or f"Stub Product {idx + 1}",
+                        expected_retailer=item.retailer_hint,
+                        actual_retailer=item.retailer_hint or "Stub Store",
+                        retailer_matched=True,
+                        resolution_source="e2e_stub",
+                    )
+                )
+
+            cart = RetailerCart(
+                retailer="stub_store",
+                retailer_display_name="Stub Store",
+                products=products,
+                cart_url=f"https://affiliate.example.com/cart/{uuid.uuid4().hex[:8]}",
+                product_count=len(products),
+            )
+
+            return AffiliateCartResponse(
+                carts=[cart],
+                total_products=len(products),
+                total_retailers=1,
+                status="success",
+                message="Affiliate carts generated successfully (stub)",
+                urls_processed=len(input_items),
+                urls_resolved=len(input_items),
+                urls_validated=len(input_items),
+                urls_failed=0,
+            )
+
         from affiliate_client import AffiliateClient
         from serp_client import SerpClient
 

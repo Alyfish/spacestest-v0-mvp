@@ -25,6 +25,8 @@ class ProjectProvider extends ChangeNotifier {
     'ENABLE_BALANCED_AUTO_HOTSPOT_DENSITY',
     defaultValue: true,
   );
+  static const int dreamSpaceHotspotCount = 5;
+  static const String dreamSpaceImageType = 'active';
   Project? _currentProject;
   ProjectStatus _status = ProjectStatus.idle;
   String? _errorMessage;
@@ -131,6 +133,7 @@ class ProjectProvider extends ChangeNotifier {
   bool get isFurniturePrefetching =>
       _furniturePrefetchCompleter != null &&
       !_furniturePrefetchCompleter!.isCompleted;
+  String get dreamSpaceAnalysisImageType => dreamSpaceImageType;
   SearchFailureReason get searchFailureReason => _searchFailureReason;
   bool get hasImageBackedSuggestions =>
       _hasImageBackedPayload(_productSuggestions) ||
@@ -303,10 +306,112 @@ class ProjectProvider extends ChangeNotifier {
     return keywords.any((keyword) => lower.contains(keyword));
   }
 
+  Map<String, double>? _extractDetectionRect(dynamic raw) {
+    if (raw is! Map) return null;
+    final rectRaw = raw['rect'];
+    if (rectRaw is Map) {
+      final x = (rectRaw['x'] as num?)?.toDouble();
+      final y = (rectRaw['y'] as num?)?.toDouble();
+      final width = (rectRaw['width'] as num?)?.toDouble();
+      final height = (rectRaw['height'] as num?)?.toDouble();
+      if (x != null && y != null && width != null && height != null) {
+        return {'x': x, 'y': y, 'width': width, 'height': height};
+      }
+    }
+
+    final bboxRaw = raw['bbox'];
+    if (bboxRaw is Map) {
+      final x1 = (bboxRaw['x1'] as num?)?.toDouble();
+      final y1 = (bboxRaw['y1'] as num?)?.toDouble();
+      final x2 = (bboxRaw['x2'] as num?)?.toDouble();
+      final y2 = (bboxRaw['y2'] as num?)?.toDouble();
+      if (x1 != null && y1 != null && x2 != null && y2 != null) {
+        return {'x': x1, 'y': y1, 'width': (x2 - x1), 'height': (y2 - y1)};
+      }
+    }
+
+    if (bboxRaw is List && bboxRaw.length == 4) {
+      final ymin = (bboxRaw[0] as num?)?.toDouble();
+      final xmin = (bboxRaw[1] as num?)?.toDouble();
+      final ymax = (bboxRaw[2] as num?)?.toDouble();
+      final xmax = (bboxRaw[3] as num?)?.toDouble();
+      if (ymin != null && xmin != null && ymax != null && xmax != null) {
+        return {
+          'x': xmin,
+          'y': ymin,
+          'width': (xmax - xmin),
+          'height': (ymax - ymin),
+        };
+      }
+    }
+    return null;
+  }
+
+  void _appendFallbackHotspotAnchors(
+    List<Map<String, dynamic>> selectedDetections,
+  ) {
+    const anchors = <Map<String, double>>[
+      {'x': 0.20, 'y': 0.30},
+      {'x': 0.50, 'y': 0.28},
+      {'x': 0.80, 'y': 0.30},
+      {'x': 0.26, 'y': 0.58},
+      {'x': 0.50, 'y': 0.56},
+      {'x': 0.74, 'y': 0.58},
+      {'x': 0.34, 'y': 0.80},
+      {'x': 0.66, 'y': 0.80},
+    ];
+    for (final anchor in anchors) {
+      if (selectedDetections.length >= dreamSpaceHotspotCount) {
+        break;
+      }
+      final candidate = <String, dynamic>{
+        'x': anchor['x']!,
+        'y': anchor['y']!,
+        'label': 'Furniture',
+        'area': 0.02,
+        'confidence': 0.2,
+        'score': 0.0,
+        'source': 'synthetic_anchor',
+      };
+      if (_isHotspotCandidateFarEnough(
+        candidate,
+        selectedDetections,
+        minDistance: 0.06,
+      )) {
+        selectedDetections.add(candidate);
+      }
+    }
+
+    // If spacing constraints are still too strict, fill remaining slots
+    // deterministically so Dream Space always has 5 tappable markers.
+    for (final anchor in anchors) {
+      if (selectedDetections.length >= dreamSpaceHotspotCount) {
+        break;
+      }
+      final candidate = <String, dynamic>{
+        'x': anchor['x']!,
+        'y': anchor['y']!,
+        'label': 'Furniture',
+        'area': 0.02,
+        'confidence': 0.2,
+        'score': 0.0,
+        'source': 'synthetic_anchor',
+      };
+      final existsNearby = selectedDetections.any((item) {
+        final dx = (item['x'] as double) - (candidate['x'] as double);
+        final dy = (item['y'] as double) - (candidate['y'] as double);
+        return (dx * dx) + (dy * dy) < 0.0004;
+      });
+      if (!existsNearby) {
+        selectedDetections.add(candidate);
+      }
+    }
+  }
+
   bool _isHotspotCandidateFarEnough(
     Map<String, dynamic> candidate,
     List<Map<String, dynamic>> selected, {
-    double minDistance = 0.08,
+    double minDistance = 0.06,
   }) {
     final x = candidate['x'] as double;
     final y = candidate['y'] as double;
@@ -2185,20 +2290,14 @@ class ProjectProvider extends ChangeNotifier {
   Future<void> _prepareDreamSpaceHotspots(String authToken) async {
     _resetHotspotPrefetchStateForNewImage();
 
-    var prefetched = await primeFurnitureHotspotsAndPrefetch(
+    final prefetched = await primeFurnitureHotspotsAndPrefetch(
       authToken: authToken,
-      imageType: 'inspiration',
+      imageType: dreamSpaceAnalysisImageType,
     );
-    if (!prefetched || _detectedHotspots.isEmpty) {
-      prefetched = await primeFurnitureHotspotsAndPrefetch(
-        authToken: authToken,
-        imageType: 'product',
+    if (!prefetched) {
+      AppLogger.warning(
+        'Furniture hotspot prefetch did not complete successfully (imageType=$dreamSpaceAnalysisImageType)',
       );
-      if (!prefetched) {
-        AppLogger.warning(
-          'Furniture hotspot prefetch did not complete successfully for either image type',
-        );
-      }
     }
 
     await prewarmEmptyHotspotsWithRobustFallback(
@@ -2343,15 +2442,8 @@ class ProjectProvider extends ChangeNotifier {
       var success = await _runRobustHotspotAnalysisWithImageType(
         hotspot,
         resolvedAuthToken,
-        imageType: 'inspiration',
+        imageType: dreamSpaceAnalysisImageType,
       );
-      if (!success) {
-        success = await _runRobustHotspotAnalysisWithImageType(
-          hotspot,
-          resolvedAuthToken,
-          imageType: 'product',
-        );
-      }
       completer.complete(success);
       return success;
     } catch (e) {
@@ -2543,7 +2635,7 @@ class ProjectProvider extends ChangeNotifier {
   /// can stay interactive even if detection/prefetch fails.
   Future<bool> primeFurnitureHotspotsAndPrefetch({
     BuildContext? context,
-    String imageType = 'inspiration',
+    String imageType = dreamSpaceImageType,
     String? authToken,
   }) async {
     if (_currentProject == null) return false;
@@ -2569,19 +2661,30 @@ class ProjectProvider extends ChangeNotifier {
         imageType: imageType,
       );
       final rawDetections = detectResponse['detections'] as List? ?? const [];
+      final resolvedImageType =
+          detectResponse['resolved_image_type']?.toString().trim().isNotEmpty ==
+              true
+          ? detectResponse['resolved_image_type'].toString().trim()
+          : imageType;
+      final rawDetectionCount = rawDetections.length;
 
       final parsedDetections = <Map<String, dynamic>>[];
       for (final raw in rawDetections) {
         if (raw is! Map) continue;
-        final rectRaw = raw['rect'];
-        if (rectRaw is! Map) continue;
+        final rect = _extractDetectionRect(raw);
+        if (rect == null) continue;
 
-        final x = (rectRaw['x'] as num?)?.toDouble();
-        final y = (rectRaw['y'] as num?)?.toDouble();
-        final width = (rectRaw['width'] as num?)?.toDouble();
-        final height = (rectRaw['height'] as num?)?.toDouble();
+        final x = rect['x'];
+        final y = rect['y'];
+        final width = rect['width'];
+        final height = rect['height'];
 
-        if (x == null || y == null || width == null || height == null) {
+        if (x == null ||
+            y == null ||
+            width == null ||
+            height == null ||
+            width <= 0 ||
+            height <= 0) {
           continue;
         }
 
@@ -2605,9 +2708,11 @@ class ProjectProvider extends ChangeNotifier {
           'label': label,
           'area': area,
           'confidence': confidence,
-          'score': (area * 0.65) + (confidence * 0.35),
+          'score': (area * 0.60) + (confidence * 0.40),
+          'source': raw['source']?.toString() ?? 'detector',
         });
       }
+      final parsedDetectionCount = parsedDetections.length;
 
       parsedDetections.sort(
         (a, b) => (b['score'] as num).compareTo(a['score'] as num),
@@ -2619,27 +2724,44 @@ class ProjectProvider extends ChangeNotifier {
       if (ranked.isEmpty) {
         ranked = parsedDetections;
       }
-      final maxHotspots = enableBalancedAutoHotspotDensity ? 6 : 4;
-      final minHotspots = enableBalancedAutoHotspotDensity ? 4 : 1;
+      const targetHotspots = dreamSpaceHotspotCount;
       final selectedDetections = <Map<String, dynamic>>[];
       for (final item in ranked) {
         if (_isHotspotCandidateFarEnough(item, selectedDetections)) {
           selectedDetections.add(item);
         }
-        if (selectedDetections.length >= maxHotspots) {
+        if (selectedDetections.length >= targetHotspots) {
           break;
         }
       }
-      if (selectedDetections.length < minHotspots) {
+      if (selectedDetections.length < targetHotspots) {
         for (final item in ranked) {
           if (selectedDetections.contains(item)) continue;
-          selectedDetections.add(item);
-          if (selectedDetections.length >= minHotspots) {
+          if (_isHotspotCandidateFarEnough(
+            item,
+            selectedDetections,
+            minDistance: 0.045,
+          )) {
+            selectedDetections.add(item);
+          }
+          if (selectedDetections.length >= targetHotspots) {
             break;
           }
         }
       }
+      if (selectedDetections.length < targetHotspots) {
+        _appendFallbackHotspotAnchors(selectedDetections);
+      }
+      if (selectedDetections.length > targetHotspots) {
+        selectedDetections.removeRange(
+          targetHotspots,
+          selectedDetections.length,
+        );
+      }
       ranked = selectedDetections;
+      final syntheticCount = ranked
+          .where((d) => (d['source']?.toString() ?? '').startsWith('synthetic'))
+          .length;
 
       final hotspots = <ProductHotspot>[];
       final selections = <Map<String, dynamic>>[];
@@ -2672,6 +2794,9 @@ class ProjectProvider extends ChangeNotifier {
       notifyListeners();
 
       if (selections.isEmpty) {
+        AppLogger.info(
+          'Dream Space hotspot pipeline: requested=$imageType resolved=$resolvedImageType raw=$rawDetectionCount parsed=$parsedDetectionCount rendered=0 synthetic=0 prefetchSuccess=0',
+        );
         _furniturePrefetchCompleter!.complete(true);
         _furniturePrefetchCompleter = null;
         return true;
@@ -2696,6 +2821,13 @@ class ProjectProvider extends ChangeNotifier {
       } catch (e) {
         AppLogger.warning('Furniture prefetch analysis failed (non-fatal): $e');
       }
+
+      final prefetchSuccessCount = hotspots
+          .where((hotspot) => hasProductsForHotspot(hotspot.id))
+          .length;
+      AppLogger.info(
+        'Dream Space hotspot pipeline: requested=$imageType resolved=$resolvedImageType raw=$rawDetectionCount parsed=$parsedDetectionCount rendered=${hotspots.length} synthetic=$syntheticCount prefetchSuccess=$prefetchSuccessCount',
+      );
 
       _furniturePrefetchCompleter!.complete(true);
       _furniturePrefetchCompleter = null;
