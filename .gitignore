@@ -1,2 +1,19 @@
 node_modules/
 .DS_Store
+
+# Environment / secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Firebase config (contains API keys)
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase_options.dart
+
+# Credentials
+*.keystore
+*.jks
+*.pem
+*.key
+credentials.json
