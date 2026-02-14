@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "166151924801",
+    "project_id": "spaces-8eafc",
+    "storage_bucket": "spaces-8eafc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:166151924801:android:541a3817d2e2b1e9616ac0",
+        "android_client_info": {
+          "package_name": "com.example.spaces"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyArUkxTw5XKHeZgIFc1jczxQR_NiOLC8QM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

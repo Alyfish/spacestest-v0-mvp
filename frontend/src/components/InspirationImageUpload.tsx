@@ -1,0 +1,341 @@
+"use client";
+
+import {
+  getInspirationImageUrl,
+  useSkipInspirationImages,
+  useUploadInspirationImagesBatch,
+} from "@/lib/api";
+import { ImageLightbox } from "@/components/ImageLightbox";
+import Image from "next/image";
+import { useRef, useState } from "react";
+
+interface InspirationImageUploadProps {
+  projectId: string;
+  inspirationImages: string[];
+  inspirationSkipped?: boolean;
+}
+
+export function InspirationImageUpload({
+  projectId,
+  inspirationImages,
+  inspirationSkipped,
+}: InspirationImageUploadProps) {
+  const [dragActive, setDragActive] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [inlineNotice, setInlineNotice] = useState<string | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadMutation = useUploadInspirationImagesBatch();
+  const skipMutation = useSkipInspirationImages();
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFiles(Array.from(e.dataTransfer.files));
+    }
+  };
+
+  const handleFiles = (files: File[]) => {
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+
+    if (imageFiles.length !== files.length) {
+      setInlineNotice("Some files were skipped because they are not images.");
+    }
+
+    if (imageFiles.length > 0) {
+      setInlineNotice(null);
+      setSelectedFiles((prev) => [...prev, ...imageFiles]);
+
+      // Create preview URLs
+      const newPreviewUrls = imageFiles.map((file) =>
+        URL.createObjectURL(file)
+      );
+      setPreviewUrls((prev) => [...prev, ...newPreviewUrls]);
+    } else if (files.length > 0) {
+      setInlineNotice("No valid image files found in your selection.");
+    }
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFiles(Array.from(e.target.files));
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setPreviewUrls((prev) => {
+      URL.revokeObjectURL(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const uploadFiles = () => {
+    if (selectedFiles.length === 0) return;
+
+    uploadMutation.mutate(
+      {
+        projectId,
+        files: selectedFiles,
+      },
+      {
+        onSuccess: () => {
+          // Clear selected files after successful upload
+          setSelectedFiles([]);
+          setPreviewUrls((prev) => {
+            prev.forEach((url) => URL.revokeObjectURL(url));
+            return [];
+          });
+        },
+      }
+    );
+  };
+
+  const openFileDialog = () => {
+    fileInputRef.current?.click();
+  };
+
+  return (
+    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+        Upload Inspiration Images
+      </h2>
+
+      <div className="space-y-6">
+        {/* Instructions */}
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+          <p className="text-blue-800 dark:text-blue-200 text-sm">
+            Upload images that inspire your design vision. These could be photos
+            of rooms, furniture, colors, or styles you love. The AI will analyze
+            these images to provide personalized recommendations.
+          </p>
+        </div>
+
+        {!inspirationImages.length && !inspirationSkipped && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Inspiration images are optional. You can skip and continue.
+            </p>
+            <button
+              onClick={() => skipMutation.mutate(projectId)}
+              disabled={skipMutation.isPending}
+              className="px-4 py-2 text-sm text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {skipMutation.isPending ? "Skipping..." : "Skip for now"}
+            </button>
+          </div>
+        )}
+
+        {inspirationSkipped && inspirationImages.length === 0 && (
+          <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Inspiration images skipped. You can upload images anytime to add
+              inspiration guidance.
+            </p>
+          </div>
+        )}
+
+        {/* Upload Area */}
+        <div
+          className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+            dragActive
+              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+              : "border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500"
+          }`}
+          onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+      >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleFileInput}
+            className="hidden"
+          />
+
+          <div className="space-y-4">
+            <div className="w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto">
+              <svg
+                className="w-8 h-8 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                />
+              </svg>
+            </div>
+
+            <div>
+              <p className="text-lg font-medium text-gray-900 dark:text-white">
+                Drop images here or{" "}
+                <button
+                  onClick={openFileDialog}
+                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  browse files
+                </button>
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Select multiple images (JPG, PNG, WebP formats)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Selected Files Preview */}
+        {selectedFiles.length > 0 && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                Selected Images ({selectedFiles.length})
+              </h3>
+              <button
+                onClick={uploadFiles}
+                disabled={uploadMutation.isPending}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {uploadMutation.isPending ? "Uploading..." : "Upload All"}
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {previewUrls.map((url, index) => (
+                <div
+                  key={index}
+                  className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden group cursor-zoom-in"
+                  onClick={() =>
+                    setLightboxImage({
+                      src: url,
+                      alt: `Preview ${index + 1}`,
+                    })
+                  }
+                >
+                  <Image
+                    src={url}
+                    alt={`Preview ${index + 1}`}
+                    fill
+                    className="object-cover"
+                    sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw"
+                  />
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeFile(index);
+                    }}
+                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-sm text-white transition-colors hover:bg-red-500"
+                    aria-label={`Remove selected image ${index + 1}`}
+                  >
+                    ×
+                  </button>
+                  <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                    {selectedFiles[index].name}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Upload Status */}
+        {uploadMutation.isPending && (
+          <div className="flex items-center justify-center py-4">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mr-3"></div>
+            <span className="text-gray-600 dark:text-gray-300">
+              Uploading {selectedFiles.length} inspiration images...
+            </span>
+          </div>
+        )}
+
+        {uploadMutation.isSuccess && (
+          <div className="text-green-600 dark:text-green-400 text-sm text-center">
+            {uploadMutation.data?.uploaded_count} inspiration images uploaded
+            successfully!
+          </div>
+        )}
+
+        {uploadMutation.isError && (
+          <div className="text-red-600 dark:text-red-400 text-sm text-center">
+            Error: {uploadMutation.error?.message}
+          </div>
+        )}
+
+        {skipMutation.isError && (
+          <div className="text-red-600 dark:text-red-400 text-sm text-center">
+            Error: {skipMutation.error?.message}
+          </div>
+        )}
+
+        {inlineNotice && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+            {inlineNotice}
+          </div>
+        )}
+
+        {/* Uploaded Images */}
+        {inspirationImages.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+              Uploaded Inspiration Images ({inspirationImages.length})
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {inspirationImages.map((imagePath, index) => (
+                <div
+                  key={index}
+                  className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden cursor-zoom-in"
+                  onClick={() =>
+                    setLightboxImage({
+                      src: getInspirationImageUrl(projectId, index),
+                      alt: `Inspiration image ${index + 1}`,
+                    })
+                  }
+                >
+                  <Image
+                    src={getInspirationImageUrl(projectId, index)}
+                    alt={`Inspiration image ${index + 1}`}
+                    fill
+                    className="object-cover"
+                    sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw"
+                  />
+                  <div className="absolute top-2 right-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                    {index + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <ImageLightbox
+        isOpen={Boolean(lightboxImage)}
+        src={lightboxImage?.src || ""}
+        alt={lightboxImage?.alt || "Image preview"}
+        onClose={() => setLightboxImage(null)}
+      />
+    </div>
+  );
+}

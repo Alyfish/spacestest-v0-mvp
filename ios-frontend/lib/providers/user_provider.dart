@@ -1,0 +1,115 @@
+import 'package:flutter/foundation.dart';
+import '../utils/logger.dart';
+import '../models/user.dart';
+import '../services/supabase_service.dart';
+
+class UserProvider extends ChangeNotifier {
+  AuthState _authState = AuthState.unauthenticated;
+  User _user = User.empty();
+
+  UserProvider() {
+    final session = SupabaseService.currentSession;
+    final supabaseUser = session?.user;
+    if (session != null && supabaseUser != null) {
+      _user = User(
+        id: supabaseUser.id,
+        name:
+            _displayNameFromMetadata(supabaseUser.userMetadata) ??
+            supabaseUser.email,
+        email: supabaseUser.email,
+        photoUrl: _photoUrlFromMetadata(supabaseUser.userMetadata),
+        token: session.accessToken,
+      );
+      _authState = AuthState.authenticated;
+    }
+  }
+
+  static String? _displayNameFromMetadata(Map<String, dynamic>? metadata) {
+    if (metadata == null) return null;
+    return (metadata['full_name'] ??
+            metadata['name'] ??
+            metadata['display_name'] ??
+            metadata['user_name'])
+        ?.toString();
+  }
+
+  static String? _photoUrlFromMetadata(Map<String, dynamic>? metadata) {
+    if (metadata == null) return null;
+    return (metadata['avatar_url'] ?? metadata['picture'])?.toString();
+  }
+
+  // Getters
+  AuthState get authState => _authState;
+  User get user => _user;
+  bool get isAuthenticated => _authState == AuthState.authenticated;
+  bool get isAuthenticating => _authState == AuthState.authenticating;
+  bool get isSignedIn => _authState == AuthState.authenticated;
+
+  // Sign in with Google via Supabase OAuth
+  Future<void> signInWithGoogle() async {
+    try {
+      _authState = AuthState.authenticating;
+      notifyListeners();
+
+      final response = await SupabaseService.signInWithGoogle();
+      final signedInUser = response.user ?? SupabaseService.currentUser;
+      final session = response.session ?? SupabaseService.currentSession;
+
+      if (signedInUser == null || session == null) {
+        throw Exception('Google sign-in succeeded but no session was returned');
+      }
+
+      _user = User(
+        id: signedInUser.id,
+        name:
+            _displayNameFromMetadata(signedInUser.userMetadata) ??
+            signedInUser.email,
+        email: signedInUser.email,
+        photoUrl: _photoUrlFromMetadata(signedInUser.userMetadata),
+        token: session.accessToken,
+      );
+
+      _authState = AuthState.authenticated;
+      notifyListeners();
+
+      if (kDebugMode) {
+        AppLogger.info('✅ User signed in successfully: ${_user.name}');
+      }
+    } catch (e) {
+      _authState = AuthState.unauthenticated;
+      _user = User.empty();
+      notifyListeners();
+
+      if (kDebugMode) {
+        AppLogger.error('❌ Sign in failed: $e');
+      }
+      rethrow;
+    }
+  }
+
+  // Sign out
+  Future<void> signOut() async {
+    try {
+      await SupabaseService.signOut();
+    } catch (e) {
+      if (kDebugMode) {
+        AppLogger.error('Sign out failed at provider level', e);
+      }
+    } finally {
+      _authState = AuthState.unauthenticated;
+      _user = User.empty();
+      notifyListeners();
+    }
+
+    if (kDebugMode) {
+      AppLogger.info('👋 User signed out');
+    }
+  }
+
+  // Reset to initial state
+  void reset() {
+    _authState = AuthState.unauthenticated;
+    _user = User.empty();
+    notifyListeners();
+  }
+}

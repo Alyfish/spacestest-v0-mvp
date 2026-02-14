@@ -1,0 +1,44 @@
+{
+  "color_agent": {
+    "category": "analysis",
+    "description": "Expert Color Agent for interior design color application guidance",
+    "target_models": ["gemini-3-flash-preview", "gemini-2.5-pro"],
+    "file": "color_agent.json",
+    "variables": ["space_type", "palette_name", "palette_colors", "let_ai_decide"]
+  },
+  "style_agent": {
+    "category": "analysis",
+    "description": "Expert interior designer for style application guidance",
+    "target_models": ["gemini-3-flash-preview", "gemini-2.5-pro"],
+    "file": "style_agent.json",
+    "variables": ["space_type", "style_name", "color_scheme"]
+  },
+  "revamp_integration": {
+    "category": "image_generation",
+    "description": "Room redesign master prompt for comprehensive revamp",
+    "target_models": ["gemini-3-pro-image"],
+    "file": "revamp_integration.json",
+    "variables": ["space_type", "style_name", "style_overview", "materials_list", "color_list", "marker_descriptions", "titles_str", "user_request"]
+  },
+  "iterative_surgical": {
+    "category": "image_generation",
+    "description": "Targeted furniture replacement with minimal changes",
+    "target_models": ["gemini-3-pro-image"],
+    "file": "iterative_surgical.json",
+    "variables": ["changes_str", "products_str"]
+  },
+  "room_redesign": {
+    "category": "image_generation",
+    "description": "Architectural photography master prompt for photorealistic room modification",
+    "target_models": ["gemini-3-pro-image"],
+    "file": "room_redesign.json",
+    "variables": ["space_type", "design_context_str", "product_list_str"]
+  },
+  "object_detection": {
+    "category": "analysis",
+    "description": "Furniture and decor detection at click location",
+    "target_models": ["gemini-3-flash-preview"],
+    "file": "object_detection.json",
+    "variables": ["click_x_pct", "click_y_pct"]
+  }
+}
