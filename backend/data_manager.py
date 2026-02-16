@@ -635,10 +635,11 @@ class DataManager:
             str: Path to the created labelled image
         """
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw, ImageFont, ImageOps
 
             # Load original image and create a copy
             original_img = Image.open(base_image_path)
+            original_img = ImageOps.exif_transpose(original_img)
             img = original_img.copy()  # Create a copy to avoid modifying the original
             draw = ImageDraw.Draw(img)
 
@@ -798,6 +799,29 @@ class DataManager:
         image_path = project_images_dir / filename
         with open(image_path, "wb") as buffer:
             shutil.copyfileobj(image_file.file, buffer)
+
+        # Normalize EXIF orientation so downstream code sees upright pixels
+        try:
+            from PIL import Image, ImageOps
+            with Image.open(image_path) as img:
+                original_size = img.size
+                transposed = ImageOps.exif_transpose(img)
+                if transposed is not None and transposed is not img:
+                    # Determine format from file extension
+                    ext = str(image_path).rsplit('.', 1)[-1].lower()
+                    if ext in ('jpg', 'jpeg'):
+                        if transposed.mode in ('RGBA', 'P'):
+                            transposed = transposed.convert('RGB')
+                        transposed.save(image_path, format='JPEG', quality=95)
+                    else:
+                        transposed.save(image_path)
+                    self.logger.info(
+                        f"EXIF transpose: {original_size} -> {transposed.size}"
+                    )
+                else:
+                    self.logger.info(f"EXIF transpose: no rotation needed ({original_size})")
+        except Exception as e:
+            self.logger.warning(f"EXIF transpose at upload failed (non-fatal): {e}")
 
         # Check if the room is empty using AI analysis
         is_empty_room = self._check_room_emptiness(str(image_path))
@@ -2348,7 +2372,7 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
         Returns:
             Dict with categories, each containing products
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
         from datetime import datetime
 
         try:
@@ -2382,6 +2406,7 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
             def search_single_recommendation(recommendation: str) -> Dict[str, Any]:
                 """Search products for a single recommendation using multiple query variations."""
                 try:
+                    t_rec_start = time.time()
                     # Clean up the recommendation for query building
                     rec_lower = recommendation.lower()
                     for prefix in ["add ", "change ", "replace ", "install ", "hang ", "place "]:
@@ -2406,100 +2431,116 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
 
                     # Shuffle query variations for variety in results
                     random.shuffle(query_variations)
-                    print(f"[PRODUCT_SEARCH] 🔀 Shuffled query order for variety")
+                    query_variations = query_variations[:3]  # Cap at 3 for performance
+                    print(f"[PRODUCT_SEARCH] 🔀 Shuffled and capped to {len(query_variations)} query variations")
 
                     products: List[Dict[str, Any]] = []
                     primary_query = query_variations[0]  # For logging (now randomized)
 
-                    # Search with each query variation
-                    for query in query_variations:
-                        # Add negative keywords to exclude DIY plans and non-product content
-                        full_query = f"{query} -ideas -inspiration -diy -tutorial -plans -woodworking -blueprint -project -pattern -PDF"
+                    # Helpers for parallel execution per variation
+                    def _run_serp(serp_client, full_query, space_type, query_label):
+                        """Run SERP search in a thread."""
+                        results = []
+                        try:
+                            serp_products = serp_client.search_and_analyze_products(
+                                query=full_query,
+                                space_type=space_type,
+                                num_results=10,
+                            )
+                            print(f"[PRODUCT_SEARCH] SERP returned {len(serp_products)} products for variation: '{query_label}'")
+                            for product in serp_products:
+                                product["source_api"] = "serp"
+                                product["search_query"] = query_label
+                            results.extend(serp_products)
+                        except Exception as e:
+                            print(f"[PRODUCT_SEARCH] SERP failed for '{query_label}': {e}")
+                        return results
 
-                        # SERP Google Shopping
-                        serp_count = 0
-                        if self.serp_client:
+                    def _run_exa(exa_client, full_query, space_type, query_label):
+                        """Run Exa search in a thread."""
+                        results = []
+                        try:
+                            exa_products = exa_client.search_and_analyze_products(
+                                query=full_query,
+                                space_type=space_type,
+                                num_results=8,
+                                similar_per_seed=2,
+                            )
+                            print(f"[PRODUCT_SEARCH] Exa returned {len(exa_products)} products for variation: '{query_label}'")
+                            for product in exa_products:
+                                product["source_api"] = "exa"
+                                product["search_query"] = query_label
+                            results.extend(exa_products)
+                        except Exception as e:
+                            print(f"[PRODUCT_SEARCH] Exa failed for '{query_label}': {e}")
+                        return results
+
+                    def _run_images(serp_client, rec_lower_str, query_label):
+                        """Run Google Images search in a thread."""
+                        results = []
+                        try:
+                            image_query = f"{rec_lower_str} furniture buy online"
+                            image_results = serp_client.search_images(
+                                query=image_query,
+                                num_results=10,
+                            )
+                            print(f"[PRODUCT_SEARCH] Google Images returned {len(image_results)} for '{image_query}'")
+                            for img in image_results:
+                                image_url = img.get("thumbnail") or img.get("image_url") or ""
+                                results.append({
+                                    "title": img.get("title", ""),
+                                    "url": img.get("url", ""),
+                                    "thumbnail": image_url,
+                                    "image_url": image_url,
+                                    "source": img.get("source", "Unknown"),
+                                    "store": img.get("source", "Unknown"),
+                                    "source_api": "google_images",
+                                    "search_query": image_query,
+                                })
+                        except Exception as e:
+                            self.logger.warning(f"[PRODUCT_SEARCH] Google Images failed for '{rec_lower_str}': {e}")
+                        return results
+
+                    # Search with each query variation (SERP + Exa + Images in parallel)
+                    with ThreadPoolExecutor(max_workers=3) as var_executor:
+                        for query in query_variations:
+                            t_var = time.time()
+                            full_query = f"{query} -ideas -inspiration -diy -tutorial -plans -woodworking -blueprint -project -pattern -PDF"
+
+                            futures = []
+                            if self.serp_client:
+                                futures.append(var_executor.submit(
+                                    _run_serp, self.serp_client, full_query,
+                                    context.space_type or "general", query))
+                            if self.exa_client:
+                                futures.append(var_executor.submit(
+                                    _run_exa, self.exa_client, full_query,
+                                    context.space_type or "general", query))
+                            if self.serp_client:
+                                futures.append(var_executor.submit(
+                                    _run_images, self.serp_client, rec_lower, query))
+
                             try:
-                                serp_products = self.serp_client.search_and_analyze_products(
-                                    query=full_query,
-                                    space_type=context.space_type or "general",
-                                    num_results=10,  # 10 per query variation
-                                )
-                                serp_count = len(serp_products)
-                                print(f"[PRODUCT_SEARCH] SERP returned {serp_count} products for variation: '{query}'")
-                                for product in serp_products:
-                                    product["source_api"] = "serp"
-                                    product["search_query"] = query
-                                products.extend(serp_products)
-                            except Exception as e:
-                                print(f"[PRODUCT_SEARCH] SERP failed for '{query}': {e}")
-                                self.logger.warning(f"SERP search failed for query '{query}': {e}")
+                                for f in as_completed(futures, timeout=15):
+                                    try:
+                                        products.extend(f.result())
+                                    except Exception as e:
+                                        self.logger.warning(f"[PRODUCT_SEARCH] Parallel task failed for '{query}': {e}")
+                            except FuturesTimeoutError:
+                                self.logger.warning(f"[PRODUCT_SEARCH] Timeout waiting for futures for variation '{query[:30]}'")
 
-                        # Exa semantic search
-                        exa_count = 0
-                        if self.exa_client:
-                            try:
-                                exa_products = self.exa_client.search_and_analyze_products(
-                                    query=full_query,
-                                    space_type=context.space_type or "general",
-                                    num_results=8,
-                                    similar_per_seed=2,
-                                )
-                                exa_count = len(exa_products)
-                                print(f"[PRODUCT_SEARCH] Exa returned {exa_count} products for variation: '{query}'")
-                                for product in exa_products:
-                                    product["source_api"] = "exa"
-                                    product["search_query"] = query
-                                products.extend(exa_products)
-                            except Exception as e:
-                                print(f"[PRODUCT_SEARCH] Exa failed for '{query}': {e}")
-                                self.logger.warning(f"Exa search failed for query '{query}': {e}")
-
-                        # Google Images search - NEW (more visual results)
-                        images_count = 0
-                        if self.serp_client:
-                            try:
-                                # Use a product-focused query for images
-                                image_query = f"{rec_lower} furniture buy online"
-                                image_results = self.serp_client.search_images(
-                                    query=image_query,
-                                    num_results=10,
-                                )
-                                images_count = len(image_results)
-                                print(f"[PRODUCT_SEARCH] Google Images returned {images_count} for '{image_query}'")
-
-                                # Convert image results to product format
-                                for img in image_results:
-                                    # Use thumbnail or original image URL
-                                    image_url = img.get("thumbnail") or img.get("image_url") or ""
-
-                                    products.append({
-                                        "title": img.get("title", ""),
-                                        "url": img.get("url", ""),
-                                        "thumbnail": image_url,
-                                        "image_url": image_url,
-                                        "source": img.get("source", "Unknown"),
-                                        "store": img.get("source", "Unknown"),
-                                        "source_api": "google_images",
-                                        "search_query": image_query,
-                                    })
-                            except Exception as e:
-                                print(f"[PRODUCT_SEARCH] Google Images failed for '{rec_lower}': {e}")
-                                self.logger.warning(f"Google Images search failed: {e}")
+                            self.logger.info(f"[TIMING] var '{query[:30]}': {time.time() - t_var:.1f}s (parallel)")
 
                     # Log product collection stats
                     with_images = sum(1 for p in products if p.get("images") or p.get("thumbnail") or p.get("image_url") or p.get("image"))
-                    print(f"[PRODUCT_SEARCH] === Summary for '{recommendation}' ===")
-                    print(f"[PRODUCT_SEARCH] Total collected: {len(products)} products from {len(query_variations)} query variations")
-                    print(f"[PRODUCT_SEARCH] Products with images: {with_images}/{len(products)}")
-                    self.logger.info(f"Collected {len(products)} products from {len(query_variations)} query variations for '{recommendation}'")
-                    self.logger.info(f"  - Products with images: {with_images}/{len(products)}")
+                    self.logger.info(f"[PRODUCT_SEARCH] === Summary for '{recommendation}' ===")
+                    self.logger.info(f"[PRODUCT_SEARCH] Total collected: {len(products)} products from {len(query_variations)} query variations")
+                    self.logger.info(f"[PRODUCT_SEARCH] Products with images: {with_images}/{len(products)}")
 
                     # Deduplicate
                     before_dedup = len(products)
                     products = self._dedupe_products_by_url(products)
-                    print(f"[PRODUCT_SEARCH] After dedup: {len(products)} (removed {before_dedup - len(products)} duplicates)")
-                    self.logger.info(f"  - After dedup: {len(products)} (removed {before_dedup - len(products)} duplicates)")
+                    self.logger.info(f"[PRODUCT_SEARCH] After dedup: {len(products)} (removed {before_dedup - len(products)} duplicates)")
 
                     # Convert to PreSearchedProduct format with better image extraction
                     formatted_products = []
@@ -2626,6 +2667,8 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
                         print(f"[PRODUCT_SEARCH] ⚠️ Only {len(formatted_products)} products, need at least 4")
                         # Products were already filtered, just warn
                     
+                    t_rec_end = time.time()
+                    print(f"[TIMING] search_recommendation '{recommendation[:40]}': {t_rec_end - t_rec_start:.1f}s total")
                     print(f"[PRODUCT_SEARCH] FINAL: {len(formatted_products)} products for '{recommendation}'")
                     print(f"[PRODUCT_SEARCH] ========================================")
                     self.logger.info(f"  - Final products for '{recommendation}': {len(formatted_products)}")
@@ -3903,6 +3946,7 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
     def generate_inspiration_redesign(self, project_id: str):
         """Generate a redesigned room image based on inspiration recommendations using Gemini"""
         try:
+            t_start = time.time()
             log_user_action("inspiration_redesign_started", {"project_id": project_id})
 
             # Load project context
@@ -3910,7 +3954,9 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
             if not project:
                 raise ValueError(f"Project {project_id} not found")
 
+            t_context = time.time()
             context = ProjectContext.model_validate(project["context"])
+            print(f"[TIMING] inspiration_redesign.context_load: {t_context - t_start:.2f}s")
             # Detailed readiness logging
             # Check readiness: needs base image, space type, and EITHER inspiration OR product recs
             has_inspiration = context.inspiration_recommendations and len(context.inspiration_recommendations) > 0
@@ -4263,11 +4309,15 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                 )
 
             # Call Gemini API using the new method
+            t_prompt = time.time()
+            print(f"[TIMING] inspiration_redesign.prompt_build: {t_prompt - t_start:.2f}s")
             generated_image_base64, model_used = self.gemini_client.generate_room_redesign(
                 original_room_image_path=original_room_image_path,
                 prompt=prompt,
                 product_images=product_images_for_gemini
             )
+            t_gemini = time.time()
+            print(f"[TIMING] inspiration_redesign.gemini_call: {t_gemini - t_prompt:.2f}s")
 
             # Update context with generated image
             context.inspiration_generated_image_base64 = generated_image_base64
@@ -4279,6 +4329,9 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
             projects[project_id]["context"] = context.model_dump()
             projects[project_id]["status"] = "INSPIRATION_REDESIGN_COMPLETE"
             self._save_projects(projects)
+            t_saved = time.time()
+            print(f"[TIMING] inspiration_redesign.save: {t_saved - t_gemini:.2f}s")
+            print(f"[TIMING] inspiration_redesign.total: {t_saved - t_start:.2f}s")
 
             log_project_status_change(
                 project_id, project["status"], "INSPIRATION_REDESIGN_COMPLETE"
@@ -4542,9 +4595,11 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
             # Decode image for processing
             import base64
             from io import BytesIO
-            from PIL import Image
+            from PIL import Image, ImageOps
             image_bytes = base64.b64decode(image_base64)
-            full_image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            full_image = Image.open(BytesIO(image_bytes))
+            full_image = ImageOps.exif_transpose(full_image)
+            full_image = full_image.convert("RGB")
             width, height = full_image.size
 
             # Compute image hash for caching (used to detect if image changed)
@@ -5572,7 +5627,11 @@ If a component is not visible or unclear, set visible=false.
                 # Graceful fallback: no detections
                 self.logger.warning(f"YOLO not available or failed: {e}")
 
-            return {"detections": detections}
+            return {
+                "detections": detections,
+                "source_image_width": width,
+                "source_image_height": height,
+            }
 
         except Exception as e:
             self.logger.error(f"Failed auto_detect_furniture: {e}")

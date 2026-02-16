@@ -15,7 +15,7 @@ from retry import retry_sync
 
 try:
     import torch
-    from PIL import Image
+    from PIL import Image, ImageOps
     from transformers import CLIPProcessor, CLIPModel
     import numpy as np
     CLIP_AVAILABLE = True
@@ -94,10 +94,14 @@ class CLIPClient:
                     image_bytes = base64.b64decode(base64_str)
                     image = Image.open(BytesIO(image_bytes)).convert("RGB")
                 else:
-                    # Handle file path
-                    image = Image.open(image_input).convert("RGB")
+                    # Handle file path (could be user photo)
+                    img = Image.open(image_input)
+                    img = ImageOps.exif_transpose(img)
+                    image = img.convert("RGB")
             elif isinstance(image_input, Path):
-                image = Image.open(image_input).convert("RGB")
+                img = Image.open(image_input)
+                img = ImageOps.exif_transpose(img)
+                image = img.convert("RGB")
             elif isinstance(image_input, Image.Image):
                 image = image_input.convert("RGB")
             else:

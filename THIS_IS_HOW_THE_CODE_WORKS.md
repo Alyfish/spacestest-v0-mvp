@@ -73,6 +73,16 @@ Unchanged by design:
 - RevenueCat bypass behavior remains as currently implemented in `ios-frontend/lib/providers/subscription_provider.dart`.
 - Let-AI-Decide wiring remains active across mobile + backend style/color paths.
 
+### Production-Ready Tweaks (2026-02-15)
+
+Hardening changes applied across mobile + backend for production reliability:
+
+- **Double-trigger prevention** (`ios-frontend/lib/screens/improvements_screen.dart`): `_handleContinue()` no longer resets `_isSubmitting` to `false` after calling `onImprove`. The flag resets naturally when the widget tree rebuilds on navigation to the analyzing step, preventing rapid double-taps from firing two flows.
+- **Non-blocking deferred saves** (`ios-frontend/lib/screens/create_flow_screen.dart`): Each deferred save future (color palette, design style, selected recommendations) is wrapped in async try/catch so a single network failure does not block the analyzing flow. Failures are logged via `debugPrint('[DEFERRED_SAVE] ...')` and treated as non-fatal.
+- **ThreadPoolExecutor reuse** (`backend/data_manager.py`): The executor in `search_single_recommendation` is now created once per recommendation (hoisted above the query-variation loop) instead of once per variation, reducing thread pool churn.
+- **`as_completed` timeout resilience** (`backend/data_manager.py`): Parallel product search sources (SERP, Exa, Google Images) are collected via `as_completed(futures, timeout=15)` instead of sequential `f.result(timeout=15)`, so fast sources are not blocked by slow ones and overall timeout is bounded.
+- **Structured logging in product search** (`backend/data_manager.py`): All `print()` calls in the `search_single_recommendation` / `search_products_for_recommendations` area are replaced with `self.logger.info()` / `self.logger.warning()` for request-id correlation and structured JSON output. Broader print cleanup across other files is out of scope.
+
 ---
 
 ## 2. OVERALL PROJECT STRUCTURE

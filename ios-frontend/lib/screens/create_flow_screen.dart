@@ -62,6 +62,9 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
   ProductHotspot? _selectedHotspot;
   String? _pendingRetryFeedback;
   ValueNotifier<String?>? _analyzingSubtitleNotifier;
+  List<String>? _pendingRecsToSelect;
+  bool _pendingNeedsColorSave = false;
+  bool _pendingNeedsStyleSave = false;
 
   @override
   void dispose() {
@@ -477,7 +480,12 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
       case CreateFlowStep.improvements:
         return ImprovementsScreen(
           onBack: _goBack,
-          onImprove: () => _goToStep(CreateFlowStep.improvementsAnalyzing),
+          onImprove: (recsToSelect, needsColorSave, needsStyleSave) {
+            _pendingRecsToSelect = recsToSelect;
+            _pendingNeedsColorSave = needsColorSave;
+            _pendingNeedsStyleSave = needsStyleSave;
+            _goToStep(CreateFlowStep.improvementsAnalyzing);
+          },
         );
 
       case CreateFlowStep.improvementsAnalyzing:
@@ -493,6 +501,40 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               context,
               listen: false,
             );
+
+            // Phase 0: Run pending saves in parallel (deferred from ImprovementsScreen)
+            final saveFutures = <Future<bool>>[];
+            if (_pendingNeedsColorSave) {
+              saveFutures.add(provider.saveColorPalette(
+                context, 'ai_decide', 'Let AI Decide', [],
+                letAiDecide: true, background: false,
+              ));
+            }
+            if (_pendingNeedsStyleSave) {
+              saveFutures.add(provider.saveDesignStyle(
+                context, 'ai_decide', 'Let AI Decide',
+                letAiDecide: true, background: false,
+              ));
+            }
+            if (_pendingRecsToSelect != null && _pendingRecsToSelect!.isNotEmpty) {
+              saveFutures.add(provider.setSelectedRecommendations(context, _pendingRecsToSelect!));
+            }
+            final safeFutures = saveFutures.map((f) async {
+              try {
+                return await f;
+              } catch (e, st) {
+                debugPrint('[DEFERRED_SAVE] Save failed (non-blocking): $e');
+                debugPrint('$st');
+                return false;
+              }
+            }).toList();
+            if (safeFutures.isNotEmpty) {
+              await Future.wait(safeFutures);
+            }
+            _pendingRecsToSelect = null;
+            _pendingNeedsColorSave = false;
+            _pendingNeedsStyleSave = false;
+
             if (provider.productRecommendations.isEmpty) {
               final recommendationsReady = await provider
                   .ensureRecommendationsLoaded(context);

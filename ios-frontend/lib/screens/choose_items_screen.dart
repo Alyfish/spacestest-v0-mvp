@@ -289,23 +289,27 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
-                child: InteractiveImageWidget(
-                  imageProvider: displayProvider,
-                  onImageTap: _showMarkerDialog,
-                  overlayBuilder: (imageWidth, imageHeight, displaySize, displayOffset) {
-                    return Consumer<ProjectProvider>(
-                      builder: (context, provider, child) {
-                        return MarkerOverlay(
-                          markers: provider.markers,
-                          onMarkerTap: _editMarker,
-                          imageWidth: imageWidth,
-                          imageHeight: imageHeight,
-                          displaySize: displaySize,
-                          displayOffset: displayOffset,
-                        );
-                      },
-                    );
-                  },
+                child: Container(
+                  color: Colors.black,
+                  child: InteractiveImageWidget(
+                    imageProvider: displayProvider,
+                    fit: BoxFit.contain,
+                    onImageTap: _showMarkerDialog,
+                    overlayBuilder: (imageWidth, imageHeight, displaySize, displayOffset) {
+                      return Consumer<ProjectProvider>(
+                        builder: (context, provider, child) {
+                          return MarkerOverlay(
+                            markers: provider.markers,
+                            onMarkerTap: _editMarker,
+                            imageWidth: imageWidth,
+                            imageHeight: imageHeight,
+                            displaySize: displaySize,
+                            displayOffset: displayOffset,
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
               ),
               // Demo mode badge

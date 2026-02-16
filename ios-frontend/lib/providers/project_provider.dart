@@ -3304,6 +3304,9 @@ class ProjectProvider extends ChangeNotifier {
         imageType: imageType,
       );
       final rawDetections = detectResponse['detections'] as List? ?? const [];
+      final sourceW = detectResponse['source_image_width'];
+      final sourceH = detectResponse['source_image_height'];
+      AppLogger.info('Auto-detect source image: ${sourceW}x${sourceH}');
       final resolvedImageType =
           detectResponse['resolved_image_type']?.toString().trim().isNotEmpty ==
               true

@@ -28,46 +28,23 @@ ImageDisplayBounds calculateImageDisplayBounds({
   required Size containerSize,
   required BoxFit fit,
 }) {
-  final imageWidth = imageSize.width;
-  final imageHeight = imageSize.height;
-  final containerWidth = containerSize.width;
-  final containerHeight = containerSize.height;
-
-  if (imageWidth <= 0 ||
-      imageHeight <= 0 ||
-      containerWidth <= 0 ||
-      containerHeight <= 0) {
+  if (imageSize.isEmpty || containerSize.isEmpty) {
     return const ImageDisplayBounds(
       displaySize: Size.zero,
       displayOffset: Offset.zero,
     );
   }
 
-  final scaleX = containerWidth / imageWidth;
-  final scaleY = containerHeight / imageHeight;
+  final FittedSizes fitted = applyBoxFit(fit, imageSize, containerSize);
+  // Scale from source-sub-rect to destination-sub-rect
+  final double scaleX = fitted.destination.width / fitted.source.width;
+  final double scaleY = fitted.destination.height / fitted.source.height;
+  final displayedWidth = imageSize.width * scaleX;
+  final displayedHeight = imageSize.height * scaleY;
 
-  double displayedWidth;
-  double displayedHeight;
-  switch (fit) {
-    case BoxFit.contain:
-      final scale = scaleX < scaleY ? scaleX : scaleY;
-      displayedWidth = imageWidth * scale;
-      displayedHeight = imageHeight * scale;
-      break;
-    case BoxFit.cover:
-      final scale = scaleX > scaleY ? scaleX : scaleY;
-      displayedWidth = imageWidth * scale;
-      displayedHeight = imageHeight * scale;
-      break;
-    default:
-      final scale = scaleX > scaleY ? scaleX : scaleY;
-      displayedWidth = imageWidth * scale;
-      displayedHeight = imageHeight * scale;
-      break;
-  }
+  final offsetX = (containerSize.width - displayedWidth) / 2;
+  final offsetY = (containerSize.height - displayedHeight) / 2;
 
-  final offsetX = (containerWidth - displayedWidth) / 2;
-  final offsetY = (containerHeight - displayedHeight) / 2;
   return ImageDisplayBounds(
     displaySize: Size(displayedWidth, displayedHeight),
     displayOffset: Offset(offsetX, offsetY),
@@ -75,6 +52,9 @@ ImageDisplayBounds calculateImageDisplayBounds({
 }
 
 class InteractiveImageWidget extends StatefulWidget {
+  /// Set to true in debug builds to draw image-rect and container-rect borders.
+  static bool debugShowImageBounds = false;
+
   final ImageProvider imageProvider;
   final Function(double x, double y) onImageTap;
   final ImageBoundsCallback? overlayBuilder;
@@ -142,6 +122,12 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
   void _calculateImageBounds(Size containerSize) {
     final imageWidth = _image?.width.toDouble() ?? containerSize.width;
     final imageHeight = _image?.height.toDouble() ?? containerSize.height;
+
+    if (kDebugMode) {
+      debugPrint('InteractiveImage native: ${imageWidth.toInt()}x${imageHeight.toInt()}, '
+          'container: ${containerSize.width.toInt()}x${containerSize.height.toInt()}');
+    }
+
     final bounds = calculateImageDisplayBounds(
       imageSize: Size(imageWidth, imageHeight),
       containerSize: containerSize,
@@ -232,6 +218,43 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
                     _image?.height.toDouble() ?? _imageSize!.height,
                     _imageSize!,
                     _imageOffset!,
+                  ),
+
+                // Debug overlay: image rect + container bounds
+                if (kDebugMode &&
+                    InteractiveImageWidget.debugShowImageBounds &&
+                    _imageSize != null &&
+                    _imageOffset != null)
+                  Positioned(
+                    left: _imageOffset!.dx,
+                    top: _imageOffset!.dy,
+                    child: IgnorePointer(
+                      child: Container(
+                        width: _imageSize!.width,
+                        height: _imageSize!.height,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.red, width: 2),
+                        ),
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: Container(
+                            color: Colors.black54,
+                            padding: const EdgeInsets.all(4),
+                            child: Text(
+                              'native: ${_image?.width ?? "?"}x${_image?.height ?? "?"}\n'
+                              'display: ${_imageSize!.width.toInt()}x${_imageSize!.height.toInt()}\n'
+                              'offset: (${_imageOffset!.dx.toInt()}, ${_imageOffset!.dy.toInt()})\n'
+                              'container: ${containerSize.width.toInt()}x${containerSize.height.toInt()}',
+                              style: const TextStyle(
+                                color: Colors.red,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
               ],
             ),

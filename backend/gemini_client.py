@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional, Tuple, TypeVar, Union, Type, List
 
 import requests
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 from google import genai
@@ -117,12 +117,16 @@ class GeminiClient:
             # Build contents list: prompt + main image + optional extra images for context
             contents: List[Any] = [prompt]
             pil_image = Image.open(image_path)
+            # Defensive: primary image is upload-normalized, but transpose is a no-op safety net
+            pil_image = ImageOps.exif_transpose(pil_image)
             contents.append(pil_image)
 
             if additional_image_paths:
                 for extra_path in additional_image_paths:
                     try:
-                        contents.append(Image.open(extra_path))
+                        extra_img = Image.open(extra_path)
+                        extra_img = ImageOps.exif_transpose(extra_img)
+                        contents.append(extra_img)
                     except Exception as extra_err:
                         print(f"⚠️ Skipping additional image {extra_path}: {extra_err}")
             
@@ -244,9 +248,10 @@ class GeminiClient:
         try:
             print(f"🎨 Color Agent analyzing color application for {space_type}...")
             
-            # Load the image
+            # Load the image (defensive transpose: primary image is expected upload-normalized)
             pil_image = Image.open(image_path)
-            
+            pil_image = ImageOps.exif_transpose(pil_image)
+
             # Build the Color Agent system prompt
             system_prompt = """You are an expert Color Agent specializing in interior design color application.
 You are a design professional with deep expertise in color theory, interior design, and spatial aesthetics.
@@ -654,7 +659,8 @@ Follow the required JSON schema exactly."""
             
             # Load the image
             pil_image = Image.open(image_path)
-            
+            pil_image = ImageOps.exif_transpose(pil_image)
+
             # Build the comprehensive Style Agent system prompt
             system_prompt = """You are an expert interior designer and design historian.
 Your role is to explain in detail how to design a space in a specific interior design style.
@@ -806,6 +812,7 @@ REMEMBER: Keep walls, doors, flooring, ceiling unchanged. Focus on furniture, de
 
             # Load room image
             original_room_image = Image.open(original_room_image_path)
+            original_room_image = ImageOps.exif_transpose(original_room_image)
 
             # Download product images if provided
             downloaded_product_images = []
@@ -1135,7 +1142,8 @@ Technical Requirement: Preserve the exact input image aspect ratio."""
             
             # Load room image
             original_room_image = Image.open(original_room_image_path)
-            
+            original_room_image = ImageOps.exif_transpose(original_room_image)
+
             # Download all product images
             product_images = []
             product_titles = []

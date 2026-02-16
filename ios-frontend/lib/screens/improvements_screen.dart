@@ -48,7 +48,7 @@ String formatImprovementRecommendationTitle(String recommendation) {
 
 class ImprovementsScreen extends StatefulWidget {
   final VoidCallback? onBack;
-  final VoidCallback? onImprove;
+  final void Function(List<String> recsToSelect, bool needsColorSave, bool needsStyleSave)? onImprove;
 
   const ImprovementsScreen({super.key, this.onBack, this.onImprove});
 
@@ -290,67 +290,39 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
     }
   }
 
-  Future<void> _handleContinue() async {
+  void _handleContinue() {
     if (_isSubmitting) return;
     setState(() => _isSubmitting = true);
 
-    try {
-      final provider = Provider.of<ProjectProvider>(context, listen: false);
+    final provider = Provider.of<ProjectProvider>(context, listen: false);
 
-      // 1. Await color palette save
-      if (!_selectedActionIds.contains('color_palette') &&
-          provider.colorPalette == null) {
-        await provider.saveColorPalette(
-          context,
-          'ai_decide',
-          'Let AI Decide',
-          [],
-          letAiDecide: true,
-          background: false,
-        );
-      }
-
-      // 2. Await design style save
-      if (!_selectedActionIds.contains('design_style') &&
-          provider.designStyle == null) {
-        await provider.saveDesignStyle(
-          context,
-          'ai_decide',
-          'Let AI Decide',
-          letAiDecide: true,
-          background: false,
-        );
-      }
-
-      // 3. Atomic set of selected recommendations
-      final dynamicActions = _dynamicActions(provider);
-      final List<String> recsToSelect;
-      if (dynamicActions.isNotEmpty) {
-        final hasAnyRecommendationSelected = dynamicActions.any(
-          (action) => _selectedActionIds.contains(action.id),
-        );
-        if (hasAnyRecommendationSelected) {
-          // Only send the ones the user explicitly selected
-          recsToSelect = dynamicActions
-              .where((a) => _selectedActionIds.contains(a.id))
-              .map((a) => a.recommendation!)
-              .toList();
-        } else {
-          // Auto-select all if none were manually selected
-          recsToSelect = List<String>.from(provider.productRecommendations);
-        }
+    // Compute recsToSelect synchronously
+    final dynamicActions = _dynamicActions(provider);
+    final List<String> recsToSelect;
+    if (dynamicActions.isNotEmpty) {
+      final hasAnyRecommendationSelected = dynamicActions.any(
+        (action) => _selectedActionIds.contains(action.id),
+      );
+      if (hasAnyRecommendationSelected) {
+        recsToSelect = dynamicActions
+            .where((a) => _selectedActionIds.contains(a.id))
+            .map((a) => a.recommendation!)
+            .toList();
       } else {
         recsToSelect = List<String>.from(provider.productRecommendations);
       }
-      if (recsToSelect.isNotEmpty) {
-        await provider.setSelectedRecommendations(context, recsToSelect);
-      }
-
-      // 4. THEN proceed
-      widget.onImprove?.call();
-    } finally {
-      if (mounted) setState(() => _isSubmitting = false);
+    } else {
+      recsToSelect = List<String>.from(provider.productRecommendations);
     }
+
+    final needsColorSave = !_selectedActionIds.contains('color_palette') &&
+        provider.colorPalette == null;
+    final needsStyleSave = !_selectedActionIds.contains('design_style') &&
+        provider.designStyle == null;
+
+    // Navigate immediately — saves run behind the AnalyzingScreen.
+    // _isSubmitting resets naturally when the widget tree rebuilds on navigation.
+    widget.onImprove?.call(recsToSelect, needsColorSave, needsStyleSave);
   }
 
   void _openSettings() {
