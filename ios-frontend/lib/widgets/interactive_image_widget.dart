@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
+import '../models/shop_product.dart';
 
 typedef ImageBoundsCallback =
     Widget Function(
@@ -49,6 +50,38 @@ ImageDisplayBounds calculateImageDisplayBounds({
     displaySize: Size(displayedWidth, displayedHeight),
     displayOffset: Offset(offsetX, offsetY),
   );
+}
+
+/// Inset (in logical pixels) used to keep hotspot markers partially visible
+/// when clamped to the visible container edge under BoxFit.cover.
+const double kClampInset = 12.0;
+
+/// Maps a hotspot's normalized (0-1) coordinates to the top-left corner of its
+/// marker in rendered-image space.  When [visibleSize] is provided the marker
+/// center is clamped so it stays partially visible even if the image is cropped
+/// (BoxFit.cover).
+Offset mapHotspotToRenderedImageTopLeft(
+  ProductHotspot hotspot,
+  Size displaySize,
+  Offset displayOffset, {
+  double markerRadius = 20,
+  Size? visibleSize,
+}) {
+  final rawX = displayOffset.dx + (hotspot.x * displaySize.width);
+  final rawY = displayOffset.dy + (hotspot.y * displaySize.height);
+
+  // Clamp center to visible rect with inset so marker stays partially visible
+  final double cx, cy;
+  if (visibleSize != null) {
+    const inset = kClampInset;
+    cx = rawX.clamp(inset, visibleSize.width - inset);
+    cy = rawY.clamp(inset, visibleSize.height - inset);
+  } else {
+    cx = rawX;
+    cy = rawY;
+  }
+
+  return Offset(cx - markerRadius, cy - markerRadius);
 }
 
 class InteractiveImageWidget extends StatefulWidget {
@@ -185,29 +218,32 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
         return GestureDetector(
           onTapUp: _handleTap,
           behavior: HitTestBehavior.translucent,
-          child: SizedBox(
-            width: double.infinity,
-            height: double.infinity,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                // Main image
-                Image(
-                  image: widget.imageProvider,
-                  fit: widget.fit,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      color: Colors.grey[300],
-                      child: const Center(
-                        child: Icon(
-                          Icons.error_outline,
-                          size: 48,
-                          color: Colors.grey,
+          child: ClipRect(
+            child: SizedBox(
+              width: double.infinity,
+              height: double.infinity,
+              child: Stack(
+                clipBehavior: Clip.hardEdge,
+                fit: StackFit.expand,
+                children: [
+                  // Main image
+                  Image(
+                    image: widget.imageProvider,
+                    fit: widget.fit,
+                    gaplessPlayback: true,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color: Colors.grey[300],
+                        child: const Center(
+                          child: Icon(
+                            Icons.error_outline,
+                            size: 48,
+                            color: Colors.grey,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
 
                 // Overlay widgets (markers, etc.)
                 if (widget.overlayBuilder != null &&
@@ -256,7 +292,8 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
                       ),
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
           ),
         );

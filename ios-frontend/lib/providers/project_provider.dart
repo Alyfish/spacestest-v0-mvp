@@ -58,6 +58,7 @@ class ProjectProvider extends ChangeNotifier {
 
   // Generated image (from backend)
   Uint8List? _generatedImageBytes;
+  String? _generatedImageUrl;
 
   // Background save error callback (for optimistic UI pattern)
   void Function(String errorMessage)? onBackgroundSaveError;
@@ -131,6 +132,7 @@ class ProjectProvider extends ChangeNotifier {
   Map<String, dynamic>? get productSuggestions => _productSuggestions;
   Map<String, dynamic>? get trendingProducts => _trendingProducts;
   Uint8List? get generatedImageBytes => _generatedImageBytes;
+  String? get generatedImageUrl => _generatedImageUrl;
   String? get currentJobId => _currentJobId;
   int get jobProgress => _jobProgress;
   String? get jobPhase => _jobPhase;
@@ -1579,6 +1581,7 @@ class ProjectProvider extends ChangeNotifier {
     _productSuggestions = null;
     _trendingProducts = null;
     _generatedImageBytes = null;
+    _generatedImageUrl = null;
     _currentJobId = null;
     _pendingSearchJobId = null;
     _jobProgress = 0;
@@ -2310,6 +2313,7 @@ class ProjectProvider extends ChangeNotifier {
 
       final jobId = jobResponse['job_id'] as String;
       _currentJobId = jobId;
+      _generatedImageUrl = null;
       _jobProgress = 0;
       _jobPhase = 'Starting...';
       notifyListeners();
@@ -2330,14 +2334,32 @@ class ProjectProvider extends ChangeNotifier {
 
       switch (pollingResult.outcome) {
         case PollingOutcome.done:
-          _generatedImageBytes = await ApiService.getGeneratedImage(
+          // Try URL-first path (CDN-cached, ~200 bytes response)
+          final imageUrl = await ApiService.getGeneratedImageUrl(
             projectId,
             authToken,
           );
-          notifyListeners();
-          AppLogger.info(
-            'Inspiration design generated: ${_generatedImageBytes!.length} bytes',
-          );
+          if (imageUrl != null) {
+            _generatedImageUrl = imageUrl;
+            notifyListeners();
+            AppLogger.info('Inspiration design URL received: $imageUrl');
+            // Download bytes in background for offline fallback
+            ApiService.getGeneratedImage(projectId, authToken).then((bytes) {
+              _generatedImageBytes = bytes;
+              notifyListeners();
+            }).catchError((e) {
+              AppLogger.warning('Background bytes download failed: $e');
+            });
+          } else {
+            _generatedImageBytes = await ApiService.getGeneratedImage(
+              projectId,
+              authToken,
+            );
+            notifyListeners();
+            AppLogger.info(
+              'Inspiration design generated: ${_generatedImageBytes!.length} bytes',
+            );
+          }
           return true;
 
         case PollingOutcome.jobFailed:
@@ -3001,6 +3023,7 @@ class ProjectProvider extends ChangeNotifier {
       }
 
       _currentJobId = jobId;
+      _generatedImageUrl = null;
       _jobProgress = 0;
       _jobPhase = 'Starting...';
       notifyListeners();
@@ -3071,6 +3094,7 @@ class ProjectProvider extends ChangeNotifier {
               );
               jobId = jobResponse['job_id'] as String;
               _currentJobId = jobId;
+              _generatedImageUrl = null;
               _jobProgress = 0;
               _jobPhase = 'Starting...';
               notifyListeners();
@@ -3116,46 +3140,72 @@ class ProjectProvider extends ChangeNotifier {
       }
 
       // ═══ PHASE 3: FETCH IMAGE ═══
+      // Try URL-first path (CDN-cached, ~200 bytes response), fall back to bytes.
       // Keep _currentJobId alive for debugging until fetch completes.
+      bool urlFetched = false;
       try {
-        _generatedImageBytes = await ApiService.getGeneratedImage(
+        final imageUrl = await ApiService.getGeneratedImageUrl(
           projectId,
           authToken,
         );
+        if (imageUrl != null) {
+          _generatedImageUrl = imageUrl;
+          urlFetched = true;
+          notifyListeners();
+          AppLogger.info('[gen] phase=fetch url=$imageUrl');
+          // Download bytes in background for offline fallback
+          ApiService.getGeneratedImage(projectId, authToken).then((bytes) {
+            _generatedImageBytes = bytes;
+            notifyListeners();
+          }).catchError((e) {
+            AppLogger.warning('[gen] background bytes download failed: $e');
+          });
+        }
       } catch (e) {
-        final transient = _isTransientException(e);
-        AppLogger.warning(
-          '[gen] phase=fetch failed transient=$transient'
-          '${transient && !fetchRetryUsed ? ", retrying..." : ""}',
-        );
-        if (transient && !fetchRetryUsed) {
-          fetchRetryUsed = true;
-          onRetrying?.call();
-          await Future.delayed(const Duration(milliseconds: 1500));
-          try {
-            _generatedImageBytes = await ApiService.getGeneratedImage(
-              projectId,
-              authToken,
-            );
-          } catch (e2) {
-            AppLogger.error('[gen] phase=fetch retry failed', e2);
+        AppLogger.warning('[gen] phase=fetch_url failed: $e');
+      }
+
+      if (!urlFetched) {
+        try {
+          _generatedImageBytes = await ApiService.getGeneratedImage(
+            projectId,
+            authToken,
+          );
+        } catch (e) {
+          final transient = _isTransientException(e);
+          AppLogger.warning(
+            '[gen] phase=fetch failed transient=$transient'
+            '${transient && !fetchRetryUsed ? ", retrying..." : ""}',
+          );
+          if (transient && !fetchRetryUsed) {
+            fetchRetryUsed = true;
+            onRetrying?.call();
+            await Future.delayed(const Duration(milliseconds: 1500));
+            try {
+              _generatedImageBytes = await ApiService.getGeneratedImage(
+                projectId,
+                authToken,
+              );
+            } catch (e2) {
+              AppLogger.error('[gen] phase=fetch retry failed', e2);
+              _currentJobId = null;
+              notifyListeners();
+              _setError('Image generation failed: ${e2.toString()}');
+              return false;
+            }
+          } else {
             _currentJobId = null;
             notifyListeners();
-            _setError('Image generation failed: ${e2.toString()}');
+            _setError('Image generation failed: ${e.toString()}');
             return false;
           }
-        } else {
-          _currentJobId = null;
-          notifyListeners();
-          _setError('Image generation failed: ${e.toString()}');
-          return false;
         }
       }
 
       _currentJobId = null;
       notifyListeners();
       AppLogger.info(
-        '[gen] phase=fetch success bytes=${_generatedImageBytes!.length}',
+        '[gen] phase=fetch success urlFetched=$urlFetched bytes=${_generatedImageBytes?.length ?? 0}',
       );
       await _prepareDreamSpaceHotspots(authToken);
       return true;
@@ -3211,16 +3261,32 @@ class ProjectProvider extends ChangeNotifier {
         feedback,
       );
 
-      // Always refresh from canonical generated-image endpoint.
-      _generatedImageBytes = await ApiService.getGeneratedImage(
+      // Try URL-first, then fall back to bytes download.
+      final imageUrl = await ApiService.getGeneratedImageUrl(
         _currentProject!.id,
         authToken,
       );
-      notifyListeners();
+      if (imageUrl != null) {
+        _generatedImageUrl = imageUrl;
+        notifyListeners();
+        // Background bytes fetch for offline fallback
+        ApiService.getGeneratedImage(_currentProject!.id, authToken).then((bytes) {
+          _generatedImageBytes = bytes;
+          notifyListeners();
+        }).catchError((e) {
+          AppLogger.warning('Retry: background bytes download failed: $e');
+        });
+      } else {
+        _generatedImageBytes = await ApiService.getGeneratedImage(
+          _currentProject!.id,
+          authToken,
+        );
+        notifyListeners();
+      }
       await _prepareDreamSpaceHotspots(authToken);
 
       AppLogger.info(
-        'Retry redesign complete: ${_generatedImageBytes!.length} bytes',
+        'Retry redesign complete: url=${_generatedImageUrl != null} bytes=${_generatedImageBytes?.length ?? 0}',
       );
       return true;
     } catch (e) {

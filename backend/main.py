@@ -34,7 +34,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 from logger_config import setup_logging, add_request_id_middleware
-from async_utils import TTLCache
+import hashlib
+from async_utils import TTLCache, get_or_compute
 from e2e_test_support import (
     E2ETraceStore,
     load_e2e_config,
@@ -128,6 +129,12 @@ JOB_TTL_MINUTES = 30
 _E2E_STUB_PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMBAAOb5QkAAAAASUVORK5CYII="
 )
+
+
+def _image_id_from_url(url: str) -> str:
+    """Hash the storage path (strip query params) for a stable cache key."""
+    stable = url.split("?")[0] if url else ""
+    return hashlib.md5(stable.encode()).hexdigest()[:12]
 
 
 def _e2e_config_from_request(request: Optional[Request] = None):
@@ -2224,14 +2231,19 @@ async def get_generated_image(
     request: Request,
     user: AuthenticatedUser = Depends(get_current_user),
     x_e2e_test_secret: Optional[str] = Header(None, alias="X-E2E-Test-Secret"),
+    format: Optional[str] = Query(None),
 ):
     """Serve the generated image for a project.
 
     Handles three storage formats:
-      - Supabase Storage URL (http/https) → RedirectResponse
+      - Supabase Storage URL (http/https) → RedirectResponse (or JSON when format=url)
       - Base64 encoded data → decode and return as image/png
       - Local file path → FileResponse
     Checks inspiration_generated first (redesign flow), then generated (standard flow).
+
+    When ``?format=url`` is passed:
+      - If the image is a URL, return ``{"image_url": "…", "format": "url"}``
+      - Otherwise return ``{"image_url": null, "format": "bytes_only"}``
     """
     project = data_manager.get_project(project_id, user_id=user.id)
 
@@ -2239,6 +2251,8 @@ async def get_generated_image(
         raise HTTPException(status_code=404, detail="Project not found")
 
     if _is_e2e_stub_enabled(x_e2e_test_secret, request=request):
+        if format == "url":
+            return JSONResponse({"image_url": None, "format": "bytes_only"})
         from fastapi.responses import Response
 
         return Response(
@@ -2255,9 +2269,17 @@ async def get_generated_image(
     image_data = context.inspiration_generated_image_base64 or context.generated_image_base64
 
     if not image_data:
+        if format == "url":
+            return JSONResponse({"image_url": None, "format": "bytes_only"})
         raise HTTPException(
             status_code=404, detail="No generated image found for this project"
         )
+
+    # URL-only mode: return the URL as JSON instead of redirecting/streaming bytes
+    if format == "url":
+        if image_data.startswith("http"):
+            return JSONResponse({"image_url": image_data, "format": "url"})
+        return JSONResponse({"image_url": None, "format": "bytes_only"})
 
     # Supabase Storage URL → redirect
     if image_data.startswith("http"):
@@ -2375,14 +2397,36 @@ async def analyze_furniture_batch(
         )
 
     try:
-        # Call data manager to analyze all selections
-        analysis_results = data_manager.analyze_furniture_batch(
-            project_id,
-            req.selections,
-            image_type=req.image_type,
-            mode=req.mode,
+        # Build singleflight key including image_id, mode, and selections hash
+        image_url = ""
+        if hasattr(data_manager, "_get_image_url"):
+            image_url = data_manager._get_image_url(project_id, req.image_type) or ""
+        image_id = _image_id_from_url(image_url)
+        selections_hash = hashlib.md5(
+            json.dumps(
+                [{"x": s.x, "y": s.y, "id": s.id} for s in req.selections],
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()[:12]
+        sf_key = f"analyze_batch:{project_id}:{req.image_type}:{image_id}:{req.mode}:{selections_hash}"
+
+        async def _compute():
+            return await asyncio.to_thread(
+                data_manager.analyze_furniture_batch,
+                project_id,
+                req.selections,
+                image_type=req.image_type,
+                mode=req.mode,
+            )
+
+        analysis_results = await get_or_compute(
+            in_flight=request.app.state.in_flight,
+            cache=request.app.state.image_cache,
+            key=sf_key,
+            compute_fn=_compute,
+            ttl=300,
         )
-        
+
         return BatchFurnitureAnalysisResponse(
             project_id=project_id,
             selections=analysis_results["selections"],
@@ -2536,7 +2580,24 @@ async def auto_detect(
         }
 
     try:
-        result = data_manager.auto_detect_furniture(project_id, image_type=image_type)
+        image_url = ""
+        if hasattr(data_manager, "_get_image_url"):
+            image_url = data_manager._get_image_url(project_id, image_type) or ""
+        image_id = _image_id_from_url(image_url)
+        sf_key = f"auto_detect:{project_id}:{image_type}:{image_id}"
+
+        async def _compute():
+            return await asyncio.to_thread(
+                data_manager.auto_detect_furniture, project_id, image_type=image_type
+            )
+
+        result = await get_or_compute(
+            in_flight=request.app.state.in_flight,
+            cache=request.app.state.image_cache,
+            key=sf_key,
+            compute_fn=_compute,
+            ttl=300,
+        )
         payload = {"project_id": project_id, **result}
         payload.setdefault("resolved_image_type", image_type)
         return payload
@@ -3118,7 +3179,7 @@ async def get_project_job_status(
     if job.user_id and job.user_id != user.id:
         raise HTTPException(403, "Not authorized to view this job")
 
-    return {
+    response = {
         "job_id": job.id,
         "status": job.status,
         "progress_pct": job.progress_pct,
@@ -3129,6 +3190,13 @@ async def get_project_job_status(
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }
+    # Surface timing data when available
+    if job.status == "done" and job.result:
+        if "timings_ms" in job.result:
+            response["timings_ms"] = job.result["timings_ms"]
+        if "total_ms" in job.result:
+            response["total_ms"] = job.result["total_ms"]
+    return response
 
 
 @app.get("/projects/{project_id}/jobs")

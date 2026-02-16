@@ -7,19 +7,6 @@ import '../widgets/app_bottom_nav_bar.dart';
 import '../widgets/interactive_image_widget.dart';
 import 'main_navigation_screen.dart';
 
-@visibleForTesting
-Offset mapHotspotToRenderedImageTopLeft(
-  ProductHotspot hotspot,
-  Size displaySize,
-  Offset displayOffset, {
-  double markerRadius = 20,
-}) {
-  return Offset(
-    displayOffset.dx + (hotspot.x * displaySize.width) - markerRadius,
-    displayOffset.dy + (hotspot.y * displaySize.height) - markerRadius,
-  );
-}
-
 /// Dream Space Screen - Shows the generated room with tappable product hotspots
 class DreamSpaceScreen extends StatefulWidget {
   final VoidCallback? onRetry;
@@ -120,6 +107,9 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen> {
   }
 
   ImageProvider _getGeneratedImageProvider(ProjectProvider provider) {
+    if (provider.generatedImageUrl != null) {
+      return NetworkImage(provider.generatedImageUrl!);
+    }
     final imageBytes = provider.generatedImageBytes;
     if (imageBytes != null) {
       return MemoryImage(imageBytes);
@@ -135,27 +125,34 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen> {
       color: Colors.black,
       child: InteractiveImageWidget(
         imageProvider: _getGeneratedImageProvider(provider),
-        fit: BoxFit.contain,
+        fit: BoxFit.cover,
         onImageTap: _handleImageTap,
         overlayBuilder: (imageWidth, imageHeight, displaySize, displayOffset) {
-          return Stack(
-            children: hotspots.map((hotspot) {
-              final markerTopLeft = mapHotspotToRenderedImageTopLeft(
-                hotspot,
-                displaySize,
-                displayOffset,
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final visibleSize = Size(constraints.maxWidth, constraints.maxHeight);
+              return Stack(
+                clipBehavior: Clip.hardEdge,
+                children: hotspots.map((hotspot) {
+                  final markerTopLeft = mapHotspotToRenderedImageTopLeft(
+                    hotspot,
+                    displaySize,
+                    displayOffset,
+                    visibleSize: visibleSize,
+                  );
+                  return Positioned(
+                    left: markerTopLeft.dx,
+                    top: markerTopLeft.dy,
+                    child: GestureDetector(
+                      key: ValueKey<String>('auto_hotspot_${hotspot.id}'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => widget.onHotspotTap?.call(hotspot),
+                      child: _HotspotMarker(label: hotspot.label),
+                    ),
+                  );
+                }).toList(),
               );
-              return Positioned(
-                left: markerTopLeft.dx,
-                top: markerTopLeft.dy,
-                child: GestureDetector(
-                  key: ValueKey<String>('auto_hotspot_${hotspot.id}'),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => widget.onHotspotTap?.call(hotspot),
-                  child: _HotspotMarker(label: hotspot.label),
-                ),
-              );
-            }).toList(),
+            },
           );
         },
       ),
@@ -249,11 +246,10 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen> {
     if (imageProvider != null) {
       return Container(
         color: Colors.black,
-        child: Image(
-          image: imageProvider,
-          fit: BoxFit.contain,
-          width: double.infinity,
-          height: double.infinity,
+        child: InteractiveImageWidget(
+          imageProvider: imageProvider,
+          fit: BoxFit.cover,
+          onImageTap: (_, __) {}, // no-op, view-only
         ),
       );
     }

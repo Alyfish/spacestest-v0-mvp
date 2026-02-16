@@ -20,6 +20,7 @@ import os
 import random
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -61,6 +62,33 @@ STATUS_ORDER = [
 MARKERS_SAVED_STATUS = "IMPROVEMENT_MARKERS_SAVED"
 
 STORAGE_BUCKET = "project-images"
+
+# ── URL metadata micro-cache (thread-safe, sync context) ──
+_url_meta_cache: Dict[str, tuple] = {}  # {url: ({title, image_url, store_domain}, expiry)}
+_url_meta_lock = threading.Lock()
+_URL_META_TTL = 24 * 60 * 60  # 24 hours
+_URL_META_MAX_SIZE = 5000
+
+
+def _get_url_meta(url: str) -> Optional[Dict[str, str]]:
+    """Retrieve cached URL metadata if present and not expired."""
+    with _url_meta_lock:
+        entry = _url_meta_cache.get(url)
+        if entry is None:
+            return None
+        meta, expiry = entry
+        if time.time() >= expiry:
+            del _url_meta_cache[url]
+            return None
+        return meta
+
+
+def _set_url_meta(url: str, meta: Dict[str, str]) -> None:
+    """Store URL metadata in the cache with TTL."""
+    with _url_meta_lock:
+        if len(_url_meta_cache) >= _URL_META_MAX_SIZE:
+            _url_meta_cache.clear()  # simple full-clear; rare event
+        _url_meta_cache[url] = (meta, time.time() + _URL_META_TTL)
 
 
 class SupabaseDataManager:
@@ -3381,7 +3409,7 @@ Create a photorealistic complete redesign of this room."""
             return "full"
         return normalized
 
-    def _analysis_mode_profile(self, mode: str) -> Dict[str, float]:
+    def _analysis_mode_profile(self, mode: str) -> Dict[str, Any]:
         """Per-mode execution budgets for bounded request latency."""
         if mode == "fast_prefetch":
             return {
@@ -3391,9 +3419,12 @@ Create a photorealistic complete redesign of this room."""
                 "clip_timeout": 0.5,
                 "imgbb_timeout": 3.0,
                 "lens_timeout": 4.0,
-                "exa_search_timeout": 0.5,
-                "exa_validate_timeout": 0.5,
-                "bed_components_timeout": 0.5,
+                "exa_search_timeout": 0.0,
+                "exa_validate_timeout": 0.0,
+                "bed_components_timeout": 0.0,
+                "batch_timeout_s": 25.0,
+                "max_results_per_selection": 8,
+                "max_products_returned_per_selection": 6,
             }
         return {
             "selection_budget_s": 30.0,
@@ -3405,6 +3436,9 @@ Create a photorealistic complete redesign of this room."""
             "exa_search_timeout": 6.0,
             "exa_validate_timeout": 6.0,
             "bed_components_timeout": 6.0,
+            "batch_timeout_s": 120.0,
+            "max_results_per_selection": 12,
+            "max_products_returned_per_selection": 12,
         }
 
     def _log_analysis_step(
@@ -3525,7 +3559,44 @@ Create a photorealistic complete redesign of this room."""
             except Exception:
                 detector = None
 
+        batch_timeout_s = profile.get("batch_timeout_s", 120.0)
+        max_products_per_sel = profile.get("max_products_returned_per_selection", 12)
+
         for idx, sel in enumerate(selections):
+            # Enforce batch-level timeout: emit schema-valid empties for remaining
+            if time.monotonic() - batch_started >= batch_timeout_s:
+                for remaining_idx in range(idx, len(selections)):
+                    remaining_id = self._extract_selection_id(selections[remaining_idx], remaining_idx)
+                    results.append(
+                        self._build_furniture_analysis_item(
+                            selection_id=remaining_id,
+                            label="furniture",
+                            confidence=0.0,
+                            style="",
+                            material="",
+                            color="",
+                            search_query="furniture buy online",
+                            products=[],
+                            is_bed=False,
+                            click_x=0.5,
+                            click_y=0.5,
+                            error="batch_timeout",
+                        )
+                    )
+                self.logger.warning(
+                    "Batch timeout reached, skipping remaining selections",
+                    extra={
+                        "project_id": project_id,
+                        "extra_data": {
+                            "mode": normalized_mode,
+                            "batch_timeout_s": batch_timeout_s,
+                            "completed": idx,
+                            "total": len(selections),
+                        },
+                    },
+                )
+                break
+
             selection_started = time.monotonic()
             selection_id = self._extract_selection_id(sel, idx)
             click_x = 0.5
@@ -3734,7 +3805,7 @@ Create a photorealistic complete redesign of this room."""
                         lens_results = self._run_with_timeout(
                             lambda: self.serp_client.reverse_image_search(
                                 imgbb_url,
-                                num_results=12 if normalized_mode == "full" else 8,
+                                num_results=profile.get("max_results_per_selection", 12),
                             ),
                             step_timeout("lens_timeout"),
                             [],
@@ -3745,15 +3816,37 @@ Create a photorealistic complete redesign of this room."""
                             timeout_counts=timeout_counts,
                         )
                         for i, r in enumerate(lens_results or []):
-                            product = {
-                                "title": r.get("title", ""),
-                                "url": r.get("link", r.get("url", "")),
-                                "thumbnail": r.get("thumbnail", ""),
-                                "image_url": r.get("thumbnail", ""),
-                                "source": r.get("source", ""),
-                                "store": r.get("source", ""),
-                                "similarity_score": max(0.7, 1.0 - i * 0.025),
-                            }
+                            product_url = r.get("link", r.get("url", ""))
+                            cached_meta = _get_url_meta(product_url) if product_url else None
+                            if cached_meta:
+                                product = {
+                                    "title": cached_meta["title"],
+                                    "url": product_url,
+                                    "thumbnail": cached_meta["image_url"],
+                                    "image_url": cached_meta["image_url"],
+                                    "source": cached_meta["store_domain"],
+                                    "store": cached_meta["store_domain"],
+                                    "similarity_score": max(0.7, 1.0 - i * 0.025),
+                                }
+                            else:
+                                title = r.get("title", "")
+                                image_url = r.get("thumbnail", "")
+                                store_domain = r.get("source", "")
+                                product = {
+                                    "title": title,
+                                    "url": product_url,
+                                    "thumbnail": image_url,
+                                    "image_url": image_url,
+                                    "source": store_domain,
+                                    "store": store_domain,
+                                    "similarity_score": max(0.7, 1.0 - i * 0.025),
+                                }
+                                if product_url:
+                                    _set_url_meta(product_url, {
+                                        "title": title,
+                                        "image_url": image_url,
+                                        "store_domain": store_domain,
+                                    })
                             search_products.append(product)
                             lens_products.append(product)
 
@@ -3804,7 +3897,7 @@ Create a photorealistic complete redesign of this room."""
                         mode=normalized_mode,
                         timeout_counts=timeout_counts,
                     )
-                search_products = search_products[:12]
+                search_products = search_products[:max_products_per_sel]
 
                 is_bed = self._is_actual_bed(label)
                 bed_components = None
@@ -3840,8 +3933,11 @@ Create a photorealistic complete redesign of this room."""
                 if is_bed and not search_products and bed_components:
                     search_products = self._flatten_bed_component_products(
                         bed_components,
-                        max_items=12,
+                        max_items=max_products_per_sel,
                     )
+
+                # Enforce per-selection product cap from profile
+                search_products = search_products[:max_products_per_sel]
 
                 results.append(
                     self._build_furniture_analysis_item(

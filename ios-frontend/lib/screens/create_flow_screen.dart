@@ -404,6 +404,8 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                   onTimeout: () => false,
                 );
 
+            if (!mounted) return;
+
             // Phase 2: Ensure recommendations loaded
             // (likely already done — started at Choose Approach ~10-20s ago)
             await provider
@@ -436,6 +438,7 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                     'Finding your perfect products...';
               }
 
+              if (!mounted) return;
               await Future.wait([
                 provider.refreshProductSuggestionsSnapshot(context),
                 provider.preloadTrendingProducts(context),
@@ -535,6 +538,7 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
             _pendingNeedsColorSave = false;
             _pendingNeedsStyleSave = false;
 
+            if (!mounted) return;
             if (provider.productRecommendations.isEmpty) {
               final recommendationsReady = await provider
                   .ensureRecommendationsLoaded(context);
@@ -564,6 +568,23 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               );
             }
             _pendingRetryFeedback = null;
+
+            // Pre-decode generated image so DreamSpaceScreen mounts without jank
+            if (provider.generatedImageUrl != null && mounted) {
+              try {
+                await precacheImage(
+                  NetworkImage(provider.generatedImageUrl!),
+                  context,
+                ).timeout(const Duration(seconds: 3), onTimeout: () {});
+              } catch (_) {}
+            } else if (provider.generatedImageBytes != null && mounted) {
+              try {
+                await precacheImage(
+                  MemoryImage(provider.generatedImageBytes!),
+                  context,
+                ).timeout(const Duration(milliseconds: 500), onTimeout: () {});
+              } catch (_) {}
+            }
           },
         );
 
@@ -590,6 +611,23 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               throw Exception(
                 provider.errorMessage ?? 'Failed to generate inspired design',
               );
+            }
+
+            // Pre-decode generated image so DreamSpaceScreen mounts without jank
+            if (provider.generatedImageUrl != null && mounted) {
+              try {
+                await precacheImage(
+                  NetworkImage(provider.generatedImageUrl!),
+                  context,
+                ).timeout(const Duration(seconds: 3), onTimeout: () {});
+              } catch (_) {}
+            } else if (provider.generatedImageBytes != null && mounted) {
+              try {
+                await precacheImage(
+                  MemoryImage(provider.generatedImageBytes!),
+                  context,
+                ).timeout(const Duration(milliseconds: 500), onTimeout: () {});
+              } catch (_) {}
             }
           },
         );

@@ -1199,6 +1199,31 @@ class ApiService {
   /// Unlike other methods, this returns raw bytes (Uint8List) instead of JSON.
   /// The backend may return a FileResponse (image/png) or a 302 redirect to
   /// a Supabase Storage URL — the http package follows redirects automatically.
+  /// Fetch just the CDN URL of the generated image (fast, ~200 bytes response).
+  /// Returns `null` when the backend stores the image as bytes/base64 only.
+  static Future<String?> getGeneratedImageUrl(
+    String projectId,
+    String authToken,
+  ) async {
+    _requireProjectId(projectId);
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.withProjectId(ApiConstants.generatedImage, projectId)}?format=url',
+      );
+      final response = await http
+          .get(url, headers: ApiConstants.authHeaders(authToken))
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return data['image_url'] as String?;
+      }
+      return null;
+    } catch (e) {
+      AppLogger.warning('getGeneratedImageUrl failed: $e');
+      return null;
+    }
+  }
+
   static Future<Uint8List> getGeneratedImage(
     String projectId,
     String authToken,
@@ -1383,6 +1408,14 @@ class ApiService {
   // Job Polling
   // ==========================================================================
 
+  /// Return an adaptive poll interval that starts fast (1 s) and backs off
+  /// as the job takes longer (2 s after 20 s, 5 s after 60 s).
+  static Duration _adaptivePollInterval(Duration elapsed) {
+    if (elapsed.inSeconds < 20) return const Duration(seconds: 1);
+    if (elapsed.inSeconds < 60) return const Duration(seconds: 2);
+    return const Duration(seconds: 5);
+  }
+
   /// Poll a background job until completion, failure, or timeout.
   /// Returns a [PollingResult] describing the outcome instead of throwing.
   /// Transient network errors are retried with exponential backoff.
@@ -1430,7 +1463,7 @@ class ApiService {
           case 'queued':
           case 'processing':
             onProgress?.call(progressPct, phase);
-            await Future.delayed(pollInterval);
+            await Future.delayed(_adaptivePollInterval(stopwatch.elapsed));
             break;
           default:
             AppLogger.error('Job $jobId unknown status: $jobStatus');
