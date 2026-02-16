@@ -194,6 +194,22 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
   }
 
   void _handleCardTap(_ImprovementCardData data) {
+    // If already selected, deselect and clear provider state
+    if (_selectedActionIds.contains(data.id)) {
+      setState(() {
+        _selectedActionIds.remove(data.id);
+        _selectionDetails.remove(data.id);
+      });
+      final provider = Provider.of<ProjectProvider>(context, listen: false);
+      if (data.id == 'color_palette') {
+        provider.clearColorPalette();
+      } else if (data.id == 'design_style') {
+        provider.clearDesignStyle();
+      }
+      return;
+    }
+
+    // Not selected — open picker
     if (data.id == 'color_palette') {
       _openColorPalette();
     } else if (data.id == 'design_style') {
@@ -709,12 +725,8 @@ class _ColorPaletteSelectionScreenState
     _selectedPalette = provider.colorPalette;
   }
 
-  void _clearSelection() {
-    setState(() => _selectedPalette = null);
-  }
-
   void _selectPalette(String id) {
-    setState(() => _selectedPalette = id);
+    setState(() => _selectedPalette = _selectedPalette == id ? null : id);
   }
 
   Future<void> _handleContinue() async {
@@ -864,42 +876,16 @@ class _ColorPaletteSelectionScreenState
               ),
             ),
 
-            // Title row with Clear All
+            // Title
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Choose Colors.',
-                    style: AppTheme.dmSans(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: _clearSelection,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.textPrimary,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        'Clear All',
-                        style: AppTheme.dmSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              child: Text(
+                'Choose Colors.',
+                style: AppTheme.dmSans(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary,
+                ),
               ),
             ),
 

@@ -74,12 +74,8 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
     _selectedStyle = provider.designStyle;
   }
 
-  void _clearSelection() {
-    setState(() => _selectedStyle = null);
-  }
-
   void _selectStyle(String id) {
-    setState(() => _selectedStyle = id);
+    setState(() => _selectedStyle = _selectedStyle == id ? null : id);
   }
 
   Future<void> _handleContinue() async {
@@ -215,42 +211,16 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
               ),
             ),
 
-            // Title row with Clear All
+            // Title
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Choose Style.',
-                    style: AppTheme.dmSans(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: _clearSelection,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.textPrimary,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        'Clear All',
-                        style: AppTheme.dmSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              child: Text(
+                'Choose Style.',
+                style: AppTheme.dmSans(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary,
+                ),
               ),
             ),
 
@@ -504,12 +474,8 @@ class _DesignStyleSelectionContentState
     _selectedStyle = provider.designStyle;
   }
 
-  void _clearSelection() {
-    setState(() => _selectedStyle = null);
-  }
-
   void _selectStyle(String id) {
-    setState(() => _selectedStyle = id);
+    setState(() => _selectedStyle = _selectedStyle == id ? null : id);
   }
 
   Future<void> _handleContinue() async {
@@ -575,42 +541,16 @@ class _DesignStyleSelectionContentState
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Title row with Clear All
+        // Title
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Choose Style.',
-                style: AppTheme.dmSans(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.textPrimary,
-                ),
-              ),
-              GestureDetector(
-                onTap: _clearSelection,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppTheme.textPrimary,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    'Clear All',
-                    style: AppTheme.dmSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+          child: Text(
+            'Choose Style.',
+            style: AppTheme.dmSans(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
           ),
         ),
 

@@ -481,10 +481,12 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
         );
 
       case CreateFlowStep.improvementsAnalyzing:
+        _analyzingSubtitleNotifier ??= ValueNotifier<String?>(null);
         return AnalyzingScreen(
           onBack: _goBack,
           title: 'Redesigning Your Space and\nFinding Products..',
           subtitle: 'Please wait a moment while we prepare\nyour new space',
+          subtitleNotifier: _analyzingSubtitleNotifier,
           onComplete: () => _goToStep(CreateFlowStep.dreamSpace),
           asyncWork: () async {
             final provider = Provider.of<ProjectProvider>(
@@ -494,6 +496,7 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
             if (provider.productRecommendations.isEmpty) {
               final recommendationsReady = await provider
                   .ensureRecommendationsLoaded(context);
+              if (!mounted) return;
               if (!recommendationsReady) {
                 throw Exception(
                   provider.errorMessage ??
@@ -505,8 +508,14 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                 _pendingRetryFeedback != null &&
                 _pendingRetryFeedback!.trim().isNotEmpty;
             final success = isRetry
-                ? await provider.retryDesignImage(_pendingRetryFeedback!)
-                : await provider.generateDesignImage();
+                ? await provider.retryDesignImage(
+                    _pendingRetryFeedback!,
+                    onRetrying: () => _analyzingSubtitleNotifier?.value = 'Reconnecting...',
+                  )
+                : await provider.generateDesignImage(
+                    onRetrying: () => _analyzingSubtitleNotifier?.value = 'Reconnecting...',
+                  );
+            _analyzingSubtitleNotifier?.value = null;
             if (!success) {
               throw Exception(
                 provider.errorMessage ?? 'Failed to generate design image',
@@ -517,17 +526,24 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
         );
 
       case CreateFlowStep.inspirationAnalyzing:
+        _analyzingSubtitleNotifier ??= ValueNotifier<String?>(null);
         return AnalyzingScreen(
           onBack: _goBack,
           title: 'Creating Your Inspired\nDesign..',
           subtitle: 'We\'re redesigning your room to match\nyour inspiration',
+          subtitleNotifier: _analyzingSubtitleNotifier,
           onComplete: () => _goToStep(CreateFlowStep.dreamSpace),
           asyncWork: () async {
             final provider = Provider.of<ProjectProvider>(
               context,
               listen: false,
             );
-            final success = await provider.generateInspirationDirectly(context);
+            if (!mounted) return;
+            final success = await provider.generateInspirationDirectly(
+              context,
+              onRetrying: () => _analyzingSubtitleNotifier?.value = 'Reconnecting...',
+            );
+            _analyzingSubtitleNotifier?.value = null;
             if (!success) {
               throw Exception(
                 provider.errorMessage ?? 'Failed to generate inspired design',

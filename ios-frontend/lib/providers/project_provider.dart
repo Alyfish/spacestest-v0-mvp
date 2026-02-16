@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' show min;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -16,6 +17,8 @@ enum ProjectStatus { idle, creating, loading, ready, uploading, error }
 
 enum SearchFailureReason { none, jobFailed, networkError, timeout }
 
+enum _RetryAction { resumePoll, restartJob, giveUp }
+
 class ProjectProvider extends ChangeNotifier {
   /// Set to true to bypass all API calls and use mock data for UI testing
   static const bool demoMode = false;
@@ -26,10 +29,17 @@ class ProjectProvider extends ChangeNotifier {
     defaultValue: true,
   );
   static const int dreamSpaceHotspotCount = 5;
+  static const int dreamSpaceReadinessThreshold = 3;
+  static const Duration dreamSpaceReadinessTimeout = Duration(seconds: 12);
+  static const Duration rescuePrewarmPerHotspotTimeout = Duration(seconds: 18);
+  static const Duration tapTimeFallbackTimeout = Duration(seconds: 25);
+  static const Duration _rescueTotalTimeout = Duration(seconds: 60);
+  static const int _rescueMaxConsecutiveFailures = 3;
   static const String dreamSpaceImageType = 'active';
   Project? _currentProject;
   ProjectStatus _status = ProjectStatus.idle;
   String? _errorMessage;
+  bool _lastErrorTransient = false;
   final List<ImprovementMarker> _markers = [];
   final Uuid _uuid = const Uuid();
 
@@ -58,6 +68,10 @@ class ProjectProvider extends ChangeNotifier {
   int _jobProgress = 0;
   String? _jobPhase;
 
+  // Generation retry state
+  Future<bool>? _generateDesignFuture; // concurrency guard
+  bool _generationRetrying = false; // optional UX flag
+
   // Base image upload tracking
   Future<bool>? _projectImageUploadFuture;
   bool _isProjectImageUploading = false;
@@ -72,6 +86,9 @@ class ProjectProvider extends ChangeNotifier {
   // Search failure reason (for UI differentiation)
   SearchFailureReason _searchFailureReason = SearchFailureReason.none;
 
+  // Rescue / readiness-gate state
+  int _dreamSpaceImageVersion = 0;
+
   // Furniture analysis results
   Map<String, dynamic>? _furnitureAnalysis;
   Map<String, dynamic>? _processedFurniture;
@@ -79,6 +96,8 @@ class ProjectProvider extends ChangeNotifier {
   final Map<String, Map<String, dynamic>> _prefetchedFurnitureByHotspotId = {};
   Completer<bool>? _furniturePrefetchCompleter;
   final Map<String, Completer<bool>> _robustHotspotAnalysisCompleters = {};
+  final Map<String, Completer<bool>> _rescueHotspotCompleters = {};
+  final Set<String> _userTappedHotspots = {};
 
   // Getters
   Project? get currentProject => _currentProject;
@@ -115,6 +134,7 @@ class ProjectProvider extends ChangeNotifier {
   String? get currentJobId => _currentJobId;
   int get jobProgress => _jobProgress;
   String? get jobPhase => _jobPhase;
+  bool get generationRetrying => _generationRetrying;
   bool get isRecommendationsLoading =>
       _recommendationsCompleter != null &&
       !_recommendationsCompleter!.isCompleted;
@@ -139,18 +159,31 @@ class ProjectProvider extends ChangeNotifier {
       _hasImageBackedPayload(_productSuggestions) ||
       _hasImageBackedPayload(_trendingProducts);
 
+  int get readyHotspotCount =>
+      _detectedHotspots.where((h) => hasProductsForHotspot(h.id)).length;
+
+  int get _effectiveReadinessThreshold => _detectedHotspots.isEmpty
+      ? 0
+      : min(dreamSpaceReadinessThreshold, _detectedHotspots.length);
+
+  bool get hotspotsReadyForDreamSpace =>
+      _detectedHotspots.isEmpty ||
+      readyHotspotCount >= _effectiveReadinessThreshold;
+
   void _setStatus(ProjectStatus status) {
     _status = status;
     notifyListeners();
   }
 
-  void _setError(String error) {
+  void _setError(String error, {bool transient = false}) {
     _errorMessage = error;
+    _lastErrorTransient = transient;
     _setStatus(ProjectStatus.error);
   }
 
   void clearError() {
     _errorMessage = null;
+    _lastErrorTransient = false;
     if (_status == ProjectStatus.error) {
       _setStatus(
         _currentProject != null ? ProjectStatus.ready : ProjectStatus.idle,
@@ -436,12 +469,14 @@ class ProjectProvider extends ChangeNotifier {
     if (selection == null) return false;
 
     final products = selection['products'];
-    if (products is List && products.isNotEmpty) return true;
+    if (products is List && products.any((p) => p is Map<String, dynamic>))
+      return true;
 
     final bedComponents = selection['bed_components'];
     if (bedComponents is Map) {
       for (final rawProducts in bedComponents.values) {
-        if (rawProducts is List && rawProducts.isNotEmpty) {
+        if (rawProducts is List &&
+            rawProducts.any((p) => p is Map<String, dynamic>)) {
           return true;
         }
       }
@@ -504,6 +539,7 @@ class ProjectProvider extends ChangeNotifier {
     String authToken,
     Map<String, dynamic> selection, {
     required String imageType,
+    Duration? timeout,
   }) {
     return ApiService.analyzeFurnitureBatch(
       projectId,
@@ -511,7 +547,7 @@ class ProjectProvider extends ChangeNotifier {
       [selection],
       imageType: imageType,
       mode: 'full',
-      timeout: const Duration(seconds: 90),
+      timeout: timeout ?? tapTimeFallbackTimeout,
     );
   }
 
@@ -731,6 +767,29 @@ class ProjectProvider extends ChangeNotifier {
   void debugSetGeneratedImageBytes(Uint8List? bytes) {
     _generatedImageBytes = bytes;
     notifyListeners();
+  }
+
+  @visibleForTesting
+  void debugResetHotspotPrefetchState() {
+    _resetHotspotPrefetchStateForNewImage();
+  }
+
+  @visibleForTesting
+  int get currentDreamSpaceImageVersion => _dreamSpaceImageVersion;
+
+  @visibleForTesting
+  Future<void> testRunConcurrentRescue({
+    required List<ProductHotspot> emptyHotspots,
+    required String authToken,
+    required int version,
+    VoidCallback? onEachComplete,
+  }) {
+    return _runConcurrentRescue(
+      emptyHotspots: emptyHotspots,
+      authToken: authToken,
+      version: version,
+      onEachComplete: onEachComplete,
+    );
   }
 
   // Create a new project
@@ -1257,6 +1316,16 @@ class ProjectProvider extends ChangeNotifier {
       context,
       List<String>.from(_currentProject!.preferredStores),
     );
+  }
+
+  void clearColorPalette() {
+    _currentProject?.designPreferences.remove('colorPalette');
+    notifyListeners();
+  }
+
+  void clearDesignStyle() {
+    _currentProject?.designPreferences.remove('designStyle');
+    notifyListeners();
   }
 
   /// Save color palette selection (triggers AI color analysis on backend)
@@ -2169,7 +2238,21 @@ class ProjectProvider extends ChangeNotifier {
   /// Generate design directly from inspiration images, skipping the
   /// recommendations/improvements steps. Used by the "Generate with Inspiration"
   /// approach shortcut flow.
-  Future<bool> generateInspirationDirectly(BuildContext context) async {
+  ///
+  /// [onRetrying] is invoked when a transient failure triggers an automatic
+  /// retry, allowing the UI to show a "Reconnecting..." label.
+  Future<bool> generateInspirationDirectly(
+    BuildContext context, {
+    void Function()? onRetrying,
+  }) async {
+    return _withTransientRetry(
+      () => _generateInspirationDirectlyOnce(context),
+      'generateInspirationDirectly',
+      onRetrying: onRetrying,
+    );
+  }
+
+  Future<bool> _generateInspirationDirectlyOnce(BuildContext context) async {
     if (_currentProject == null) {
       _setError('No active project');
       return false;
@@ -2216,8 +2299,7 @@ class ProjectProvider extends ChangeNotifier {
       }
 
       // 3. Kick off the inspiration redesign generation
-      final idempotencyKey =
-          '${projectId}_inspiration_direct_${DateTime.now().millisecondsSinceEpoch}';
+      final idempotencyKey = '${projectId}_inspiration_direct';
 
       AppLogger.info('Starting direct inspiration design generation...');
       final jobResponse = await ApiService.startInspirationRedesign(
@@ -2263,32 +2345,36 @@ class ProjectProvider extends ChangeNotifier {
           return false;
 
         case PollingOutcome.networkFailed:
-          _setError(pollingResult.errorMessage ?? 'Network connection lost');
+          _setError(pollingResult.errorMessage ?? 'Network connection lost', transient: true);
           return false;
 
         case PollingOutcome.timedOut:
-          _setError(pollingResult.errorMessage ?? 'Request timed out');
+          _setError(pollingResult.errorMessage ?? 'Request timed out', transient: true);
           return false;
       }
     } catch (e) {
       AppLogger.error('Failed to generate inspiration design directly', e);
       _currentJobId = null;
-      _setError('Inspiration design generation failed: ${e.toString()}');
+      _setError('Inspiration design generation failed: ${e.toString()}', transient: _isTransientException(e));
       return false;
     }
   }
 
   void _resetHotspotPrefetchStateForNewImage() {
+    _dreamSpaceImageVersion += 1;
     _furnitureAnalysis = null;
     _detectedHotspots = [];
     _prefetchedFurnitureByHotspotId.clear();
     _furniturePrefetchCompleter = null;
     _robustHotspotAnalysisCompleters.clear();
+    _rescueHotspotCompleters.clear();
+    _userTappedHotspots.clear();
     notifyListeners();
   }
 
   Future<void> _prepareDreamSpaceHotspots(String authToken) async {
     _resetHotspotPrefetchStateForNewImage();
+    final version = _dreamSpaceImageVersion;
 
     final prefetched = await primeFurnitureHotspotsAndPrefetch(
       authToken: authToken,
@@ -2296,20 +2382,30 @@ class ProjectProvider extends ChangeNotifier {
     );
     if (!prefetched) {
       AppLogger.warning(
-        'Furniture hotspot prefetch did not complete successfully (imageType=$dreamSpaceAnalysisImageType)',
+        'Furniture hotspot prefetch did not complete successfully '
+        '(imageType=$dreamSpaceAnalysisImageType)',
       );
     }
 
-    await prewarmEmptyHotspotsWithRobustFallback(
-      authToken: authToken,
-      maxWait: const Duration(seconds: 10),
-    );
+    // Fast path: gate already satisfied after batch prefetch
+    if (hotspotsReadyForDreamSpace) {
+      AppLogger.info(
+        '[HotspotGate] Passed immediately after prefetch: '
+        '$readyHotspotCount/${_detectedHotspots.length} ready (v$version)',
+      );
+      _launchBackgroundRescuePrewarm(authToken, version);
+      return;
+    }
+
+    // Slow path: sequential rescue until threshold ready or 12s elapsed
+    await _rescuePrewarmWithReadinessGate(authToken, version);
   }
 
+  @Deprecated('Use _rescuePrewarmWithReadinessGate instead')
   Future<void> prewarmEmptyHotspotsWithRobustFallback({
     BuildContext? context,
     String? authToken,
-    Duration maxWait = const Duration(seconds: 10),
+    Duration maxWait = const Duration(seconds: 12),
   }) async {
     if (_currentProject == null || _detectedHotspots.isEmpty) return;
 
@@ -2318,25 +2414,323 @@ class ProjectProvider extends ChangeNotifier {
         .toList();
     if (emptyHotspots.isEmpty) return;
 
-    final futures = emptyHotspots
-        .map(
-          (hotspot) => runRobustHotspotAnalysis(
-            hotspot,
-            context: context,
-            authToken: authToken,
-          ),
-        )
-        .toList();
+    AppLogger.info(
+      'Hotspot warmup: starting ${emptyHotspots.length} hotspots '
+      '(max concurrent=$_hotspotWarmupMaxConcurrent)',
+    );
 
-    if (maxWait <= Duration.zero) return;
+    final sw = Stopwatch()..start();
+    final gate = Completer<void>();
+    var readyCount = readyHotspotCount;
+    var settledCount = 0;
+    final total = emptyHotspots.length;
+    final threshold = _effectiveReadinessThreshold;
+    final queue = List<ProductHotspot>.from(emptyHotspots);
+    var running = 0;
+
+    void onSettled(bool success) {
+      if (success) readyCount++;
+      settledCount++;
+      if (!gate.isCompleted &&
+          (readyCount >= threshold || settledCount >= total)) {
+        gate.complete();
+      }
+    }
+
+    void startNext() {
+      while (running < _hotspotWarmupMaxConcurrent && queue.isNotEmpty) {
+        final hotspot = queue.removeAt(0);
+        if (hasProductsForHotspot(hotspot.id)) {
+          onSettled(true);
+          continue;
+        }
+        running++;
+        runRobustHotspotAnalysis(
+              hotspot,
+              context: context,
+              authToken: authToken,
+            )
+            .then((_) {
+              onSettled(hasProductsForHotspot(hotspot.id));
+            })
+            .catchError((Object e) {
+              onSettled(false);
+            })
+            .whenComplete(() {
+              running--;
+              startNext();
+            });
+      }
+      if (running == 0 && queue.isEmpty && !gate.isCompleted) {
+        gate.complete();
+      }
+    }
+
+    startNext();
 
     try {
-      await Future.wait(futures).timeout(maxWait);
+      await gate.future.timeout(maxWait);
+      AppLogger.info(
+        'Hotspot warmup gate: $readyCount/$total ready '
+        'in ${sw.elapsedMilliseconds}ms (threshold=$threshold)',
+      );
     } on TimeoutException {
       AppLogger.info(
-        'Robust hotspot warmup exceeded ${maxWait.inSeconds}s; continuing with background completions',
+        'Hotspot warmup gate: timed out after ${maxWait.inSeconds}s '
+        'with $readyCount/$total ready',
       );
     }
+  }
+
+  Future<void> _rescuePrewarmWithReadinessGate(
+    String authToken,
+    int version,
+  ) async {
+    final emptyHotspots = _detectedHotspots
+        .where((h) => !hasProductsForHotspot(h.id))
+        .toList();
+    if (emptyHotspots.isEmpty) return;
+
+    AppLogger.info(
+      '[HotspotGate] Starting rescue gate: ${emptyHotspots.length} empty, '
+      'need ${_effectiveReadinessThreshold - readyHotspotCount} more (v$version)',
+    );
+
+    final gateCompleter = Completer<void>();
+    final sw = Stopwatch()..start();
+
+    // Timeout arm
+    final timer = Timer(dreamSpaceReadinessTimeout, () {
+      if (!gateCompleter.isCompleted) {
+        AppLogger.info(
+          '[HotspotGate] Timeout: $readyHotspotCount/${_detectedHotspots.length} '
+          'ready after ${sw.elapsedMilliseconds}ms (v$version)',
+        );
+        gateCompleter.complete();
+      }
+    });
+
+    // Concurrent rescue arm (continues in background after gate resolves)
+    _runConcurrentRescue(
+      emptyHotspots: emptyHotspots,
+      authToken: authToken,
+      version: version,
+      onEachComplete: () {
+        if (hotspotsReadyForDreamSpace && !gateCompleter.isCompleted) {
+          AppLogger.info(
+            '[HotspotGate] Threshold met by rescue: '
+            '$readyHotspotCount/${_detectedHotspots.length} ready '
+            'in ${sw.elapsedMilliseconds}ms (v$version)',
+          );
+          gateCompleter.complete();
+        }
+      },
+    );
+
+    await gateCompleter.future;
+    timer.cancel();
+    sw.stop();
+  }
+
+  static const int _hotspotWarmupMaxConcurrent = 3;
+
+  Future<void> _runConcurrentRescue({
+    required List<ProductHotspot> emptyHotspots,
+    required String authToken,
+    required int version,
+    VoidCallback? onEachComplete,
+  }) async {
+    AppLogger.info(
+      'Hotspot warmup: starting ${emptyHotspots.length} hotspots '
+      '(max concurrent=$_hotspotWarmupMaxConcurrent)',
+    );
+
+    final queue = List<ProductHotspot>.from(emptyHotspots);
+    var running = 0;
+    var consecutiveFailures = 0;
+    final rescueSw = Stopwatch()..start();
+    final allDone = Completer<void>();
+
+    void startNext() {
+      while (running < _hotspotWarmupMaxConcurrent && queue.isNotEmpty) {
+        // Circuit breaker: stop scheduling new work after consecutive failures
+        if (consecutiveFailures >= _rescueMaxConsecutiveFailures) {
+          queue.clear();
+          break;
+        }
+        // Wall-clock cap
+        if (rescueSw.elapsed > _rescueTotalTimeout) {
+          AppLogger.info(
+            '[HotspotRescue] Aborting: wall-clock cap exceeded '
+            '(${rescueSw.elapsed.inSeconds}s > ${_rescueTotalTimeout.inSeconds}s)',
+          );
+          queue.clear();
+          break;
+        }
+        // Stale version guard: image was regenerated, abort this rescue
+        if (version != _dreamSpaceImageVersion) {
+          AppLogger.info(
+            '[HotspotRescue] Aborting: version stale '
+            '(started=$version, current=$_dreamSpaceImageVersion)',
+          );
+          queue.clear();
+          break;
+        }
+        if (_currentProject == null) {
+          queue.clear();
+          break;
+        }
+
+        final hotspot = queue.removeAt(0);
+        if (hasProductsForHotspot(hotspot.id)) {
+          onEachComplete?.call();
+          continue;
+        }
+        if (_userTappedHotspots.contains(hotspot.id)) {
+          onEachComplete?.call();
+          continue;
+        }
+
+        running++;
+        rescueHotspotAnalysisForTest(hotspot, authToken, version)
+            .then((_) {
+              consecutiveFailures = 0;
+              onEachComplete?.call();
+            })
+            .catchError((Object e) {
+              consecutiveFailures++;
+              AppLogger.warning('[HotspotRescue] Failed for ${hotspot.id}: $e');
+              if (consecutiveFailures >= _rescueMaxConsecutiveFailures) {
+                AppLogger.info(
+                  '[HotspotRescue] Circuit breaker: '
+                  '$consecutiveFailures consecutive failures, stopping rescue',
+                );
+                queue.clear();
+              }
+              onEachComplete?.call();
+            })
+            .whenComplete(() {
+              running--;
+              if (queue.isEmpty && running == 0) {
+                if (!allDone.isCompleted) allDone.complete();
+              } else {
+                startNext();
+              }
+            });
+      }
+
+      // If nothing is running and queue is empty, we're done
+      if (running == 0 && queue.isEmpty && !allDone.isCompleted) {
+        allDone.complete();
+      }
+    }
+
+    startNext();
+    await allDone.future;
+  }
+
+  Future<bool> _runRescueHotspotAnalysis(
+    ProductHotspot hotspot,
+    String authToken,
+    int version,
+  ) async {
+    if (_currentProject == null) return false;
+
+    // Dedup: join in-flight rescue if exists (separate from tap-time map)
+    final inFlight = _rescueHotspotCompleters[hotspot.id];
+    if (inFlight != null && !inFlight.isCompleted) return inFlight.future;
+    if (hasProductsForHotspot(hotspot.id)) return true;
+
+    final completer = Completer<bool>();
+    _rescueHotspotCompleters[hotspot.id] = completer;
+
+    try {
+      final selection = <String, dynamic>{
+        'id': hotspot.id,
+        'x': hotspot.x,
+        'y': hotspot.y,
+        'label': hotspot.label,
+      };
+
+      AppLogger.info(
+        '[HotspotRescue] Starting ${hotspot.id} '
+        '(mode=fast_prefetch, timeout=${rescuePrewarmPerHotspotTimeout.inSeconds}s, v$version)',
+      );
+      final rescueSw = Stopwatch()..start();
+
+      final response = await ApiService.analyzeFurnitureBatch(
+        _currentProject!.id,
+        authToken,
+        [selection],
+        imageType: dreamSpaceAnalysisImageType,
+        mode: 'fast_prefetch',
+        timeout: rescuePrewarmPerHotspotTimeout,
+      );
+
+      rescueSw.stop();
+
+      // Version guard: don't write stale results into a new image's map
+      if (version != _dreamSpaceImageVersion) {
+        AppLogger.info(
+          '[HotspotRescue] Discarding ${hotspot.id} result: '
+          'version stale (started=$version, current=$_dreamSpaceImageVersion)',
+        );
+        completer.complete(false);
+        return false;
+      }
+
+      final selectionResults = _extractSelectionResults(response);
+      var updated = false;
+      for (final raw in selectionResults) {
+        if (raw is! Map<String, dynamic>) continue;
+        final responseId = raw['id']?.toString().trim() ?? '';
+        final hotspotId = responseId.isNotEmpty ? responseId : hotspot.id;
+        _prefetchedFurnitureByHotspotId[hotspotId] = Map<String, dynamic>.from(
+          raw,
+        );
+        updated = true;
+      }
+      if (updated) notifyListeners();
+
+      final success = hasProductsForHotspot(hotspot.id);
+      AppLogger.info(
+        '[HotspotRescue] Finished ${hotspot.id}: '
+        'success=$success, ${rescueSw.elapsedMilliseconds}ms (v$version)',
+      );
+      completer.complete(success);
+      return success;
+    } catch (e) {
+      AppLogger.warning('[HotspotRescue] Failed ${hotspot.id}: $e');
+      if (!completer.isCompleted) completer.complete(false);
+      return false;
+    } finally {
+      _rescueHotspotCompleters.remove(hotspot.id);
+    }
+  }
+
+  @visibleForTesting
+  Future<bool> rescueHotspotAnalysisForTest(
+    ProductHotspot hotspot,
+    String authToken,
+    int version,
+  ) {
+    return _runRescueHotspotAnalysis(hotspot, authToken, version);
+  }
+
+  void _launchBackgroundRescuePrewarm(String authToken, int version) {
+    final emptyHotspots = _detectedHotspots
+        .where((h) => !hasProductsForHotspot(h.id))
+        .toList();
+    if (emptyHotspots.isEmpty) return;
+    AppLogger.info(
+      '[HotspotRescue] Background rescue for '
+      '${emptyHotspots.length} empty hotspots (v$version)',
+    );
+    _runConcurrentRescue(
+      emptyHotspots: emptyHotspots,
+      authToken: authToken,
+      version: version,
+    );
   }
 
   Future<bool> ensureHotspotProductsReady(
@@ -2345,9 +2739,7 @@ class ProjectProvider extends ChangeNotifier {
     String? authToken,
     bool allowRobustFallback = true,
   }) async {
-    if (hasProductsForHotspot(hotspot.id)) {
-      return true;
-    }
+    if (hasProductsForHotspot(hotspot.id)) return true;
     if (!allowRobustFallback) return false;
     return runRobustHotspotAnalysis(
       hotspot,
@@ -2415,6 +2807,7 @@ class ProjectProvider extends ChangeNotifier {
     String? authToken,
   }) async {
     if (_currentProject == null) return false;
+    _userTappedHotspots.add(hotspot.id);
 
     final inFlight = _robustHotspotAnalysisCompleters[hotspot.id];
     if (inFlight != null && !inFlight.isCompleted) {
@@ -2439,11 +2832,24 @@ class ProjectProvider extends ChangeNotifier {
         return false;
       }
 
+      AppLogger.info(
+        '[HotspotTap] Starting full analysis for ${hotspot.id} '
+        '(timeout=${tapTimeFallbackTimeout.inSeconds}s)',
+      );
+      final tapSw = Stopwatch()..start();
+
       var success = await _runRobustHotspotAnalysisWithImageType(
         hotspot,
         resolvedAuthToken,
         imageType: dreamSpaceAnalysisImageType,
       );
+
+      tapSw.stop();
+      AppLogger.info(
+        '[HotspotTap] Finished ${hotspot.id}: '
+        'success=$success, ${tapSw.elapsedMilliseconds}ms',
+      );
+
       completer.complete(success);
       return success;
     } catch (e) {
@@ -2459,41 +2865,150 @@ class ProjectProvider extends ChangeNotifier {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Transient retry wrapper
+  // ---------------------------------------------------------------------------
+
+  Future<bool> _withTransientRetry(
+    Future<bool> Function() operation,
+    String operationName, {
+    void Function()? onRetrying,
+  }) async {
+    final result = await operation();
+    if (result) return true;
+
+    // Only retry on transient failures (network/timeout), not job failures
+    if (!_lastErrorTransient) return false;
+
+    AppLogger.info('$operationName: transient failure, retrying once...');
+    onRetrying?.call();
+    clearError();
+    final retryResult = await operation();
+    if (retryResult) {
+      AppLogger.info('$operationName: retry succeeded');
+    } else {
+      AppLogger.info(
+        '$operationName: retry also failed: ${_errorMessage ?? "unknown"}',
+      );
+    }
+    return retryResult;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase-aware retry helpers for generateDesignImage
+  // ---------------------------------------------------------------------------
+
+  // pollJobUntilDone returns jobFailed only when the backend reports
+  // status='error'. Transport errors (socket, timeout) return networkFailed
+  // instead. So "server disconnected" in a jobFailed means the worker
+  // crashed — the job is dead and must be restarted.
+  static _RetryAction _classifyPollingFailure(PollingResult result) {
+    switch (result.outcome) {
+      case PollingOutcome.networkFailed:
+        return _RetryAction.resumePoll;
+      case PollingOutcome.timedOut:
+        return _RetryAction.resumePoll;
+      case PollingOutcome.jobFailed:
+        final msg = (result.errorMessage ?? '').toLowerCase();
+        if (msg.contains('server disconnected') ||
+            msg.contains('connection closed') ||
+            msg.contains('connection reset')) {
+          return _RetryAction.restartJob;
+        }
+        return _RetryAction.giveUp;
+      case PollingOutcome.done:
+        return _RetryAction.giveUp; // should never reach here
+    }
+  }
+
+  static bool _isTransientException(Object e) {
+    if (e is TimeoutException) return true;
+    if (e is SocketException) return true;
+    final msg = e.toString().toLowerCase();
+    return msg.contains('server disconnected') ||
+        msg.contains('connection closed');
+  }
+
   /// Generate design image (inspiration redesign) during second analyzing phase.
   ///
-  /// This intentionally avoids BuildContext so long-running polling cannot depend
-  /// on widget lifecycle.
-  Future<bool> generateDesignImage() async {
+  /// Concurrency guard: if called while already in-flight, returns the same
+  /// Future (prevents duplicate jobs from fast re-taps).
+  Future<bool> generateDesignImage({void Function()? onRetrying}) {
+    _generateDesignFuture ??= _doGenerateDesignImage(onRetrying: onRetrying)
+        .whenComplete(() {
+          _generateDesignFuture = null;
+        });
+    return _generateDesignFuture!;
+  }
+
+  /// Internal orchestration with single-retry budget across start/poll/fetch.
+  Future<bool> _doGenerateDesignImage({void Function()? onRetrying}) async {
     if (_currentProject == null) {
       _setError('No active project');
       return false;
     }
 
+    final authToken = SupabaseService.accessToken;
+    if (authToken == null) {
+      _setError('Authentication token not available');
+      return false;
+    }
+
+    final projectId = _currentProject!.id;
+    final requestId = '${projectId}_redesign';
+    String? jobId;
+    bool jobRetryUsed = false;
+    bool fetchRetryUsed = false;
+
     try {
-      final authToken = SupabaseService.accessToken;
-      if (authToken == null) {
-        _setError('Authentication token not available');
-        return false;
+      // ═══ PHASE 1: START JOB ═══
+      AppLogger.info('[gen] attempt=1 phase=start');
+      try {
+        final jobResponse = await ApiService.startInspirationRedesign(
+          projectId,
+          authToken,
+          idempotencyKey: requestId,
+        );
+        jobId = jobResponse['job_id'] as String;
+      } catch (e) {
+        final transient = _isTransientException(e);
+        AppLogger.warning(
+          '[gen] attempt=1 phase=start outcome=failed '
+          'transient=$transient restart=${transient && !jobRetryUsed} '
+          'reason=${e.runtimeType}',
+        );
+        if (transient && !jobRetryUsed) {
+          jobRetryUsed = true;
+          onRetrying?.call();
+          await Future.delayed(const Duration(milliseconds: 1500));
+          AppLogger.info('[gen] attempt=2 phase=start restart=true');
+          try {
+            final jobResponse = await ApiService.startInspirationRedesign(
+              projectId,
+              authToken,
+              idempotencyKey: '${requestId}_retry1',
+            );
+            jobId = jobResponse['job_id'] as String;
+          } catch (e2) {
+            AppLogger.error('[gen] attempt=2 phase=start failed', e2);
+            _setError('Image generation failed: ${e2.toString()}');
+            return false;
+          }
+        } else {
+          _setError('Image generation failed: ${e.toString()}');
+          return false;
+        }
       }
 
-      final idempotencyKey =
-          '${_currentProject!.id}_redesign_${DateTime.now().millisecondsSinceEpoch}';
-
-      AppLogger.info('Starting design image generation...');
-      final jobResponse = await ApiService.startInspirationRedesign(
-        _currentProject!.id,
-        authToken,
-        idempotencyKey: idempotencyKey,
-      );
-
-      final jobId = jobResponse['job_id'] as String;
       _currentJobId = jobId;
       _jobProgress = 0;
       _jobPhase = 'Starting...';
       notifyListeners();
 
-      final pollingResult = await ApiService.pollJobUntilDone(
-        _currentProject!.id,
+      // ═══ PHASE 2: POLL JOB ═══
+      AppLogger.info('[gen] attempt=1 phase=poll jobId=$jobId');
+      var pollingResult = await ApiService.pollJobUntilDone(
+        projectId,
         jobId,
         authToken,
         onProgress: (progressPct, phase) {
@@ -2503,37 +3018,152 @@ class ProjectProvider extends ChangeNotifier {
         },
       );
 
-      _currentJobId = null;
+      if (pollingResult.outcome != PollingOutcome.done && !jobRetryUsed) {
+        final action = _classifyPollingFailure(pollingResult);
+        AppLogger.warning(
+          '[gen] attempt=1 phase=poll jobId=$jobId '
+          'outcome=${pollingResult.outcome} transient=${action != _RetryAction.giveUp} '
+          'restart=${action == _RetryAction.restartJob} '
+          'reason=${pollingResult.errorMessage}',
+        );
 
-      switch (pollingResult.outcome) {
-        case PollingOutcome.done:
-          // Download the generated image
-          _generatedImageBytes = await ApiService.getGeneratedImage(
-            _currentProject!.id,
-            authToken,
-          );
-          notifyListeners();
-          AppLogger.info(
-            'Design image generated: ${_generatedImageBytes!.length} bytes',
-          );
-          await _prepareDreamSpaceHotspots(authToken);
-          return true;
+        switch (action) {
+          case _RetryAction.resumePoll:
+            jobRetryUsed = true;
+            onRetrying?.call();
+            _generationRetrying = true;
+            notifyListeners();
+            await Future.delayed(const Duration(milliseconds: 1500));
+            AppLogger.info(
+              '[gen] attempt=2 phase=poll jobId=$jobId restart=false (resume)',
+            );
+            try {
+              pollingResult = await ApiService.pollJobUntilDone(
+                projectId,
+                jobId,
+                authToken,
+                onProgress: (progressPct, phase) {
+                  _jobProgress = progressPct;
+                  _jobPhase = phase;
+                  notifyListeners();
+                },
+              );
+            } finally {
+              _generationRetrying = false;
+              notifyListeners();
+            }
 
-        case PollingOutcome.jobFailed:
-          _setError(pollingResult.errorMessage ?? 'Image generation failed');
-          return false;
+          case _RetryAction.restartJob:
+            jobRetryUsed = true;
+            onRetrying?.call();
+            _currentJobId = null;
+            _generationRetrying = true;
+            notifyListeners();
+            await Future.delayed(const Duration(milliseconds: 1500));
+            AppLogger.info(
+              '[gen] attempt=2 phase=start restart=true reason=transientJobFailed',
+            );
+            try {
+              final jobResponse = await ApiService.startInspirationRedesign(
+                projectId,
+                authToken,
+                idempotencyKey: '${requestId}_retry1',
+              );
+              jobId = jobResponse['job_id'] as String;
+              _currentJobId = jobId;
+              _jobProgress = 0;
+              _jobPhase = 'Starting...';
+              notifyListeners();
+              pollingResult = await ApiService.pollJobUntilDone(
+                projectId,
+                jobId,
+                authToken,
+                onProgress: (progressPct, phase) {
+                  _jobProgress = progressPct;
+                  _jobPhase = phase;
+                  notifyListeners();
+                },
+              );
+            } catch (e) {
+              AppLogger.error('[gen] attempt=2 phase=start/poll failed', e);
+              _currentJobId = null;
+              _setError('Image generation failed: ${e.toString()}');
+              return false;
+            } finally {
+              _generationRetrying = false;
+              notifyListeners();
+            }
 
-        case PollingOutcome.networkFailed:
-          _setError(pollingResult.errorMessage ?? 'Network connection lost');
-          return false;
-
-        case PollingOutcome.timedOut:
-          _setError(pollingResult.errorMessage ?? 'Request timed out');
-          return false;
+          case _RetryAction.giveUp:
+            break; // fall through to error handling below
+        }
       }
-    } catch (e) {
-      AppLogger.error('Failed to generate design image', e);
+
+      if (pollingResult.outcome != PollingOutcome.done) {
+        _currentJobId = null;
+        notifyListeners();
+        switch (pollingResult.outcome) {
+          case PollingOutcome.jobFailed:
+            _setError(pollingResult.errorMessage ?? 'Image generation failed');
+          case PollingOutcome.networkFailed:
+            _setError(pollingResult.errorMessage ?? 'Network connection lost');
+          case PollingOutcome.timedOut:
+            _setError(pollingResult.errorMessage ?? 'Request timed out');
+          case PollingOutcome.done:
+            break; // unreachable
+        }
+        return false;
+      }
+
+      // ═══ PHASE 3: FETCH IMAGE ═══
+      // Keep _currentJobId alive for debugging until fetch completes.
+      try {
+        _generatedImageBytes = await ApiService.getGeneratedImage(
+          projectId,
+          authToken,
+        );
+      } catch (e) {
+        final transient = _isTransientException(e);
+        AppLogger.warning(
+          '[gen] phase=fetch failed transient=$transient'
+          '${transient && !fetchRetryUsed ? ", retrying..." : ""}',
+        );
+        if (transient && !fetchRetryUsed) {
+          fetchRetryUsed = true;
+          onRetrying?.call();
+          await Future.delayed(const Duration(milliseconds: 1500));
+          try {
+            _generatedImageBytes = await ApiService.getGeneratedImage(
+              projectId,
+              authToken,
+            );
+          } catch (e2) {
+            AppLogger.error('[gen] phase=fetch retry failed', e2);
+            _currentJobId = null;
+            notifyListeners();
+            _setError('Image generation failed: ${e2.toString()}');
+            return false;
+          }
+        } else {
+          _currentJobId = null;
+          notifyListeners();
+          _setError('Image generation failed: ${e.toString()}');
+          return false;
+        }
+      }
+
       _currentJobId = null;
+      notifyListeners();
+      AppLogger.info(
+        '[gen] phase=fetch success bytes=${_generatedImageBytes!.length}',
+      );
+      await _prepareDreamSpaceHotspots(authToken);
+      return true;
+    } catch (e) {
+      AppLogger.error('[gen] unexpected error', e);
+      _currentJobId = null;
+      _generationRetrying = false;
+      notifyListeners();
       _setError('Image generation failed: ${e.toString()}');
       return false;
     }
@@ -2543,14 +3173,27 @@ class ProjectProvider extends ChangeNotifier {
   ///
   /// This intentionally avoids BuildContext so long-running requests cannot
   /// outlive widget lifecycle.
-  Future<bool> retryDesignImage(String feedback) async {
-    if (_currentProject == null) {
-      _setError('No active project');
-      return false;
-    }
-
+  ///
+  /// [onRetrying] is invoked when a transient failure triggers an automatic
+  /// retry, allowing the UI to show a "Reconnecting..." label.
+  Future<bool> retryDesignImage(
+    String feedback, {
+    void Function()? onRetrying,
+  }) async {
     if (feedback.trim().isEmpty) {
       _setError('Feedback is required');
+      return false;
+    }
+    return _withTransientRetry(
+      () => _retryDesignImageOnce(feedback),
+      'retryDesignImage',
+      onRetrying: onRetrying,
+    );
+  }
+
+  Future<bool> _retryDesignImageOnce(String feedback) async {
+    if (_currentProject == null) {
+      _setError('No active project');
       return false;
     }
 
@@ -2582,7 +3225,7 @@ class ProjectProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       AppLogger.error('Failed to retry design image', e);
-      _setError('Retry redesign failed: ${e.toString()}');
+      _setError('Retry redesign failed: ${e.toString()}', transient: _isTransientException(e));
       return false;
     }
   }

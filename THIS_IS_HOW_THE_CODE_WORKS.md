@@ -827,6 +827,90 @@ This is a sophisticated, production-ready AI interior design platform featuring:
 
 ## 16. CHANGELOG
 
+### 2026-02-15: Ready-First Hotspot Product Pipeline (Rescue, Dedup, Circuit Breaker)
+
+#### What This System Does
+
+The ready-first hotspot pipeline gets product recommendations attached to Dream Space hotspots as fast as possible so the user can tap pins and see products immediately. It has three phases: batch prefetch, background rescue, and tap-time fallback.
+
+#### How The Runtime Flow Works
+
+**Phase 1 — Batch Prefetch (`_prepareDreamSpaceHotspots`)**
+
+1. `_resetHotspotPrefetchStateForNewImage` clears all hotspot state and bumps `_dreamSpaceImageVersion` (a monotonic counter that guards against stale writes from old rescue runs).
+2. `primeFurnitureHotspotsAndPrefetch` calls auto-detect to find furniture in the generated image, selects the top 5 hotspots, then runs a single batch API call to get products for all 5 at once.
+3. After batch prefetch, the provider checks readiness: do `>= 3` of the 5 hotspots have products? (`hotspotsReadyForDreamSpace` / `_effectiveReadinessThreshold`).
+
+**Phase 2a — Fast Path (threshold already met)**
+
+If batch prefetch produced enough products (>= 3 of 5), Dream Space is shown immediately. `_launchBackgroundRescuePrewarm` fires `_runConcurrentRescue` as fire-and-forget to fill remaining empty hotspots in the background.
+
+**Phase 2b — Slow Path (threshold not met, `_rescuePrewarmWithReadinessGate`)**
+
+If batch prefetch fell short, a readiness gate blocks Dream Space display. Two arms race:
+- **Timeout arm**: a 12-second timer (`dreamSpaceReadinessTimeout`). If it fires, Dream Space shows with whatever is ready.
+- **Rescue arm**: `_runConcurrentRescue` runs up to 3 parallel `fast_prefetch` API calls on empty hotspots. Each time a hotspot gets products, `onEachComplete` checks if threshold is now met. If so, the gate resolves early.
+
+Rescue continues in the background after the gate resolves (the gate just unblocks UI display).
+
+**Phase 3 — Tap-Time Fallback (`ensureHotspotProductsReady`)**
+
+When the user taps a hotspot pin:
+1. `hasProductsForHotspot` — if products are cached from prefetch or rescue, return immediately.
+2. Otherwise, `runRobustHotspotAnalysis` runs a `full` mode API call (25-second timeout) to fetch products on demand.
+
+#### Concurrency & Dedup
+
+**Two separate completer maps prevent rescue and tap-time from interfering:**
+- `_robustHotspotAnalysisCompleters` — tap-time (`full` mode) dedup only. If two taps hit the same hotspot, the second joins the first's completer.
+- `_rescueHotspotCompleters` — rescue (`fast_prefetch` mode) dedup only. Multiple rescue attempts on the same hotspot join one in-flight call.
+
+A tap never joins a rescue completer. This avoids a latency problem where the user would wait for rescue's 18-second timeout before getting their own `full` call started.
+
+**`_userTappedHotspots` prevents wasted rescue work:**
+When `runRobustHotspotAnalysis` is called (tap-time), the hotspot ID is added to `_userTappedHotspots`. The rescue loop in `_runConcurrentRescue` skips any hotspot in this set — the tap-time `full` call handles it (or already handled it), so rescue should not spend budget on it.
+
+#### Circuit Breakers in `_runConcurrentRescue`
+
+The rescue loop has four abort conditions checked before each dequeue:
+1. **Consecutive failure cap** (`_rescueMaxConsecutiveFailures = 3`): if 3 rescue calls fail in a row, the queue is cleared. A success resets the counter. This prevents burning API budget when the backend is degraded.
+2. **Wall-clock cap** (`_rescueTotalTimeout = 60s`): total elapsed rescue time. Prevents unbounded runtime.
+3. **Version guard** (`_dreamSpaceImageVersion`): if the user regenerated the image, the version token won't match, and rescue aborts. Prevents stale results from being written into the new image's product map.
+4. **Project null check**: if the project was cleared, rescue aborts.
+
+#### Version Token Staleness Guard
+
+`_dreamSpaceImageVersion` is an integer incremented every time `_resetHotspotPrefetchStateForNewImage` runs (i.e. every new image generation). Rescue captures the version at launch. Before writing results back to `_prefetchedFurnitureByHotspotId`, it checks `version != _dreamSpaceImageVersion`. If they differ, results are discarded. This means a rescue from image N cannot pollute image N+1's product cache.
+
+#### Key Constants
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `dreamSpaceHotspotCount` | 5 | Number of hotspot pins shown |
+| `dreamSpaceReadinessThreshold` | 3 | Min hotspots with products before showing Dream Space |
+| `dreamSpaceReadinessTimeout` | 12s | Max time the readiness gate blocks UI |
+| `rescuePrewarmPerHotspotTimeout` | 18s | Per-hotspot rescue API timeout |
+| `tapTimeFallbackTimeout` | 25s | Per-hotspot tap-time API timeout |
+| `_rescueTotalTimeout` | 60s | Max total rescue wall-clock time |
+| `_rescueMaxConsecutiveFailures` | 3 | Consecutive rescue failures before circuit breaker |
+| `_hotspotWarmupMaxConcurrent` | 3 | Max parallel rescue API calls |
+
+#### Key State Fields
+
+| Field | Type | Purpose |
+|---|---|---|
+| `_dreamSpaceImageVersion` | `int` | Monotonic version token for staleness guard |
+| `_detectedHotspots` | `List<ProductHotspot>` | The 5 hotspot pins placed on the image |
+| `_prefetchedFurnitureByHotspotId` | `Map<String, Map>` | Cached product results per hotspot ID |
+| `_robustHotspotAnalysisCompleters` | `Map<String, Completer>` | Tap-time dedup map |
+| `_rescueHotspotCompleters` | `Map<String, Completer>` | Rescue dedup map |
+| `_userTappedHotspots` | `Set<String>` | Hotspot IDs the user has tapped (rescue skips these) |
+
+#### Files
+
+- `ios-frontend/lib/providers/project_provider.dart` — all pipeline logic
+- `ios-frontend/test/providers/project_provider_furniture_prefetch_test.dart` — 16 tests covering prefetch, dedup, readiness gate, circuit breaker, tapped-hotspot skipping, and version staleness
+
 ### 2026-02-14: Dream Space Auto-Pins Stabilization (Generated-Only Source, 5 Visible Pins, Contain Fit)
 
 #### Problem
@@ -4703,4 +4787,84 @@ if not images:
 git checkout -- backend/exa_client.py
 ```
 
-*Last updated: February 14, 2026 — fix EXA products missing images by using SDK's native image attribute as fallback when HTML regex extraction fails*
+---
+
+### Fix 10 — Post-Review Hardening (4 patches)
+
+Code review identified 4 real risks in the Fix 1 + Fix 2 retry/generation implementation. Each patch below addresses one risk with minimum-effort, maximum-safety changes.
+
+#### Patch 1: Structured transient detection (replace string matching)
+
+**Problem:** `_withTransientRetry` detected transient failures by string-matching `_errorMessage` (`contains('Network')`, etc). Brittle — error messages may differ in casing, wording, or be user-friendly copy.
+
+**Fix:** Added a `bool _lastErrorTransient = false` field. Set structurally at each failure site via `_setError(msg, transient: true/false)`. `_withTransientRetry` now checks `_lastErrorTransient` instead of parsing strings.
+
+**How it works:**
+- `_setError(String error, {bool transient = false})` — sets `_errorMessage` and `_lastErrorTransient`, then transitions to `ProjectStatus.error`
+- `clearError()` — resets both `_errorMessage` and `_lastErrorTransient`
+- In `_generateInspirationDirectlyOnce`: `networkFailed` and `timedOut` → `transient: true`; `jobFailed` → default false; catch block → `transient: _isTransientException(e)`
+- In `_retryDesignImageOnce`: catch block → `transient: _isTransientException(e)`; no project/no token → default false
+- `_withTransientRetry` now just does `if (!_lastErrorTransient) return false;` — the 4-way `contains()` check is removed entirely
+- `_isTransientException(Object e)` returns true for `TimeoutException`, `SocketException`, or messages containing "server disconnected" / "connection closed"
+
+**Scope:** Only affects `_generateInspirationDirectlyOnce` and `_retryDesignImageOnce`. `_doGenerateDesignImage` has its own internal retry using `_classifyPollingFailure` / `_isTransientException` directly — unchanged.
+
+#### Patch 2: Reset subtitle after retry success
+
+**Problem:** `onRetrying` sets analyzing subtitle to "Reconnecting..." but never resets it. If there's any delay after retry succeeds before screen transition, user sees stale "Reconnecting..." label.
+
+**Fix:** In both `improvementsAnalyzing` and `inspirationAnalyzing` async closures, added `_analyzingSubtitleNotifier?.value = null;` immediately after the provider call returns (before the success check). Setting to `null` reverts the `AnalyzingScreen` to showing its default `subtitle` prop.
+
+#### Patch 3: Use `hasProductsForHotspot` as ground truth in warmup gate
+
+**Problem:** In `prewarmEmptyHotspotsWithRobustFallback`, the `.then((ok)` callback used the return value of `runRobustHotspotAnalysis` to increment `readyCount`. But `ok=true` doesn't guarantee products were written in the shape `hasProductsForHotspot` expects — edge cases could let the gate complete "early" with phantom readiness.
+
+**Fix:** Changed `.then((ok) { onSettled(ok); })` to `.then((_) { onSettled(hasProductsForHotspot(hotspot.id)); })`. This uses the same ground-truth check that `ensureHotspotProductsReady` and `choose_products_screen` use.
+
+#### Patch 4: Add `mounted` guards in create_flow async closures
+
+**Problem:** `context` is passed to provider methods after `await` without checking `mounted`. Pre-existing info-level lints, but they can become runtime crashes if the widget is disposed mid-operation.
+
+**Fix:**
+- `improvementsAnalyzing`: added `if (!mounted) return;` after `ensureRecommendationsLoaded(context)` await
+- `inspirationAnalyzing`: added `if (!mounted) return;` before `generateInspirationDirectly(context, ...)` call
+
+Early return from `asyncWork` when `!mounted` is treated as success by `AnalyzingScreen` (calls `onComplete`). This is acceptable: if the widget is unmounted, the screen transition is a no-op anyway.
+
+#### Files Modified
+- `ios-frontend/lib/providers/project_provider.dart` — Patches 1, 3
+- `ios-frontend/lib/screens/create_flow_screen.dart` — Patches 2, 4
+
+#### Verification
+- `flutter analyze` on both files — 0 errors, 0 warnings (13 pre-existing info lints only)
+- Existing `project_provider_furniture_prefetch_test.dart` — all 6 original tests pass
+- Manual: kill network during inspiration analyzing → "Reconnecting..." appears, then subtitle resets on success or error shows on double-failure
+
+#### Rollback
+```bash
+git checkout -- ios-frontend/lib/providers/project_provider.dart ios-frontend/lib/screens/create_flow_screen.dart
+```
+
+### Improvements Screen — Toggle Selection & Remove Clear All (2026-02-15)
+
+The improvements screen and its picker sub-screens now use tap-to-toggle instead of a "Clear All" button.
+
+#### Behavior
+
+- **Improvements screen (`_handleCardTap`)**: Tapping an already-selected card deselects it (removes checkmark, clears expanded details, clears provider state). Tapping an unselected card opens the picker as before.
+- **Color picker (`ColorPaletteSelectionScreen`)**: `_selectPalette` toggles — tapping the selected palette deselects it. "Clear All" button removed from the title row.
+- **Style picker (`ChooseStyleScreen` and `DesignStyleSelectionContent`)**: `_selectStyle` toggles — same pattern. "Clear All" buttons removed from both the full-screen and content/bottom-sheet variants.
+- **Provider clear methods**: `clearColorPalette()` and `clearDesignStyle()` remove the key from `designPreferences` and call `notifyListeners()`. These are local-only; the backend gets the correct value on the next save (defaults to AI-decide when nothing is set).
+
+#### Files Modified
+- `ios-frontend/lib/screens/improvements_screen.dart` — Toggle deselect in `_handleCardTap`, toggle in `_selectPalette`, removed `_clearSelection`, removed Clear All button from color picker title
+- `ios-frontend/lib/screens/design_style_selection_screen.dart` — Toggle in `_selectStyle` (both classes), removed `_clearSelection` (both classes), removed Clear All buttons (2 locations)
+- `ios-frontend/lib/providers/project_provider.dart` — Added `clearColorPalette()` and `clearDesignStyle()`
+
+#### Verification
+- `flutter analyze` on all 3 files — 0 errors, 0 warnings (14 pre-existing info lints only)
+- Manual: tap color palette card → select a color → Continue → card shows selected → tap card again → deselects → tap again → opens picker
+- Same flow for design style and dynamic recommendation cards
+- Inside picker screens: tap item to select, tap again to deselect (no Clear All button visible)
+
+*Last updated: February 15, 2026 — improvements screen toggle selection, Clear All removal*
