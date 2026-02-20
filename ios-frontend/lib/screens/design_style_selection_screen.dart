@@ -32,37 +32,43 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
     _DesignStyleOption(
       id: 'bohemian',
       name: 'Bohemian',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_bohemian.png',
     ),
     _DesignStyleOption(
       id: 'scandinavian',
       name: 'Scandinavian',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_scandinavian.png',
     ),
     _DesignStyleOption(
       id: 'contemporary',
       name: 'Contemporary',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_contemporary_dark.png',
     ),
     _DesignStyleOption(
       id: 'coastal',
       name: 'Coastal',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_coastal.png',
     ),
     _DesignStyleOption(
       id: 'modern',
       name: 'Modern',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_modern_dark.png',
     ),
     _DesignStyleOption(
       id: 'art_deco',
       name: 'Art Deco',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_art_deco.png',
     ),
   ];
@@ -96,25 +102,32 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
     }
 
     final style = _styles.firstWhere((s) => s.id == _selectedStyle);
+    setState(() => _isSaving = true);
 
-    if (style.isAiOption) {
-      // Let AI Decide — send with letAiDecide flag
-      provider.saveDesignStyle(
-        context,
-        'ai_decide',
-        'Let AI Decide',
-        letAiDecide: true,
-        background: true,
+    final success = style.isAiOption
+        ? await provider.saveDesignStyle(
+            context,
+            'ai_decide',
+            'Let AI Decide',
+            letAiDecide: true,
+          )
+        : await provider.saveDesignStyle(context, _selectedStyle!, style.name);
+
+    if (!mounted) return;
+    setState(() => _isSaving = false);
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            provider.errorMessage ?? 'Failed to save style. Please try again.',
+          ),
+          backgroundColor: AppTheme.errorColor,
+        ),
       );
-    } else {
-      // Optimistic: save locally + pop immediately, sync to backend in background
-      provider.saveDesignStyle(
-        context,
-        _selectedStyle!,
-        style.name,
-        background: true,
-      );
+      return;
     }
+
     Navigator.pop(context, {'id': _selectedStyle!, 'name': style.name});
   }
 
@@ -128,12 +141,21 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
             children: [
               const Icon(Icons.lock_outline, color: Colors.white, size: 18),
               const SizedBox(width: 12),
-              Text('Coming soon', style: AppTheme.dmSans(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.white)),
+              Text(
+                'Coming soon',
+                style: AppTheme.dmSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                ),
+              ),
             ],
           ),
           backgroundColor: AppTheme.textSecondary,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           margin: const EdgeInsets.all(16),
           duration: const Duration(seconds: 2),
         ),
@@ -148,7 +170,10 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
 
   Future<void> _handleFabPressed() async {
     try {
-      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final projectProvider = Provider.of<ProjectProvider>(
+        context,
+        listen: false,
+      );
       await projectProvider.createProject(context);
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -159,7 +184,10 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start: ${e.toString()}'), backgroundColor: AppTheme.errorColor),
+          SnackBar(
+            content: Text('Failed to start: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
         );
       }
     }
@@ -174,11 +202,10 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with logo and settings
+            // Header with logo
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
                     'Spaces.',
@@ -186,25 +213,6 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
                       fontSize: 28,
                       fontWeight: FontWeight.w800,
                       color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () {},
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: AppTheme.surfaceColor,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppTheme.dividerColor),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          IconsaxPlusLinear.setting_2,
-                          size: 22,
-                          color: AppTheme.textPrimary,
-                        ),
-                      ),
                     ),
                   ),
                 ],
@@ -432,37 +440,43 @@ class _DesignStyleSelectionContentState
     _DesignStyleOption(
       id: 'bohemian',
       name: 'Bohemian',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_bohemian.png',
     ),
     _DesignStyleOption(
       id: 'scandinavian',
       name: 'Scandinavian',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_scandinavian.png',
     ),
     _DesignStyleOption(
       id: 'contemporary',
       name: 'Contemporary',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_contemporary_dark.png',
     ),
     _DesignStyleOption(
       id: 'coastal',
       name: 'Coastal',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_coastal.png',
     ),
     _DesignStyleOption(
       id: 'modern',
       name: 'Modern',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_modern_dark.png',
     ),
     _DesignStyleOption(
       id: 'art_deco',
       name: 'Art Deco',
-      description: 'Inviting shades of beige, terracotta, and for a cozy atmos.',
+      description:
+          'Inviting shades of beige, terracotta, and for a cozy atmos.',
       imagePath: 'assets/images/choose_style/style_art_deco.png',
     ),
   ];
@@ -519,8 +533,11 @@ class _DesignStyleSelectionContentState
       }
     } else {
       setState(() => _isSaving = true);
-      final success =
-          await provider.saveDesignStyle(context, _selectedStyle!, style.name);
+      final success = await provider.saveDesignStyle(
+        context,
+        _selectedStyle!,
+        style.name,
+      );
 
       if (mounted) {
         setState(() => _isSaving = false);

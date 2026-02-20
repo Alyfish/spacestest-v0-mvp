@@ -336,6 +336,26 @@ class ProjectsListResponse(BaseModel):
     total_count: int
 
 
+class ProjectListItem(BaseModel):
+    """Lightweight project summary for the saved spaces list view."""
+
+    id: str
+    status: str
+    created_at: str
+    space_type: Optional[str] = None
+    improvement_mode: Optional[str] = None
+    base_image: Optional[str] = None
+    generated_image: Optional[str] = None
+    inspiration_generated_image: Optional[str] = None
+
+
+class ProjectSummariesResponse(BaseModel):
+    """Response for the fast project summaries endpoint."""
+
+    projects: List[ProjectListItem]
+    total_count: int
+
+
 class ErrorResponse(BaseModel):
     """
     Standard error response model for API endpoints.
@@ -511,7 +531,7 @@ class ProjectContext(BaseModel):
     is_base_image_empty_room: Optional[bool] = None
     improvement_mode: Optional[str] = Field(
         default=None,
-        description="'iterative' for enhancing existing setup, 'complete_revamp' for full redesign"
+        description="'iterative' for enhancing existing setup, 'complete_revamp' for full redesign, 'inspiration' for style-match from reference image"
     )
     space_type: Optional[str] = None
     improvement_markers: List[ImprovementMarker] = Field(default_factory=list)
@@ -1486,6 +1506,25 @@ class NormalizeURLsRequest(BaseModel):
         le=10,
         description="Maximum concurrent requests per domain",
     )
+
+
+class NotifyWhenReadyRequest(BaseModel):
+    """Request model for subscribing to a per-job push notification."""
+
+    device_token: str = Field(..., min_length=16, description="FCM device token")
+    platform: Literal["ios", "android"] = Field(
+        ...,
+        description="Client platform for push delivery",
+    )
+
+
+class NotifyWhenReadyResponse(BaseModel):
+    """Response model for notify-when-ready subscription."""
+
+    project_id: str
+    job_id: str
+    status: Literal["registered", "already_done"]
+    message: str
 
 
 # Note: NormalizeURLsResponse and related models (URLResolution, RetailerGroup,

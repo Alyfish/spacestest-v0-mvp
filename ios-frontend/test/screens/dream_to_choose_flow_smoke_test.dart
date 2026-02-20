@@ -1,12 +1,17 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:spaces/models/project.dart';
 import 'package:spaces/models/shop_product.dart';
-import 'package:spaces/providers/cart_provider.dart';
 import 'package:spaces/providers/project_provider.dart';
 import 'package:spaces/screens/choose_products_screen.dart';
 import 'package:spaces/screens/dream_space_screen.dart';
+import 'package:spaces/widgets/interactive_image_widget.dart';
+
+const _tinyGeneratedPngBase64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/5f4AAAAASUVORK5CYII=';
 
 Project _dummyProject() {
   final now = DateTime(2026, 1, 1);
@@ -67,11 +72,42 @@ Widget _buildFlowApp() {
 }
 
 void main() {
+  testWidgets('dream space generated image always uses contain fit (no crop)', (
+    tester,
+  ) async {
+    final provider = ProjectProvider();
+    provider.debugSetCurrentProject(
+      _dummyProject().copyWith(approach: 'iterative'),
+    );
+    provider.debugSetGeneratedImageBytes(base64Decode(_tinyGeneratedPngBase64));
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<ProjectProvider>.value(value: provider),
+        ],
+        child: MaterialApp(home: _buildFlowApp()),
+      ),
+    );
+    await tester.pump();
+
+    final imageWidgets = tester
+        .widgetList<InteractiveImageWidget>(find.byType(InteractiveImageWidget))
+        .toList();
+    expect(imageWidgets, isNotEmpty);
+    for (final imageWidget in imageWidgets) {
+      expect(imageWidget.fit, BoxFit.contain);
+    }
+  });
+
   testWidgets(
     'smoke: DreamSpace renders 5 markers and hotspot tap opens ChooseProducts',
     (tester) async {
       final provider = ProjectProvider();
       provider.debugSetCurrentProject(_dummyProject());
+      provider.debugSetGeneratedImageBytes(
+        base64Decode(_tinyGeneratedPngBase64),
+      );
 
       const hotspots = <ProductHotspot>[
         ProductHotspot(
@@ -135,7 +171,6 @@ void main() {
         MultiProvider(
           providers: [
             ChangeNotifierProvider<ProjectProvider>.value(value: provider),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: MaterialApp(home: _buildFlowApp()),
         ),
@@ -168,6 +203,9 @@ void main() {
     (tester) async {
       final provider = _DreamFallbackProvider();
       provider.debugSetCurrentProject(_dummyProject());
+      provider.debugSetGeneratedImageBytes(
+        base64Decode(_tinyGeneratedPngBase64),
+      );
 
       const hotspot = ProductHotspot(
         id: 'auto_empty_for_fallback',
@@ -191,7 +229,6 @@ void main() {
         MultiProvider(
           providers: [
             ChangeNotifierProvider<ProjectProvider>.value(value: provider),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: MaterialApp(home: _buildFlowApp()),
         ),

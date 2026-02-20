@@ -316,10 +316,22 @@ EXCLUDED_PHRASES = [
     "floor plan", "building plan", "woodworking plan",
     "furniture plan", "sewing pattern", "pattern book",
     "pdf download", "instant download", "digital download",
+    "digital file", "digital product",
     "printable", "e-book", "ebook", "svg",
     "cut list", "cutting list",
     "diy guide", "diy project", "build your own",
     "how to build", "step by step",
+    # Digital file / CAD exclusions
+    "dxf file", "cnc file", "laser cut file", "3d model file",
+    "laser cut", "cnc cut",
+    # Accessory exclusions (common search contaminants)
+    "chair cover", "chair pad", "chair mat", "floor mat",
+    "protective mat", "chair cushion", "seat cushion",
+    "replacement wheels", "replacement casters",
+    # Chair parts / accessory contaminants
+    "replacement parts", "chair leg", "chair base", "chair cylinder",
+    "gas lift", "armrest pad", "armrest cover", "headrest cover",
+    "headrest pillow", "seat cover",
 ]
 
 # Tier 2: Single words — only match at word boundaries so "platform" doesn't match "plan"
@@ -329,6 +341,10 @@ EXCLUDED_WORD_BOUNDARY = [
     "template", "templates",
     "pattern", "patterns",
     "pdf",
+    # Digital file formats / download intent
+    "dxf", "stl", "dwg", "vector", "download",
+    # Accessory exclusions
+    "slipcover", "casters",
 ]
 
 # Pre-compile word-boundary regexes for performance
@@ -337,15 +353,33 @@ _WORD_BOUNDARY_PATTERNS = [
     for word in EXCLUDED_WORD_BOUNDARY
 ]
 
+# Tier 3: Article / listicle patterns (compiled regexes)
+_ARTICLE_PATTERNS = [
+    re.compile(r"\bthe\s+\d+\s+best\b", re.IGNORECASE),
+    re.compile(r"\btop\s+\d+\b", re.IGNORECASE),
+    re.compile(r"\b\d+\s+best\b", re.IGNORECASE),
+    re.compile(
+        r"\|\s*(houzz|architectural digest|apartment therapy|real simple|better homes)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bbuying guide\b", re.IGNORECASE),
+    re.compile(r"\breview\s*$", re.IGNORECASE),
+]
+
+# Bare domain name pattern (e.g. "Amazon.com", "Etsy.co")
+_BARE_DOMAIN_RE = re.compile(r'^[\w-]+\.(com|org|net|co|io)$', re.IGNORECASE)
+
 
 def is_valid_product(title: str) -> bool:
     """
-    Filter out plans, blueprints, PDFs - we need real furniture photos.
+    Filter out plans, blueprints, PDFs, articles, and junk titles.
 
-    Uses two-tier filtering:
+    Uses multi-tier filtering:
     1. Phrase match (substring) for high-signal multi-word terms
     2. Word-boundary match for single words to avoid false positives
        (e.g. "Platform Bed" won't match "plan")
+    3. Regex match for article/listicle patterns
+    Plus: reject empty, too-short, or bare-domain titles.
 
     Args:
         title: Product title from search results
@@ -353,10 +387,22 @@ def is_valid_product(title: str) -> bool:
     Returns:
         True if the product appears to be actual furniture (not a plan/blueprint)
     """
-    if not title:
-        return True  # Empty titles pass through for other filters
+    if not title or len(title.strip()) < 5:
+        _product_filter_logger.debug(
+            "Filtered '%s': empty or too short", title
+        )
+        return False
 
-    title_lower = title.lower()
+    title_stripped = title.strip()
+
+    # Reject bare domain names (e.g. "Amazon.com")
+    if _BARE_DOMAIN_RE.match(title_stripped):
+        _product_filter_logger.debug(
+            "Filtered '%s': bare domain name", title
+        )
+        return False
+
+    title_lower = title_stripped.lower()
 
     # Tier 1: phrase match (substring)
     for phrase in EXCLUDED_PHRASES:
@@ -371,6 +417,14 @@ def is_valid_product(title: str) -> bool:
         if pattern.search(title_lower):
             _product_filter_logger.debug(
                 "Filtered '%s': matched word-boundary '%s'", title, word
+            )
+            return False
+
+    # Tier 3: article/listicle detection
+    for pattern in _ARTICLE_PATTERNS:
+        if pattern.search(title_stripped):
+            _product_filter_logger.debug(
+                "Filtered '%s': matched article pattern", title
             )
             return False
 

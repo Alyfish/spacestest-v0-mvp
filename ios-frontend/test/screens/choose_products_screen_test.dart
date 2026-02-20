@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:spaces/models/project.dart';
 import 'package:spaces/models/shop_product.dart';
-import 'package:spaces/providers/cart_provider.dart';
 import 'package:spaces/providers/project_provider.dart';
 import 'package:spaces/screens/choose_products_screen.dart';
 import 'package:spaces/widgets/shop_product_card.dart';
@@ -182,7 +181,6 @@ void main() {
             ChangeNotifierProvider<ProjectProvider>.value(
               value: projectProvider,
             ),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: const MaterialApp(
             home: ChooseProductsScreen(hotspot: hotspot),
@@ -218,7 +216,6 @@ void main() {
             ChangeNotifierProvider<ProjectProvider>.value(
               value: projectProvider,
             ),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: const MaterialApp(
             home: ChooseProductsScreen(hotspot: hotspot),
@@ -281,7 +278,6 @@ void main() {
             ChangeNotifierProvider<ProjectProvider>.value(
               value: projectProvider,
             ),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: const MaterialApp(
             home: ChooseProductsScreen(hotspot: hotspot),
@@ -327,7 +323,6 @@ void main() {
             ChangeNotifierProvider<ProjectProvider>.value(
               value: projectProvider,
             ),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: const MaterialApp(
             home: ChooseProductsScreen(hotspot: hotspot),
@@ -373,7 +368,6 @@ void main() {
             ChangeNotifierProvider<ProjectProvider>.value(
               value: projectProvider,
             ),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: const MaterialApp(
             home: ChooseProductsScreen(hotspot: hotspot),
@@ -427,7 +421,6 @@ void main() {
             ChangeNotifierProvider<ProjectProvider>.value(
               value: projectProvider,
             ),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: const MaterialApp(
             home: ChooseProductsScreen(hotspot: hotspot),
@@ -441,6 +434,113 @@ void main() {
       expect(find.text('No Price Chair'), findsOneWidget);
       expect(find.text('Price unavailable'), findsOneWidget);
       expect(find.text('\$0.00'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'ChooseProductsScreen shows Link not available when product URL is missing',
+    (tester) async {
+      final projectProvider = ProjectProvider();
+      projectProvider.debugSetCurrentProject(_dummyProject());
+      projectProvider.debugSetFurniturePrefetchData(
+        prefetchedByHotspotId: {
+          'auto_missing_link': {
+            'id': 'auto_missing_link',
+            'furniture_type': 'chair',
+            'products': [
+              {
+                'id': 'missing_link_1',
+                'title': 'No Link Chair',
+                'image_url': '',
+                'store': 'Store',
+                'price': 49.0,
+              },
+            ],
+          },
+        },
+      );
+
+      const hotspot = ProductHotspot(
+        id: 'auto_missing_link',
+        x: 0.5,
+        y: 0.5,
+        itemType: 'furniture',
+        label: 'Chair',
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<ProjectProvider>.value(
+              value: projectProvider,
+            ),
+          ],
+          child: const MaterialApp(
+            home: ChooseProductsScreen(hotspot: hotspot),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+      await tester.tap(find.byType(ShopProductCard).first);
+      await tester.pump();
+
+      expect(find.text('Link not available'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'ChooseProductsScreen shows Link not available for non-http URLs',
+    (tester) async {
+      final projectProvider = ProjectProvider();
+      projectProvider.debugSetCurrentProject(_dummyProject());
+      projectProvider.debugSetFurniturePrefetchData(
+        prefetchedByHotspotId: {
+          'auto_invalid_link': {
+            'id': 'auto_invalid_link',
+            'furniture_type': 'chair',
+            'products': [
+              {
+                'id': 'invalid_link_1',
+                'title': 'Invalid Link Chair',
+                'url': 'mailto:test@example.com',
+                'image_url': '',
+                'store': 'Store',
+                'price': 59.0,
+              },
+            ],
+          },
+        },
+      );
+
+      const hotspot = ProductHotspot(
+        id: 'auto_invalid_link',
+        x: 0.5,
+        y: 0.5,
+        itemType: 'furniture',
+        label: 'Chair',
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<ProjectProvider>.value(
+              value: projectProvider,
+            ),
+          ],
+          child: const MaterialApp(
+            home: ChooseProductsScreen(hotspot: hotspot),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+      await tester.tap(find.byType(ShopProductCard).first);
+      await tester.pump();
+
+      expect(find.text('Link not available'), findsOneWidget);
     },
   );
 
@@ -488,7 +588,6 @@ void main() {
       MultiProvider(
         providers: [
           ChangeNotifierProvider<ProjectProvider>.value(value: projectProvider),
-          ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
         ],
         child: const MaterialApp(home: ChooseProductsScreen(hotspot: hotspot)),
       ),
@@ -539,7 +638,6 @@ void main() {
             ChangeNotifierProvider<ProjectProvider>.value(
               value: projectProvider,
             ),
-            ChangeNotifierProvider<CartProvider>(create: (_) => CartProvider()),
           ],
           child: const MaterialApp(
             home: ChooseProductsScreen(hotspot: hotspot),

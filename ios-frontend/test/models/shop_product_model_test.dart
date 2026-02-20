@@ -11,6 +11,7 @@ void main() {
         'price': 149.99,
         'store': 'IKEA',
         'image_url': 'https://example.com/nightstand.jpg',
+        'url': 'https://example.com/nightstand',
         'retailer_logo_url': 'https://example.com/ikea-logo.png',
         'color': 'Oak',
         'category': 'Furniture',
@@ -21,6 +22,7 @@ void main() {
       expect(product.price, 149.99);
       expect(product.retailerName, 'IKEA');
       expect(product.imageUrl, 'https://example.com/nightstand.jpg');
+      expect(product.productUrl, 'https://example.com/nightstand');
       expect(product.retailerLogoUrl, 'https://example.com/ikea-logo.png');
     });
 
@@ -39,22 +41,38 @@ void main() {
       expect(product.imageUrl, 'https://example.com/lamp.jpg');
     });
 
-    test('defaults retailerName to Unknown when missing', () {
+    test('uses productUrl before url/link when all are present', () {
       final json = {
-        'id': 'prod-3',
-        'name': 'Throw Pillow',
-        'price': 29.99,
+        'id': 'prod-url-precedence',
+        'name': 'Bench',
+        'price': 88.0,
+        'productUrl': 'https://example.com/product-url',
+        'url': 'https://example.com/url-field',
+        'link': 'https://example.com/link-field',
       };
+      final product = ShopProduct.fromJson(json);
+      expect(product.productUrl, 'https://example.com/product-url');
+    });
+
+    test('falls back to link when productUrl/url are missing', () {
+      final json = {
+        'id': 'prod-link-fallback',
+        'name': 'Bench',
+        'price': 88.0,
+        'link': 'https://example.com/link-only',
+      };
+      final product = ShopProduct.fromJson(json);
+      expect(product.productUrl, 'https://example.com/link-only');
+    });
+
+    test('defaults retailerName to Unknown when missing', () {
+      final json = {'id': 'prod-3', 'name': 'Throw Pillow', 'price': 29.99};
       final product = ShopProduct.fromJson(json);
       expect(product.retailerName, 'Unknown');
     });
 
     test('defaults imageUrl to empty string when missing', () {
-      final json = {
-        'id': 'prod-4',
-        'name': 'Rug',
-        'price': 199.00,
-      };
+      final json = {'id': 'prod-4', 'name': 'Rug', 'price': 199.00};
       final product = ShopProduct.fromJson(json);
       expect(product.imageUrl, '');
     });
@@ -86,32 +104,19 @@ void main() {
     });
 
     test('parses furniture_type fallback', () {
-      final json = {
-        'id': 'hs-2',
-        'x': 0.5,
-        'y': 0.5,
-        'furniture_type': 'lamp',
-      };
+      final json = {'id': 'hs-2', 'x': 0.5, 'y': 0.5, 'furniture_type': 'lamp'};
       final hotspot = ProductHotspot.fromJson(json);
       expect(hotspot.itemType, 'lamp');
     });
 
     test('defaults itemType to "item" when all keys missing', () {
-      final json = {
-        'id': 'hs-3',
-        'x': 0.1,
-        'y': 0.9,
-      };
+      final json = {'id': 'hs-3', 'x': 0.1, 'y': 0.9};
       final hotspot = ProductHotspot.fromJson(json);
       expect(hotspot.itemType, 'item');
     });
 
     test('defaults label to "Product" when missing', () {
-      final json = {
-        'id': 'hs-4',
-        'x': 0.0,
-        'y': 1.0,
-      };
+      final json = {'id': 'hs-4', 'x': 0.0, 'y': 1.0};
       final hotspot = ProductHotspot.fromJson(json);
       expect(hotspot.label, 'Product');
     });
@@ -162,11 +167,32 @@ void main() {
         price: 100,
         retailerName: 'IKEA',
         imageUrl: 'url',
+        productUrl: 'https://example.com/chair',
       );
-      final copied = original.copyWith(price: 89.99);
+      final copied = original.copyWith(
+        price: 89.99,
+        productUrl: 'https://example.com/chair-sale',
+      );
       expect(copied.price, 89.99);
+      expect(copied.productUrl, 'https://example.com/chair-sale');
       expect(copied.name, 'Chair'); // unchanged
       expect(copied.id, 'cw-1'); // unchanged
+    });
+  });
+
+  group('ShopProduct.toJson', () {
+    test('includes productUrl', () {
+      const product = ShopProduct(
+        id: 'json-1',
+        name: 'Table',
+        description: 'Round table',
+        price: 120.0,
+        retailerName: 'Store',
+        imageUrl: 'https://example.com/table.jpg',
+        productUrl: 'https://example.com/table',
+      );
+      final json = product.toJson();
+      expect(json['productUrl'], 'https://example.com/table');
     });
   });
 }

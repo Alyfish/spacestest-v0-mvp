@@ -20,6 +20,8 @@ class ApiConstants {
   static const String createProject = '/projects';
   static const String getProject = '/projects';
   static const String updateProject = '/projects';
+  static const String getProjectSummaries = '/projects/summaries';
+  static const String deleteProject = '/projects';
 
   // Image Upload
   static const String uploadImage = '/projects/{project_id}/upload-image';
@@ -99,6 +101,8 @@ class ApiConstants {
   // Job Management
   static const String jobStatus = '/projects/{project_id}/job-status/{job_id}';
   static const String cancelJob = '/projects/{project_id}/jobs/{job_id}/cancel';
+  static const String notifyWhenReady =
+      '/projects/{project_id}/jobs/{job_id}/notify-when-ready';
 
   // Headers
   static const Map<String, String> defaultHeaders = {

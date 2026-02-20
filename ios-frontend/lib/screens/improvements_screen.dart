@@ -48,7 +48,12 @@ String formatImprovementRecommendationTitle(String recommendation) {
 
 class ImprovementsScreen extends StatefulWidget {
   final VoidCallback? onBack;
-  final void Function(List<String> recsToSelect, bool needsColorSave, bool needsStyleSave)? onImprove;
+  final void Function(
+    List<String> recsToSelect,
+    bool needsColorSave,
+    bool needsStyleSave,
+  )?
+  onImprove;
 
   const ImprovementsScreen({super.key, this.onBack, this.onImprove});
 
@@ -315,21 +320,16 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
       recsToSelect = List<String>.from(provider.productRecommendations);
     }
 
-    final needsColorSave = !_selectedActionIds.contains('color_palette') &&
+    final needsColorSave =
+        !_selectedActionIds.contains('color_palette') &&
         provider.colorPalette == null;
-    final needsStyleSave = !_selectedActionIds.contains('design_style') &&
+    final needsStyleSave =
+        !_selectedActionIds.contains('design_style') &&
         provider.designStyle == null;
 
     // Navigate immediately — saves run behind the AnalyzingScreen.
     // _isSubmitting resets naturally when the widget tree rebuilds on navigation.
     widget.onImprove?.call(recsToSelect, needsColorSave, needsStyleSave);
-  }
-
-  void _openSettings() {
-    // Navigate to settings - placeholder for now
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
   }
 
   void _handleNavTap(int index) {
@@ -403,11 +403,10 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with logo and settings
+            // Header with logo
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   // Spaces. logo
                   Text(
@@ -416,29 +415,6 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
                       fontSize: 28,
                       fontWeight: FontWeight.w800,
                       color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  // Settings icon
-                  GestureDetector(
-                    onTap: _openSettings,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: AppTheme.surfaceColor,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: AppTheme.dividerColor,
-                          width: 1,
-                        ),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          IconsaxPlusLinear.setting_2,
-                          size: 22,
-                          color: AppTheme.textPrimary,
-                        ),
-                      ),
                     ),
                   ),
                 ],
@@ -710,15 +686,17 @@ class _ColorPaletteSelectionScreenState
     final provider = Provider.of<ProjectProvider>(context, listen: false);
     final palette = _palettes.firstWhere((p) => p.id == _selectedPalette);
 
+    setState(() => _isSaving = true);
+
+    final bool success;
     if (palette.isAiOption) {
       // Let AI Decide — send empty colors with letAiDecide flag
-      provider.saveColorPalette(
+      success = await provider.saveColorPalette(
         context,
         'ai_decide',
         'Let AI Decide',
         [],
         letAiDecide: true,
-        background: true,
       );
     } else {
       final hexColors = palette.colors
@@ -728,15 +706,30 @@ class _ColorPaletteSelectionScreenState
           )
           .toList();
 
-      // Optimistic: save locally + pop immediately, sync to backend in background
-      provider.saveColorPalette(
+      success = await provider.saveColorPalette(
         context,
         _selectedPalette!,
         palette.name,
         hexColors,
-        background: true,
       );
     }
+
+    if (!mounted) return;
+    setState(() => _isSaving = false);
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            provider.errorMessage ??
+                'Failed to save color palette. Please try again.',
+          ),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+      return;
+    }
+
     Navigator.pop(context, {'id': _selectedPalette!, 'name': palette.name});
   }
 
@@ -811,11 +804,10 @@ class _ColorPaletteSelectionScreenState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with logo and settings
+            // Header with logo
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
                     'Spaces.',
@@ -823,25 +815,6 @@ class _ColorPaletteSelectionScreenState
                       fontSize: 28,
                       fontWeight: FontWeight.w800,
                       color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () {},
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: AppTheme.surfaceColor,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppTheme.dividerColor),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          IconsaxPlusLinear.setting_2,
-                          size: 22,
-                          color: AppTheme.textPrimary,
-                        ),
-                      ),
                     ),
                   ),
                 ],

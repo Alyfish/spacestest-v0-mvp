@@ -60,11 +60,10 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
 
         return Column(
           children: [
-            // Header with logo and settings
+            // Header with logo
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   // Spaces. logo
                   Text(
@@ -74,17 +73,6 @@ class _ConfirmSelectionContentState extends State<ConfirmSelectionContent> {
                       fontWeight: FontWeight.w700,
                       color: AppTheme.textPrimary,
                     ),
-                  ),
-                  // Settings icon
-                  IconButton(
-                    icon: Icon(
-                      IconsaxPlusLinear.setting_2,
-                      size: 24,
-                      color: AppTheme.textPrimary,
-                    ),
-                    onPressed: () {
-                      // Settings action
-                    },
                   ),
                 ],
               ),

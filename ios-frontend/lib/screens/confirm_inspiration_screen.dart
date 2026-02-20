@@ -148,7 +148,7 @@ class _ConfirmInspirationContentState extends State<ConfirmInspirationContent> {
           body: SafeArea(
             child: Column(
               children: [
-                // Header with logo and settings
+                // Header with logo
                 _buildHeader(),
 
                 // Progress bar
@@ -210,34 +210,9 @@ class _ConfirmInspirationContentState extends State<ConfirmInspirationContent> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           // Spaces. logo
-          Image.asset(
-            'assets/logo/logo.png',
-            height: 32,
-          ),
-          // Settings icon
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppTheme.dividerColor,
-                width: 1,
-              ),
-            ),
-            child: IconButton(
-              icon: const Icon(
-                Icons.settings_outlined,
-                color: AppTheme.textPrimary,
-                size: 22,
-              ),
-              onPressed: () {},
-            ),
-          ),
+          Image.asset('assets/logo/logo.png', height: 32),
         ],
       ),
     );
@@ -271,7 +246,10 @@ class _ConfirmInspirationContentState extends State<ConfirmInspirationContent> {
                 top: 12,
                 left: 12,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.6),
                     borderRadius: BorderRadius.circular(20),
@@ -316,10 +294,7 @@ class _ConfirmInspirationContentState extends State<ConfirmInspirationContent> {
                 padding: const EdgeInsets.symmetric(horizontal: 2),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
-                  child: Image.file(
-                    images[index],
-                    fit: BoxFit.cover,
-                  ),
+                  child: Image.file(images[index], fit: BoxFit.cover),
                 ),
               );
             },
@@ -375,7 +350,10 @@ class _ConfirmInspirationContentState extends State<ConfirmInspirationContent> {
                 child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppTheme.textPrimary,
-                    side: const BorderSide(color: AppTheme.dividerColor, width: 1.5),
+                    side: const BorderSide(
+                      color: AppTheme.dividerColor,
+                      width: 1.5,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),

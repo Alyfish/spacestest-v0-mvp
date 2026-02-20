@@ -7,13 +7,11 @@ import '../theme.dart';
 /// Shows retailer logo, product image, name, description, and price
 class ShopProductCard extends StatelessWidget {
   final ShopProduct product;
-  final bool isSelected;
   final VoidCallback onTap;
 
   const ShopProductCard({
     super.key,
     required this.product,
-    required this.isSelected,
     required this.onTap,
   });
 
@@ -36,10 +34,7 @@ class ShopProductCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppTheme.surfaceColor,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? AppTheme.primaryColor : AppTheme.dividerColor,
-            width: isSelected ? 2 : 1,
-          ),
+          border: Border.all(color: AppTheme.dividerColor, width: 1),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.04),
@@ -120,25 +115,6 @@ class ShopProductCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Selection checkmark (top-right)
-                  if (isSelected)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        width: 24,
-                        height: 24,
-                        decoration: const BoxDecoration(
-                          color: AppTheme.primaryColor,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.check,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                      ),
-                    ),
                 ],
               ),
             ),

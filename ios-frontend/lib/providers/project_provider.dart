@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show min;
 import 'dart:typed_data';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/project.dart';
@@ -59,12 +62,14 @@ class ProjectProvider extends ChangeNotifier {
   // Generated image (from backend)
   Uint8List? _generatedImageBytes;
   String? _generatedImageUrl;
+  DateTime? _imageUrlSetAt; // [REGEN_VERIFY] temp debug field
 
   // Background save error callback (for optimistic UI pattern)
   void Function(String errorMessage)? onBackgroundSaveError;
 
   // Job tracking
   String? _currentJobId;
+  String? _lastCompletedJobId; // [REGEN_VERIFY] temp debug field
   String? _pendingSearchJobId;
   int _jobProgress = 0;
   String? _jobPhase;
@@ -72,6 +77,10 @@ class ProjectProvider extends ChangeNotifier {
   // Generation retry state
   Future<bool>? _generateDesignFuture; // concurrency guard
   bool _generationRetrying = false; // optional UX flag
+
+  // Pre-warm generation state
+  String? _prewarmFingerprint;
+  bool _lastPrewarmReused = false;
 
   // Base image upload tracking
   Future<bool>? _projectImageUploadFuture;
@@ -134,9 +143,12 @@ class ProjectProvider extends ChangeNotifier {
   Uint8List? get generatedImageBytes => _generatedImageBytes;
   String? get generatedImageUrl => _generatedImageUrl;
   String? get currentJobId => _currentJobId;
+  String? get lastCompletedJobId => _lastCompletedJobId; // [REGEN_VERIFY]
+  DateTime? get imageUrlSetAt => _imageUrlSetAt; // [REGEN_VERIFY]
   int get jobProgress => _jobProgress;
   String? get jobPhase => _jobPhase;
   bool get generationRetrying => _generationRetrying;
+  bool get lastPrewarmReused => _lastPrewarmReused;
   bool get isRecommendationsLoading =>
       _recommendationsCompleter != null &&
       !_recommendationsCompleter!.isCompleted;
@@ -177,6 +189,18 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Update the generated image URL, evicting the old URL from Flutter's
+  /// image cache so stale images are never shown after regeneration.
+  void _updateGeneratedImageUrl(String? newUrl) {
+    if (_generatedImageUrl != null && _generatedImageUrl != newUrl) {
+      imageCache.evict(NetworkImage(_generatedImageUrl!));
+    }
+    _generatedImageUrl = newUrl;
+    if (newUrl != null) {
+      _imageUrlSetAt = DateTime.now(); // [REGEN_VERIFY]
+    }
+  }
+
   void _setError(String error, {bool transient = false}) {
     _errorMessage = error;
     _lastErrorTransient = transient;
@@ -191,6 +215,22 @@ class ProjectProvider extends ChangeNotifier {
         _currentProject != null ? ProjectStatus.ready : ProjectStatus.idle,
       );
     }
+  }
+
+  void _safeNotifyListeners() {
+    try {
+      final phase = SchedulerBinding.instance.schedulerPhase;
+      if (phase == SchedulerPhase.persistentCallbacks ||
+          phase == SchedulerPhase.midFrameMicrotasks) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          try {
+            notifyListeners();
+          } catch (_) {}
+        });
+      } else {
+        notifyListeners();
+      }
+    } catch (_) {}
   }
 
   String? _resolveAuthToken([BuildContext? context]) {
@@ -518,20 +558,85 @@ class ProjectProvider extends ChangeNotifier {
     );
   }
 
+  Future<Map<String, dynamic>> _analyzeFurnitureBatchResilient(
+    String projectId,
+    String authToken,
+    List<Map<String, dynamic>> selections, {
+    required String imageType,
+    required String mode,
+    required Duration timeout,
+    required String logContext,
+    int maxAttempts = 2,
+  }) async {
+    Object? lastError;
+    final attempts = maxAttempts < 1 ? 1 : maxAttempts;
+
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        if (attempt > 1) {
+          AppLogger.info(
+            '$logContext retry attempt $attempt/$attempts '
+            '(mode=$mode, imageType=$imageType)',
+          );
+        }
+        return await ApiService.analyzeFurnitureBatch(
+          projectId,
+          authToken,
+          selections,
+          imageType: imageType,
+          mode: mode,
+          timeout: timeout,
+        );
+      } catch (e) {
+        lastError = e;
+        final transient = _isTransientFurnitureAnalysisError(e);
+        final isFinalAttempt = attempt >= attempts;
+        if (!transient || isFinalAttempt) {
+          rethrow;
+        }
+
+        final backoffMs = min(800 * (1 << (attempt - 1)), 2400);
+        AppLogger.warning(
+          '$logContext transient failure on attempt $attempt/$attempts; '
+          'retrying in ${backoffMs}ms: $e',
+        );
+        await Future.delayed(Duration(milliseconds: backoffMs));
+      }
+    }
+
+    throw lastError ?? Exception('$logContext failed');
+  }
+
+  bool _isTransientFurnitureAnalysisError(Object error) {
+    if (_isTransientException(error)) return true;
+    final message = error.toString().toLowerCase();
+    return message.contains('failed to analyze furniture: 500') ||
+        message.contains('failed to analyze furniture: 502') ||
+        message.contains('failed to analyze furniture: 503') ||
+        message.contains('failed to analyze furniture: 504') ||
+        message.contains('http_error') ||
+        message.contains('connection reset') ||
+        message.contains('connection aborted');
+  }
+
   @visibleForTesting
   Future<Map<String, dynamic>> analyzeFurnitureBatchForPrefetch(
     String projectId,
     String authToken,
     List<Map<String, dynamic>> selections, {
     required String imageType,
+    Duration timeout = const Duration(seconds: 45),
+    int maxAttempts = 2,
   }) {
-    return ApiService.analyzeFurnitureBatch(
+    return _analyzeFurnitureBatchResilient(
       projectId,
       authToken,
       selections,
       imageType: imageType,
       mode: 'fast_prefetch',
-      timeout: const Duration(seconds: 45),
+      timeout: timeout,
+      maxAttempts: maxAttempts,
+      logContext: '[HotspotPrefetch]',
     );
   }
 
@@ -542,14 +647,17 @@ class ProjectProvider extends ChangeNotifier {
     Map<String, dynamic> selection, {
     required String imageType,
     Duration? timeout,
+    int maxAttempts = 2,
   }) {
-    return ApiService.analyzeFurnitureBatch(
+    return _analyzeFurnitureBatchResilient(
       projectId,
       authToken,
       [selection],
       imageType: imageType,
       mode: 'full',
       timeout: timeout ?? tapTimeFallbackTimeout,
+      maxAttempts: maxAttempts,
+      logContext: '[HotspotTap]',
     );
   }
 
@@ -889,6 +997,14 @@ class ProjectProvider extends ChangeNotifier {
       _isProjectImageUploading = false;
       _preferredStoresDirty = false;
       _pendingSearchJobId = null;
+
+      // Extract generated image URL from context so DreamSpace can render immediately
+      final ctx = response['context'] as Map<String, dynamic>?;
+      final inspRef = ctx?['inspiration_generated_image_base64'] as String?;
+      final genRef = ctx?['generated_image_base64'] as String?;
+      final ref = inspRef ?? genRef;
+      _generatedImageUrl = (ref != null && ref.startsWith('http')) ? ref : null;
+
       _setStatus(ProjectStatus.ready);
 
       AppLogger.info('Project loaded successfully');
@@ -1581,7 +1697,7 @@ class ProjectProvider extends ChangeNotifier {
     _productSuggestions = null;
     _trendingProducts = null;
     _generatedImageBytes = null;
-    _generatedImageUrl = null;
+    _updateGeneratedImageUrl(null);
     _currentJobId = null;
     _pendingSearchJobId = null;
     _jobProgress = 0;
@@ -1594,6 +1710,8 @@ class ProjectProvider extends ChangeNotifier {
     _hasUploadedProjectImage = false;
     _preferredStoresDirty = false;
     _searchFailureReason = SearchFailureReason.none;
+    _prewarmFingerprint = null;
+    _lastPrewarmReused = false;
     _furnitureAnalysis = null;
     _processedFurniture = null;
     _detectedHotspots = [];
@@ -1882,7 +2000,7 @@ class ProjectProvider extends ChangeNotifier {
       _productRecommendations = List<String>.from(
         response['recommendations'] ?? [],
       );
-      notifyListeners();
+      _safeNotifyListeners();
 
       AppLogger.info(
         'Got ${_productRecommendations.length} product recommendations',
@@ -1977,7 +2095,7 @@ class ProjectProvider extends ChangeNotifier {
       );
       _selectedRecommendations = List<String>.from(recommendations);
       notifyListeners();
-      return true;
+      return false;
     }
   }
 
@@ -2302,7 +2420,8 @@ class ProjectProvider extends ChangeNotifier {
       }
 
       // 3. Kick off the inspiration redesign generation
-      final idempotencyKey = '${projectId}_inspiration_direct';
+      final idempotencyKey =
+          '${projectId}_inspiration_direct_${DateTime.now().millisecondsSinceEpoch}';
 
       AppLogger.info('Starting direct inspiration design generation...');
       final jobResponse = await ApiService.startInspirationRedesign(
@@ -2313,7 +2432,7 @@ class ProjectProvider extends ChangeNotifier {
 
       final jobId = jobResponse['job_id'] as String;
       _currentJobId = jobId;
-      _generatedImageUrl = null;
+      _updateGeneratedImageUrl(null);
       _jobProgress = 0;
       _jobPhase = 'Starting...';
       notifyListeners();
@@ -2340,16 +2459,18 @@ class ProjectProvider extends ChangeNotifier {
             authToken,
           );
           if (imageUrl != null) {
-            _generatedImageUrl = imageUrl;
+            _updateGeneratedImageUrl(imageUrl);
             notifyListeners();
             AppLogger.info('Inspiration design URL received: $imageUrl');
             // Download bytes in background for offline fallback
-            ApiService.getGeneratedImage(projectId, authToken).then((bytes) {
-              _generatedImageBytes = bytes;
-              notifyListeners();
-            }).catchError((e) {
-              AppLogger.warning('Background bytes download failed: $e');
-            });
+            ApiService.getGeneratedImage(projectId, authToken)
+                .then((bytes) {
+                  _generatedImageBytes = bytes;
+                  notifyListeners();
+                })
+                .catchError((e) {
+                  AppLogger.warning('Background bytes download failed: $e');
+                });
           } else {
             _generatedImageBytes = await ApiService.getGeneratedImage(
               projectId,
@@ -2357,9 +2478,27 @@ class ProjectProvider extends ChangeNotifier {
             );
             notifyListeners();
             AppLogger.info(
-              'Inspiration design generated: ${_generatedImageBytes!.length} bytes',
+              'Inspiration design generated: ${_generatedImageBytes?.length ?? 0} bytes',
             );
           }
+          AppLogger.info(
+            '[inspiration_direct] Preparing Dream Space hotspots '
+            '(imageType=$dreamSpaceAnalysisImageType)',
+          );
+          try {
+            await _prepareDreamSpaceHotspots(authToken);
+          } catch (e, st) {
+            AppLogger.warning(
+              '[inspiration_direct] Dream Space hotspot prep failed (non-fatal): $e',
+              e,
+              st,
+            );
+          }
+          AppLogger.info(
+            '[inspiration_direct] Dream Space hotspot prep complete: '
+            'detected=${_detectedHotspots.length} '
+            'ready=$readyHotspotCount/${_detectedHotspots.length}',
+          );
           return true;
 
         case PollingOutcome.jobFailed:
@@ -2367,17 +2506,26 @@ class ProjectProvider extends ChangeNotifier {
           return false;
 
         case PollingOutcome.networkFailed:
-          _setError(pollingResult.errorMessage ?? 'Network connection lost', transient: true);
+          _setError(
+            pollingResult.errorMessage ?? 'Network connection lost',
+            transient: true,
+          );
           return false;
 
         case PollingOutcome.timedOut:
-          _setError(pollingResult.errorMessage ?? 'Request timed out', transient: true);
+          _setError(
+            pollingResult.errorMessage ?? 'Request timed out',
+            transient: true,
+          );
           return false;
       }
     } catch (e) {
       AppLogger.error('Failed to generate inspiration design directly', e);
       _currentJobId = null;
-      _setError('Inspiration design generation failed: ${e.toString()}', transient: _isTransientException(e));
+      _setError(
+        'Inspiration design generation failed: ${e.toString()}',
+        transient: _isTransientException(e),
+      );
       return false;
     }
   }
@@ -2395,6 +2543,18 @@ class ProjectProvider extends ChangeNotifier {
   }
 
   Future<void> _prepareDreamSpaceHotspots(String authToken) async {
+    // Guard — don't prime hotspots if no generated image available
+    final hasGeneratedImage =
+        (_generatedImageUrl != null && _generatedImageUrl!.isNotEmpty) ||
+        _generatedImageBytes != null;
+    if (!hasGeneratedImage) {
+      AppLogger.warning(
+        'Hotspot prime skipped: no generated image available '
+        '(url=${_generatedImageUrl != null}, bytes=${_generatedImageBytes != null})',
+      );
+      return;
+    }
+
     _resetHotspotPrefetchStateForNewImage();
     final version = _dreamSpaceImageVersion;
 
@@ -2657,6 +2817,7 @@ class ProjectProvider extends ChangeNotifier {
     int version,
   ) async {
     if (_currentProject == null) return false;
+    final projectId = _currentProject!.id;
 
     // Dedup: join in-flight rescue if exists (separate from tap-time map)
     final inFlight = _rescueHotspotCompleters[hotspot.id];
@@ -2680,13 +2841,13 @@ class ProjectProvider extends ChangeNotifier {
       );
       final rescueSw = Stopwatch()..start();
 
-      final response = await ApiService.analyzeFurnitureBatch(
-        _currentProject!.id,
+      final response = await analyzeFurnitureBatchForPrefetch(
+        projectId,
         authToken,
         [selection],
         imageType: dreamSpaceAnalysisImageType,
-        mode: 'fast_prefetch',
         timeout: rescuePrewarmPerHotspotTimeout,
+        maxAttempts: 2,
       );
 
       rescueSw.stop();
@@ -2776,6 +2937,7 @@ class ProjectProvider extends ChangeNotifier {
     required String imageType,
   }) async {
     if (_currentProject == null) return false;
+    final projectId = _currentProject!.id;
     final selection = <String, dynamic>{
       'id': hotspot.id,
       'x': hotspot.x,
@@ -2785,7 +2947,7 @@ class ProjectProvider extends ChangeNotifier {
 
     try {
       final response = await analyzeFurnitureBatchForHotspotRobust(
-        _currentProject!.id,
+        projectId,
         authToken,
         selection,
         imageType: imageType,
@@ -2865,6 +3027,18 @@ class ProjectProvider extends ChangeNotifier {
         resolvedAuthToken,
         imageType: dreamSpaceAnalysisImageType,
       );
+      if (!success &&
+          !hasProductsForHotspot(hotspot.id) &&
+          dreamSpaceAnalysisImageType != 'product') {
+        AppLogger.info(
+          '[HotspotTap] Retrying ${hotspot.id} with fallback imageType=product',
+        );
+        success = await _runRobustHotspotAnalysisWithImageType(
+          hotspot,
+          resolvedAuthToken,
+          imageType: 'product',
+        );
+      }
 
       tapSw.stop();
       AppLogger.info(
@@ -2951,6 +3125,71 @@ class ProjectProvider extends ChangeNotifier {
         msg.contains('connection closed');
   }
 
+  // ═══ PRE-WARM GENERATION SUPPORT ═══
+
+  /// Fingerprint of stable user-choice fields that affect the redesign prompt.
+  /// Excludes AI-generated product_recommendations (unstable ordering).
+  String get redesignInputsFingerprint {
+    final sortedSelectedRecs = List<String>.from(_selectedRecommendations)
+      ..sort();
+
+    final markerFingerprints =
+        _markers
+            .map(
+              (m) =>
+                  '${m.id}:${(m.position.x * 100).round()}:${(m.position.y * 100).round()}',
+            )
+            .toList()
+          ..sort();
+
+    final fields = <String, dynamic>{
+      'project_id': _currentProject?.id,
+      'space_type': _currentProject?.spaceChosen,
+      'design_style': _currentProject?.designPreferences['designStyle'],
+      'color_scheme': _currentProject?.designPreferences['colorPalette'],
+      'selected_recs': sortedSelectedRecs,
+      'markers': markerFingerprints,
+      'approach': _currentProject?.approach,
+    };
+    final json = jsonEncode(fields);
+    return md5.convert(utf8.encode(json)).toString();
+  }
+
+  /// Force-invalidate prewarm immediately (called when we know saves are pending).
+  void forceInvalidatePrewarm() {
+    if (_generateDesignFuture != null) {
+      AppLogger.info('PERF_PREWARM force_invalidated (pending saves detected)');
+      _generateDesignFuture = null;
+      _prewarmFingerprint = null;
+    }
+    _lastPrewarmReused = false;
+  }
+
+  /// Invalidate pre-warmed generation if inputs changed.
+  void invalidatePrewarmIfStale() {
+    _lastPrewarmReused = false;
+    final current = redesignInputsFingerprint;
+    if (_generateDesignFuture != null && _prewarmFingerprint != current) {
+      AppLogger.info(
+        'PERF_PREWARM invalidated: hash_mismatch '
+        '(prewarm=$_prewarmFingerprint current=$current)',
+      );
+      _generateDesignFuture = null;
+      _prewarmFingerprint = null;
+    } else if (_generateDesignFuture != null) {
+      _lastPrewarmReused = true;
+      AppLogger.info('PERF_PREWARM reuse=true hash=$current');
+    }
+  }
+
+  /// Start pre-warm and record fingerprint.
+  void startPrewarmGeneration() {
+    if (_generateDesignFuture != null) return; // already running
+    _prewarmFingerprint = redesignInputsFingerprint;
+    AppLogger.info('PERF_PREWARM started: hash=$_prewarmFingerprint');
+    generateDesignImage(); // singleflight — sets _generateDesignFuture
+  }
+
   /// Generate design image (inspiration redesign) during second analyzing phase.
   ///
   /// Concurrency guard: if called while already in-flight, returns the same
@@ -2977,14 +3216,21 @@ class ProjectProvider extends ChangeNotifier {
     }
 
     final projectId = _currentProject!.id;
-    final requestId = '${projectId}_redesign';
+    final requestId =
+        '${projectId}_redesign_${DateTime.now().millisecondsSinceEpoch}';
     String? jobId;
     bool jobRetryUsed = false;
     bool fetchRetryUsed = false;
 
     try {
       // ═══ PHASE 1: START JOB ═══
-      AppLogger.info('[gen] attempt=1 phase=start');
+      AppLogger.info(
+        '[gen] attempt=1 phase=start '
+        'approach=$approach '
+        'markerCount=${_markers.length} '
+        'recsCount=${_productRecommendations.length} '
+        'projectId=$projectId',
+      );
       try {
         final jobResponse = await ApiService.startInspirationRedesign(
           projectId,
@@ -3023,10 +3269,10 @@ class ProjectProvider extends ChangeNotifier {
       }
 
       _currentJobId = jobId;
-      _generatedImageUrl = null;
+      _updateGeneratedImageUrl(null);
       _jobProgress = 0;
       _jobPhase = 'Starting...';
-      notifyListeners();
+      _safeNotifyListeners();
 
       // ═══ PHASE 2: POLL JOB ═══
       AppLogger.info('[gen] attempt=1 phase=poll jobId=$jobId');
@@ -3037,7 +3283,7 @@ class ProjectProvider extends ChangeNotifier {
         onProgress: (progressPct, phase) {
           _jobProgress = progressPct;
           _jobPhase = phase;
-          notifyListeners();
+          _safeNotifyListeners();
         },
       );
 
@@ -3055,7 +3301,7 @@ class ProjectProvider extends ChangeNotifier {
             jobRetryUsed = true;
             onRetrying?.call();
             _generationRetrying = true;
-            notifyListeners();
+            _safeNotifyListeners();
             await Future.delayed(const Duration(milliseconds: 1500));
             AppLogger.info(
               '[gen] attempt=2 phase=poll jobId=$jobId restart=false (resume)',
@@ -3068,12 +3314,12 @@ class ProjectProvider extends ChangeNotifier {
                 onProgress: (progressPct, phase) {
                   _jobProgress = progressPct;
                   _jobPhase = phase;
-                  notifyListeners();
+                  _safeNotifyListeners();
                 },
               );
             } finally {
               _generationRetrying = false;
-              notifyListeners();
+              _safeNotifyListeners();
             }
 
           case _RetryAction.restartJob:
@@ -3081,7 +3327,7 @@ class ProjectProvider extends ChangeNotifier {
             onRetrying?.call();
             _currentJobId = null;
             _generationRetrying = true;
-            notifyListeners();
+            _safeNotifyListeners();
             await Future.delayed(const Duration(milliseconds: 1500));
             AppLogger.info(
               '[gen] attempt=2 phase=start restart=true reason=transientJobFailed',
@@ -3094,10 +3340,10 @@ class ProjectProvider extends ChangeNotifier {
               );
               jobId = jobResponse['job_id'] as String;
               _currentJobId = jobId;
-              _generatedImageUrl = null;
+              _updateGeneratedImageUrl(null);
               _jobProgress = 0;
               _jobPhase = 'Starting...';
-              notifyListeners();
+              _safeNotifyListeners();
               pollingResult = await ApiService.pollJobUntilDone(
                 projectId,
                 jobId,
@@ -3105,7 +3351,7 @@ class ProjectProvider extends ChangeNotifier {
                 onProgress: (progressPct, phase) {
                   _jobProgress = progressPct;
                   _jobPhase = phase;
-                  notifyListeners();
+                  _safeNotifyListeners();
                 },
               );
             } catch (e) {
@@ -3115,7 +3361,7 @@ class ProjectProvider extends ChangeNotifier {
               return false;
             } finally {
               _generationRetrying = false;
-              notifyListeners();
+              _safeNotifyListeners();
             }
 
           case _RetryAction.giveUp:
@@ -3125,7 +3371,7 @@ class ProjectProvider extends ChangeNotifier {
 
       if (pollingResult.outcome != PollingOutcome.done) {
         _currentJobId = null;
-        notifyListeners();
+        _safeNotifyListeners();
         switch (pollingResult.outcome) {
           case PollingOutcome.jobFailed:
             _setError(pollingResult.errorMessage ?? 'Image generation failed');
@@ -3149,17 +3395,19 @@ class ProjectProvider extends ChangeNotifier {
           authToken,
         );
         if (imageUrl != null) {
-          _generatedImageUrl = imageUrl;
+          _updateGeneratedImageUrl(imageUrl);
           urlFetched = true;
-          notifyListeners();
+          _safeNotifyListeners();
           AppLogger.info('[gen] phase=fetch url=$imageUrl');
           // Download bytes in background for offline fallback
-          ApiService.getGeneratedImage(projectId, authToken).then((bytes) {
-            _generatedImageBytes = bytes;
-            notifyListeners();
-          }).catchError((e) {
-            AppLogger.warning('[gen] background bytes download failed: $e');
-          });
+          ApiService.getGeneratedImage(projectId, authToken)
+              .then((bytes) {
+                _generatedImageBytes = bytes;
+                _safeNotifyListeners();
+              })
+              .catchError((e) {
+                AppLogger.warning('[gen] background bytes download failed: $e');
+              });
         }
       } catch (e) {
         AppLogger.warning('[gen] phase=fetch_url failed: $e');
@@ -3189,32 +3437,93 @@ class ProjectProvider extends ChangeNotifier {
             } catch (e2) {
               AppLogger.error('[gen] phase=fetch retry failed', e2);
               _currentJobId = null;
-              notifyListeners();
+              _safeNotifyListeners();
               _setError('Image generation failed: ${e2.toString()}');
               return false;
             }
           } else {
             _currentJobId = null;
-            notifyListeners();
+            _safeNotifyListeners();
             _setError('Image generation failed: ${e.toString()}');
             return false;
           }
         }
       }
 
+      _lastCompletedJobId = _currentJobId; // [REGEN_VERIFY]
       _currentJobId = null;
-      notifyListeners();
+      _safeNotifyListeners();
       AppLogger.info(
         '[gen] phase=fetch success urlFetched=$urlFetched bytes=${_generatedImageBytes?.length ?? 0}',
       );
+      AppLogger.info(
+        '[gen] Preparing Dream Space hotspots '
+        '(approach=$approach imageType=$dreamSpaceAnalysisImageType)',
+      );
       await _prepareDreamSpaceHotspots(authToken);
+      AppLogger.info(
+        '[gen] Dream Space hotspot prep complete: '
+        'detected=${_detectedHotspots.length} '
+        'ready=$readyHotspotCount/${_detectedHotspots.length}',
+      );
       return true;
     } catch (e) {
       AppLogger.error('[gen] unexpected error', e);
       _currentJobId = null;
       _generationRetrying = false;
-      notifyListeners();
+      _safeNotifyListeners();
       _setError('Image generation failed: ${e.toString()}');
+      return false;
+    }
+  }
+
+  /// Fetch the generated image after a background job completes.
+  /// Used when DreamSpace navigated before generation finished.
+  Future<bool> fetchGeneratedImage() async {
+    if (_currentProject == null || _currentJobId == null) return false;
+    final authToken = SupabaseService.accessToken;
+    if (authToken == null) return false;
+
+    try {
+      final imageUrl = await ApiService.getGeneratedImageUrl(
+        _currentProject!.id,
+        authToken,
+      );
+      if (imageUrl != null) {
+        _updateGeneratedImageUrl(imageUrl);
+        notifyListeners();
+
+        // Fetch bytes in background for offline/caching
+        ApiService.getGeneratedImage(_currentProject!.id, authToken)
+            .then((bytes) {
+              _generatedImageBytes = bytes;
+              notifyListeners();
+            })
+            .catchError((e) {
+              AppLogger.warning(
+                '[gen] fetchGeneratedImage background bytes failed: $e',
+              );
+            });
+      }
+
+      // Prepare hotspots for the generated image
+      AppLogger.info(
+        '[gen_bg] Preparing Dream Space hotspots '
+        '(approach=$approach imageType=$dreamSpaceAnalysisImageType)',
+      );
+      await _prepareDreamSpaceHotspots(authToken);
+      AppLogger.info(
+        '[gen_bg] Dream Space hotspot prep complete: '
+        'detected=${_detectedHotspots.length} '
+        'ready=$readyHotspotCount/${_detectedHotspots.length}',
+      );
+
+      _lastCompletedJobId = _currentJobId; // [REGEN_VERIFY]
+      _currentJobId = null;
+      notifyListeners();
+      return _generatedImageUrl != null;
+    } catch (e) {
+      AppLogger.error('[gen] fetchGeneratedImage failed', e);
       return false;
     }
   }
@@ -3267,15 +3576,17 @@ class ProjectProvider extends ChangeNotifier {
         authToken,
       );
       if (imageUrl != null) {
-        _generatedImageUrl = imageUrl;
+        _updateGeneratedImageUrl(imageUrl);
         notifyListeners();
         // Background bytes fetch for offline fallback
-        ApiService.getGeneratedImage(_currentProject!.id, authToken).then((bytes) {
-          _generatedImageBytes = bytes;
-          notifyListeners();
-        }).catchError((e) {
-          AppLogger.warning('Retry: background bytes download failed: $e');
-        });
+        ApiService.getGeneratedImage(_currentProject!.id, authToken)
+            .then((bytes) {
+              _generatedImageBytes = bytes;
+              notifyListeners();
+            })
+            .catchError((e) {
+              AppLogger.warning('Retry: background bytes download failed: $e');
+            });
       } else {
         _generatedImageBytes = await ApiService.getGeneratedImage(
           _currentProject!.id,
@@ -3283,7 +3594,24 @@ class ProjectProvider extends ChangeNotifier {
         );
         notifyListeners();
       }
-      await _prepareDreamSpaceHotspots(authToken);
+      AppLogger.info(
+        '[retry_design] Preparing Dream Space hotspots '
+        '(imageType=$dreamSpaceAnalysisImageType)',
+      );
+      try {
+        await _prepareDreamSpaceHotspots(authToken);
+      } catch (e, st) {
+        AppLogger.warning(
+          '[retry_design] Dream Space hotspot prep failed (non-fatal): $e',
+          e,
+          st,
+        );
+      }
+      AppLogger.info(
+        '[retry_design] Dream Space hotspot prep complete: '
+        'detected=${_detectedHotspots.length} '
+        'ready=$readyHotspotCount/${_detectedHotspots.length}',
+      );
 
       AppLogger.info(
         'Retry redesign complete: url=${_generatedImageUrl != null} bytes=${_generatedImageBytes?.length ?? 0}',
@@ -3291,7 +3619,10 @@ class ProjectProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       AppLogger.error('Failed to retry design image', e);
-      _setError('Retry redesign failed: ${e.toString()}', transient: _isTransientException(e));
+      _setError(
+        'Retry redesign failed: ${e.toString()}',
+        transient: _isTransientException(e),
+      );
       return false;
     }
   }
@@ -3318,13 +3649,15 @@ class ProjectProvider extends ChangeNotifier {
       }
 
       AppLogger.info('Analyzing furniture...');
-      _furnitureAnalysis = await ApiService.analyzeFurnitureBatch(
+      _furnitureAnalysis = await _analyzeFurnitureBatchResilient(
         _currentProject!.id,
         authToken,
         selections,
         imageType: imageType,
         mode: 'full',
         timeout: const Duration(seconds: 90),
+        maxAttempts: 2,
+        logContext: 'analyzeFurniture',
       );
       _setStatus(ProjectStatus.ready);
       notifyListeners();
@@ -3333,7 +3666,10 @@ class ProjectProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       AppLogger.error('Failed to analyze furniture', e);
-      _setError('Furniture analysis failed: ${e.toString()}');
+      _setError(
+        'Furniture analysis failed: ${e.toString()}',
+        transient: _isTransientFurnitureAnalysisError(e),
+      );
       return false;
     }
   }
@@ -3348,6 +3684,7 @@ class ProjectProvider extends ChangeNotifier {
     String? authToken,
   }) async {
     if (_currentProject == null) return false;
+    final projectId = _currentProject!.id;
 
     if (_furniturePrefetchCompleter != null &&
         !_furniturePrefetchCompleter!.isCompleted) {
@@ -3358,21 +3695,28 @@ class ProjectProvider extends ChangeNotifier {
     final resolvedAuthToken = authToken ?? _resolveAuthToken(context);
     if (resolvedAuthToken == null) {
       AppLogger.warning('Skipping furniture prefetch: auth token unavailable');
-      _furniturePrefetchCompleter!.complete(false);
+      _furniturePrefetchCompleter?.complete(false);
       _furniturePrefetchCompleter = null;
       return false;
     }
 
     try {
       final detectResponse = await autoDetectFurnitureForPrefetch(
-        _currentProject!.id,
+        projectId,
         resolvedAuthToken,
         imageType: imageType,
       );
       final rawDetections = detectResponse['detections'] as List? ?? const [];
       final sourceW = detectResponse['source_image_width'];
       final sourceH = detectResponse['source_image_height'];
-      AppLogger.info('Auto-detect source image: ${sourceW}x${sourceH}');
+      AppLogger.info(
+        'Auto-detect source image: ${sourceW ?? '?'}x${sourceH ?? '?'}',
+      );
+      if (sourceW == null || sourceH == null) {
+        AppLogger.warning(
+          'Auto-detect returned null dimensions — backend may lack active image',
+        );
+      }
       final resolvedImageType =
           detectResponse['resolved_image_type']?.toString().trim().isNotEmpty ==
               true
@@ -3509,14 +3853,14 @@ class ProjectProvider extends ChangeNotifier {
         AppLogger.info(
           'Dream Space hotspot pipeline: requested=$imageType resolved=$resolvedImageType raw=$rawDetectionCount parsed=$parsedDetectionCount rendered=0 synthetic=0 prefetchSuccess=0',
         );
-        _furniturePrefetchCompleter!.complete(true);
+        _furniturePrefetchCompleter?.complete(true);
         _furniturePrefetchCompleter = null;
         return true;
       }
 
       try {
         final analysisResponse = await analyzeFurnitureBatchForPrefetch(
-          _currentProject!.id,
+          projectId,
           resolvedAuthToken,
           selections,
           imageType: imageType,
@@ -3541,12 +3885,12 @@ class ProjectProvider extends ChangeNotifier {
         'Dream Space hotspot pipeline: requested=$imageType resolved=$resolvedImageType raw=$rawDetectionCount parsed=$parsedDetectionCount rendered=${hotspots.length} synthetic=$syntheticCount prefetchSuccess=$prefetchSuccessCount',
       );
 
-      _furniturePrefetchCompleter!.complete(true);
+      _furniturePrefetchCompleter?.complete(true);
       _furniturePrefetchCompleter = null;
       return true;
     } catch (e) {
       AppLogger.warning('Furniture hotspot prime failed (non-fatal): $e');
-      _furniturePrefetchCompleter!.complete(false);
+      _furniturePrefetchCompleter?.complete(false);
       _furniturePrefetchCompleter = null;
       return false;
     }

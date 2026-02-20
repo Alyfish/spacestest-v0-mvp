@@ -83,6 +83,155 @@ Hardening changes applied across mobile + backend for production reliability:
 - **`as_completed` timeout resilience** (`backend/data_manager.py`): Parallel product search sources (SERP, Exa, Google Images) are collected via `as_completed(futures, timeout=15)` instead of sequential `f.result(timeout=15)`, so fast sources are not blocked by slow ones and overall timeout is bounded.
 - **Structured logging in product search** (`backend/data_manager.py`): All `print()` calls in the `search_single_recommendation` / `search_products_for_recommendations` area are replaced with `self.logger.info()` / `self.logger.warning()` for request-id correlation and structured JSON output. Broader print cleanup across other files is out of scope.
 
+### Auth Gate — Session Persistence (2026-02-16)
+
+`ios-frontend/lib/main.dart` now includes an `_AuthGate` widget that decides the cold-start route:
+
+- **How it works**: `SupabaseService.initialize()` restores any persisted session from the iOS Keychain (via `SecureLocalStorage` + `flutter_secure_storage`) before `runApp()`. `_AuthGate` reads `Supabase.instance.client.auth.currentSession` directly — if non-null the user goes straight to `MainNavigationScreen`; otherwise they see `SplashScreen` (login flow).
+- **Diagnostic log**: `debugPrint('[AUTH_GATE] session=true/false')` fires on every cold start. If a returning user still lands on SplashScreen, check logs for `session=false` — likely causes are Keychain wipe (reinstall / bundle-ID change / signing identity change between runs).
+- **Sign-out**: `ProfileScreen` → Sign Out calls `SupabaseService.signOut()` (which clears the Keychain entry) and navigates to `SplashScreen`. Next cold start will see `session=false`.
+- **No provider dependency**: The gate reads Supabase directly, not `UserProvider`, so it works even if the provider hasn't fully hydrated yet.
+
+Code changes applied:
+
+- `ios-frontend/lib/main.dart`:
+  - Added `import 'package:supabase_flutter/supabase_flutter.dart';`
+  - Added `import 'screens/main_navigation_screen.dart';`
+  - Replaced `home: const SplashScreen()` with `home: const _AuthGate()`
+  - Added `_AuthGate` `StatelessWidget` that reads `Supabase.instance.client.auth.currentSession` and routes to `MainNavigationScreen` (session exists) or `SplashScreen` (no session), with `debugPrint('[AUTH_GATE] session=...')` diagnostic logging.
+
+### 2026-02-20: Inspiration Shortcut Dream Space Parity (Hotspots + Marker Readiness)
+
+#### Problem
+The direct "Generate with Inspiration" shortcut could reach Dream Space without visible product hotspots on first render, while complete-revamp flow consistently showed markers. Users reported parity mismatch even though both flows render the same Dream Space UI.
+
+#### Root Cause
+`generateInspirationDirectly()` fetched the generated image but returned success before running the Dream Space hotspot-prep pipeline. In contrast, the complete-revamp path (`_doGenerateDesignImage`) already ran `_prepareDreamSpaceHotspots()` before returning.
+
+#### What Was Implemented
+- **File**: `ios-frontend/lib/providers/project_provider.dart`
+- In `_generateInspirationDirectlyOnce()`, the `PollingOutcome.done` branch now:
+  1. Resolves generated image URL/bytes as before
+  2. Logs parity prep start with Dream Space image type (`active`)
+  3. Awaits `_prepareDreamSpaceHotspots(authToken)` before returning success
+  4. Logs parity prep completion with detected/ready hotspot counts
+- This keeps existing non-fatal hotspot semantics intact (`_prepareDreamSpaceHotspots` still treats prefetch failures as non-blocking for generation success).
+- Resulting behavior now matches complete-revamp default: analyzing waits until hotspot prep completes, so Dream Space is entered with markers ready when possible.
+
+#### Files Modified
+- `ios-frontend/lib/providers/project_provider.dart` — inspiration-direct success path now runs hotspot prep + parity logging
+- `THIS_IS_HOW_THE_CODE_WORKS.md` — this documentation entry
+
+#### Verification
+1. **Automated**: Run `flutter test test/providers/project_provider_furniture_prefetch_test.dart` from `ios-frontend` to verify hotspot pipeline behavior remains green.
+2. **Manual parity check**: Generate via "Generate with Inspiration" and confirm Dream Space shows contain-fit image with visible markers on first render (same expectation as complete revamp).
+3. **Manual interaction check**: Tap markers in Dream Space and verify Choose Products opens and remains functional.
+
+### 2026-02-20: Iterative Dream Space Full-Screen Fit + Preload Delta Logging
+
+#### Problem
+Iterative Dream Space output was showing letterboxed composition instead of filling the viewport, and it was hard to confirm from logs whether hotspot preloading completed before interaction.
+
+#### What Was Implemented
+- **Full-screen fit for iterative mode only** (`ios-frontend/lib/screens/dream_space_screen.dart`)
+  - Added `_dreamSpaceFit(provider)`:
+    - `iterative` → `BoxFit.cover` (full-screen)
+    - all other approaches keep existing flag-based behavior (`kDreamSpaceUseContainFit`)
+  - Applied this fit helper to generated image, original image page, and in-progress overlay image.
+- **Iterative preload delta logs** (`ios-frontend/lib/providers/project_provider.dart`)
+  - Added explicit start/end logs around `_prepareDreamSpaceHotspots(authToken)` in:
+    - `_doGenerateDesignImage()` (main iterative/complete path)
+    - `fetchGeneratedImage()` (background poll completion path)
+  - Logs include `approach`, `imageType`, and detected/ready hotspot counts.
+
+#### Files Modified
+- `ios-frontend/lib/screens/dream_space_screen.dart` — iterative-specific Dream Space full-screen fit logic
+- `ios-frontend/lib/providers/project_provider.dart` — hotspot preload parity logs for iterative/main generation paths
+
+#### Verification
+1. Run `flutter test test/providers/project_provider_furniture_prefetch_test.dart`.
+2. Run `flutter test test/screens/dream_to_choose_flow_smoke_test.dart`.
+3. Manual iterative flow: generate image, confirm full-screen presentation in Dream Space, then tap hotspots and verify Choose Products still opens correctly.
+
+### 2026-02-20: Iterative + Inspiration Reliability Recovery (Context Sync + Prompt Parity + No-Crop Stability)
+
+#### Problem
+- Iterative generations could look unchanged (style/colors/recommendations not reliably reflected), while Dream Space sometimes showed crop/parity confusion across flows.
+- Hotspot prefetch logs showed `Auto-detect source image: ?x?`, making first-render marker diagnostics ambiguous.
+
+#### Root Cause
+- Deferred generation-context saves in create-flow were non-blocking and could fail silently, so generation sometimes started with stale backend context.
+- The recommendation bulk-sync helper returned success even when backend sync failed, which masked retries and allowed stale recommendation context to proceed.
+- Style/color picker screens used background-only saves and returned immediately, creating a race between UI selection and backend persistence.
+- Backend inspiration-redesign branch selection could prioritize inspiration-image presence over iterative mode, causing iterative requests to take the wrong prompt branch when old inspiration images existed.
+- Iterative prompt input fallback did not consistently include recommendation text when `selected_products` was empty.
+- Base-dimension pre-read for aspect normalization did not EXIF-normalize before sampling dimensions.
+- Supabase auto-detect response did not return source image dimensions.
+
+#### What Was Implemented
+- **iOS context sync hardening** (`ios-frontend/lib/screens/create_flow_screen.dart`):
+  - Added tracked save lifecycle logs:
+    - `[gen_ctx_sync] start`
+    - `[gen_ctx_sync] first_pass`
+    - `[gen_ctx_sync] retry_pass`
+    - `[gen_ctx_sync] proceed_with_partial`
+  - Deferred saves now run first-pass + one targeted retry for failed saves, then proceed (non-blocking by design) with explicit partial-state warning logs.
+  - `ProjectProvider.setSelectedRecommendations(...)` now returns `false` when backend sync fails (while preserving local selection), so create-flow retry/partial warning logic can actually detect and handle recommendation sync failures.
+- **Picker save race removal**:
+  - `ios-frontend/lib/screens/design_style_selection_screen.dart` (`ChooseStyleScreen`) now awaits `saveDesignStyle(...)` before returning.
+  - `ios-frontend/lib/screens/improvements_screen.dart` (`ColorPaletteSelectionScreen`) now awaits `saveColorPalette(...)` before returning.
+  - Failures keep the picker open and show a visible error.
+- **Dream Space no-crop stability**:
+  - `ios-frontend/lib/screens/dream_space_screen.dart` continues to render with contain-fit via `_dreamSpaceFit() => BoxFit.contain` across generated/original/generating states.
+- **Backend iterative branch + prompt input parity**:
+  - `backend/supabase_data_manager.py` and `backend/data_manager.py` now prioritize iterative branch when mode is `iterative` (even if inspiration images exist).
+  - Iterative prompt product inputs now fallback in order:
+    1. `selected_products`
+    2. `selected_product_recommendations`
+    3. `product_recommendations`
+  - Added branch/input logs including:
+    - `branch=iterative|inspiration|integration`
+    - `selected_products_count`
+    - `selected_recommendations_count`
+    - `prompt_items_count`
+- **Aspect normalization EXIF fix + diagnostics**:
+  - EXIF-transposed base image before pre-reading base width/height in both managers.
+  - Added pre-normalization aspect diagnostics (`base` vs `generated` dimensions/ratios).
+- **Auto-detect metadata parity**:
+  - `backend/supabase_data_manager.py` now returns:
+    - `source_image_width`
+    - `source_image_height`
+  - This removes `?x?` ambiguity in Dream Space hotspot-prep logs.
+- **Settings icon verification**:
+  - Re-scanned targeted iOS screens for in-app top settings icons/handlers.
+  - No app-level no-op settings icon remained in those screens.
+  - Note: the iOS top-left “Settings” label shown in screenshots is system navigation UI, not a Flutter in-app icon.
+
+#### Files Modified
+- `ios-frontend/lib/screens/create_flow_screen.dart`
+- `ios-frontend/lib/screens/design_style_selection_screen.dart`
+- `ios-frontend/lib/screens/improvements_screen.dart`
+- `backend/supabase_data_manager.py`
+- `backend/data_manager.py`
+- `THIS_IS_HOW_THE_CODE_WORKS.md`
+
+#### Verification Checklist
+1. `flutter test ios-frontend/test/providers/project_provider_furniture_prefetch_test.dart`
+2. `flutter test ios-frontend/test/screens/dream_to_choose_flow_smoke_test.dart`
+3. `flutter analyze` (non-blocking for known unrelated baseline issues)
+4. `uv run pytest backend/tests/test_supabase_furniture_batch_modes.py`
+5. `uv run pytest backend/tests/test_data_manager_aspect_normalization.py`
+6. Manual inspiration-direct flow: markers visible on first Dream Space render; contain-fit preserved.
+7. Manual iterative flow: visible iterative changes, prompt branch logs confirm iterative path, marker readiness preserved.
+8. Failure-path: force one pre-generation save failure; observe one retry pass and continued generation with partial-state warning.
+
+#### Verification Results (2026-02-20)
+1. `flutter test ios-frontend/test/providers/project_provider_furniture_prefetch_test.dart` — **passed**.
+2. `flutter test ios-frontend/test/screens/dream_to_choose_flow_smoke_test.dart` — **passed**.
+3. `flutter analyze` — **repo baseline has pre-existing issues outside this delta** (including existing auth/provider errors in login flow); no new blocking errors tied to this change set were introduced.
+4. `backend/.venv/bin/pytest backend/tests/test_supabase_furniture_batch_modes.py` — **9 passed**.
+5. `backend/.venv/bin/pytest backend/tests/test_data_manager_aspect_normalization.py` — **2 passed**.
+
 ---
 
 ## 2. OVERALL PROJECT STRUCTURE
@@ -836,6 +985,83 @@ This is a sophisticated, production-ready AI interior design platform featuring:
 ---
 
 ## 16. CHANGELOG
+
+### 2026-02-16: Autonomous Design Uplift for Iterative Prompt + Color/Style Pass-Through
+
+#### Problem
+The iterative improvement prompt only made changes where the user placed markers. When no markers were placed, the AI received "No specific markers provided" and a weak fallback ("add a small accent in X tone"), resulting in barely visible changes. The user's selected color scheme and style data were not passed to the iterative prompt from the `data_manager.py` call path — they were skipped entirely (comment said "No color/style enforcement"). The room should look noticeably better after every iteration, even without markers.
+
+#### Solution
+Implemented a dual-mode iterative prompt with full color/style data pass-through:
+
+1. **Color/style data now passed to iterative prompt** — `data_manager.py` now passes `color_scheme`, `style_analysis`, and `color_analysis` to `_create_iterative_prompt()`, matching what the integration/revamp path already does.
+
+2. **Two new helper methods in `gemini_client.py`:**
+   - `_build_color_direction()` — Extracts the full 60-30-10 palette from `ColorAnalysis` (primary colors with hex codes, secondary colors, accent colors, and per-element color assignments like "Walls: Warm Ivory (#F5F0E8) [matte]"). Falls back to the simpler `color_scheme` dict if no full analysis exists.
+   - `_build_style_direction()` — Extracts `style_name`, `style_overview`, `materials`, `furniture_characteristics`, `patterns_textures`, `decor_accessories`, and `anchor_pieces` into a rich direction string.
+
+3. **Dual-mode branching based on `has_markers = bool(marker_locations)`:**
+
+   **When markers exist (marker-driven mode):**
+   - Keeps existing delta budget (2-3 anchor items, 3-4 props, 60-70% unchanged)
+   - Step A shows marker targets as before
+   - Adds the new COLOR & STYLE DESIGN DIRECTION section so even marker-driven changes follow the palette/style
+
+   **When NO markers exist (autonomous uplift mode):**
+   - Expanded delta budget: 3-4 anchor items, 4-5 styling props, 50-60% unchanged
+   - Step A replaced with AUTONOMOUS DESIGN UPLIFT instructions: AI must SCAN the room and identify 3-5 items to upgrade, MINIMUM 3 distinct visible improvements required, apply color palette across ALL changes, apply style coherently, distribute changes across the room
+   - Step C becomes a "Design Cohesion Check" (verify 3+ improvements, palette usage, style match, distribution)
+   - Extra negative instructions: "Do NOT make only 1-2 tiny changes. The MINIMUM is 3 visible, distributed improvements."
+
+4. **New prompt section: COLOR & STYLE DESIGN DIRECTION** — Inserted between the delta budget and surgical integration sections. Contains the full color palette and style direction. Only appears when color/style data is available (dynamic priority order adjusts accordingly).
+
+5. **Priority order updated** — COLOR & STYLE DESIGN DIRECTION added as item 4 (when data is available), shifting PRODUCT REFERENCE MATCHING and MICRO-STYLING down.
+
+#### How The Data Flows
+
+```
+User selects color palette → Color Agent → color_analysis (ColorAnalysis model)
+User selects design style → Style Agent → style_analysis (StyleAnalysis model)
+
+data_manager.py (iterative path):
+  context.color_analysis  ──┐
+  context.style_analysis  ──┤──→ _create_iterative_prompt()
+  context.color_scheme    ──┘         │
+                                      ├──→ _build_color_direction(color_analysis, color_scheme)
+                                      │       → "PRIMARY (60%): Warm Ivory (#F5F0E8)"
+                                      │       → "SECONDARY (30%): Toasted Walnut (#8B7355)"
+                                      │       → "ACCENT (10%): Brushed Gold (#C4A35A)"
+                                      │       → "ELEMENT COLOR ASSIGNMENTS:"
+                                      │       → "  - Walls: Warm Ivory (#F5F0E8) [matte]"
+                                      │
+                                      ├──→ _build_style_direction(style_analysis)
+                                      │       → "STYLE: Modern Organic"
+                                      │       → "KEY MATERIALS: oak wood, linen, travertine"
+                                      │       → "FURNITURE: Clean lines with organic curves"
+                                      │       → "ANCHOR PIECES: Solid oak bed frame, ..."
+                                      │
+                                      └──→ has_markers? → marker-driven vs autonomous uplift
+```
+
+#### Graceful Fallback
+
+- If `color_analysis` is `None` but `color_scheme` exists → uses simpler primary/secondary/accent from `color_scheme`
+- If both are `None` → COLOR & STYLE DESIGN DIRECTION section is omitted entirely, priority order adjusts
+- If `style_analysis` is `None` → style direction omitted, color-only direction still works
+- Autonomous uplift mode still works without any color/style data — it just doesn't have palette/style constraints
+
+#### Files Modified
+- `backend/gemini_client.py` — `_create_iterative_prompt()`: rewritten with dual-mode branching, added `color_analysis` parameter; new `_build_color_direction()` and `_build_style_direction()` helper methods
+- `backend/data_manager.py` — iterative call site (line ~4220): now passes `color_scheme`, `style_analysis`, `color_analysis`; updated comment from "No color/style enforcement" to "with color/style uplift"; updated prompt verification logging for autonomous vs marker-driven detection
+- `backend/prompts/iterative_surgical.json` — Archived `2.0.0-structural-lock`, added `3.0.0-autonomous-uplift` as production
+- `backend/prompts/registry.json` — Updated variables list to `[changes_str, products_str, delta_budget, design_direction_section, step_a, step_c, extra_negative]`, updated description
+
+#### Verification
+1. **With markers + color/style:** Prompt contains marker targets in Step A, COLOR & STYLE DESIGN DIRECTION with full 60-30-10 palette, style direction, standard delta budget
+2. **Without markers + color/style:** Prompt contains AUTONOMOUS DESIGN UPLIFT in Step A, expanded delta budget (3-4/4-5), Design Cohesion Check in Step C, minimum-3-changes negative instruction
+3. **Without markers, without color/style:** Autonomous uplift still works, COLOR & STYLE section omitted, priority order adjusts
+4. **With markers + color_scheme fallback:** COLOR & STYLE section uses simpler primary/secondary/accent from color_scheme
+5. **VAPO dry-run:** Picks up `3.0.0-autonomous-uplift` as production version
 
 ### 2026-02-15: Ready-First Hotspot Product Pipeline (Rescue, Dedup, Circuit Breaker)
 
@@ -4878,3 +5104,741 @@ The improvements screen and its picker sub-screens now use tap-to-toggle instead
 - Inside picker screens: tap item to select, tap again to deselect (no Clear All button visible)
 
 *Last updated: February 15, 2026 — improvements screen toggle selection, Clear All removal*
+
+---
+
+## Performance + Marker Accuracy Changes (February 16, 2026)
+
+### Part A: Performance Optimizations
+
+#### A1 — Eliminate double base download in `generate_inspiration_redesign`
+
+**File:** `backend/supabase_data_manager.py`
+
+The inspiration redesign flow downloaded the base room image to a temp file for
+Gemini, then `_normalize_generated_image_aspect` downloaded it *again* to read
+its dimensions.
+
+**Fix:** Before the Gemini call, PIL reads the temp file's width/height.  Those
+dimensions are passed as `base_width` / `base_height` to
+`_normalize_generated_image_aspect`, which skips its own download when both are
+provided.  No behavior change if the params are omitted.
+
+#### A2 — Share base temp file in `apply_color_and_style_parallel`
+
+**File:** `backend/supabase_data_manager.py`
+
+`apply_color_scheme` and `apply_style` each independently download the base
+image via `_temp_image`.  When called in parallel from
+`apply_color_and_style_parallel`, that doubles the download.
+
+**Fix:** A single shared temp file is downloaded once via
+`_get_image_bytes_from_storage` (the same storage-client path that
+`_get_pil_image_from_storage` and `_temp_image` use internally) and written to a
+temp file.  The path is passed as `_base_image_path=shared_base_path` (keyword
+arg) to both methods.  Each method checks: if `_base_image_path` is provided and
+exists, it uses it directly; otherwise it falls back to its own `_temp_image`
+download.
+
+**Guard:** The shared download is wrapped in try/except.  If it fails, a warning
+is logged and `shared_base_path` stays `None`, so both methods fall back
+gracefully.  Temp file is cleaned up in `finally`.
+
+#### A3 — Cap `fast_prefetch` to 4 selections
+
+**File:** `backend/supabase_data_manager.py`
+
+iOS sends 5 hotspots but processes them sequentially; the 5th often hits the 25s
+batch timeout.  The readiness threshold is only 3.
+
+**Fix:** In `analyze_furniture_batch`, after the mode profile is loaded, if
+`normalized_mode == "fast_prefetch"` and `len(selections) > 4`, the list is
+capped to `selections[:4]`.  The dropped selections are saved in
+`deferred_selections`.
+
+**Deferred placeholders:** After the main analysis loop, a lightweight
+placeholder is appended for each deferred selection:
+- Built via `_build_furniture_analysis_item` with `confidence=0.0`,
+  `products=[]`, no `error` field set.
+- An additive `"status": "deferred"` field is added post-build.
+- `error` is intentionally **omitted** to avoid triggering iOS error-handling UI.
+- iOS ignores unknown keys, so `"status": "deferred"` is safe.
+
+**Click coord extraction:** Uses `_extract_click_coords(selection)` which handles
+multiple shapes:
+- Pydantic model with `.x` / `.y`
+- Dict with `x` / `y` keys
+- Dict with nested `click.x` / `click.y`
+- Object/dict with `click_x` / `click_y`
+- Falls back to `(0.5, 0.5)` only if all missing
+
+**iOS compatibility:** The response returns per-selection results keyed by
+hotspot ID.  iOS iterates whatever comes back (no assertion on count).  The
+readiness gate needs only 3/5.  Missing hotspots are populated on-demand via
+`_runRescueHotspotAnalysis`.
+
+#### A4 — PERF_SUMMARY timing logs
+
+**Files:** `backend/background_tasks.py`, `backend/main.py`
+
+**Background tasks:** After each executor's completion log
+(`execute_generate_image`, `execute_inspiration_redesign`,
+`execute_search_recommendations`), a `PERF_SUMMARY` line is logged:
+
+```
+PERF_SUMMARY generate_image total=12345ms step1=1000ms step2=2000ms ...
+```
+
+All entries have `extra_data.type = "perf_summary"` for structured log parsing.
+
+**API endpoint:** The `analyze_furniture_batch` endpoint in `main.py` logs:
+
+```
+PERF_SUMMARY analyze_furniture_batch mode=fast_prefetch selections=4 total=8000ms
+```
+
+This is the last blocking call before Dream Space is visible.  Combined with
+`PERF_SUMMARY generate_image`, you can sum them for the server-side component of
+user-felt latency.  Intentionally *not* labeled `dream_space_visible_total`
+because client polling and image download also contribute.
+
+### Part B: Marker Accuracy (Feature-Flagged)
+
+#### B0 — Feature flags
+
+**Backend env vars** (all default `0`/off):
+- `MARKERS_EXIF_FIX` — EXIF normalization in `_get_pil_image_from_storage`
+- `MARKERS_ADD_CONFIDENCE` — Gemini returns confidence + reasoning
+- `MARKERS_ADD_BBOX` — bbox included in hotspot response
+- `MARKERS_CORRECTED_CLICK` — corrected click coords from bbox center
+
+**iOS constants** in `ios-frontend/lib/constants/feature_flags.dart`:
+- `kDreamSpaceUseContainFit` — `BoxFit.contain` instead of `BoxFit.cover`
+- `kUseBboxCenterIfPresent` — use bbox center for marker placement
+- `kUseCorrectedClickIfPresent` — use corrected click coords
+- `kShowMarkerDebugOverlay` — debug imageRect + marker outlines
+
+#### B1 — EXIF orientation fix
+
+**Files:** `backend/supabase_data_manager.py`, `backend/spatial_utils.py`
+
+`_normalize_pil_for_vision(img)` applies `ImageOps.exif_transpose` + RGB
+conversion.
+
+- `_get_pil_image_from_storage`: applies when `MARKERS_EXIF_FIX=1`, logs size
+  changes.
+- `spatial_utils.py::get_object_bbox`: always applies EXIF normalization
+  (unconditional) so Gemini sees correctly oriented images.
+
+#### B2 — iOS contain fit + correct rect mapping
+
+**Files:** `ios-frontend/lib/screens/dream_space_screen.dart`,
+`ios-frontend/lib/widgets/interactive_image_widget.dart`
+
+When `kDreamSpaceUseContainFit = true`:
+- `InteractiveImageWidget` uses `BoxFit.contain`
+- `mapHotspotToRenderedImageTopLeft` clamps markers to the **imageRect** bounds
+  (not the container bounds), preventing drift into letterbox areas
+
+When `false`: current `BoxFit.cover` behavior unchanged.
+
+`kShowMarkerDebugOverlay` wires to `InteractiveImageWidget.debugShowImageBounds`.
+
+#### B3 — Optional bbox + confidence fields
+
+**Files:** `backend/spatial_utils.py`, `backend/supabase_data_manager.py`
+
+When `MARKERS_ADD_CONFIDENCE=1`, the Gemini prompt in `get_object_bbox` includes
+`confidence` and `reasoning_short` fields.  Parsed defensively (defaults:
+`confidence=0.7`, `reasoning_short=""`).
+
+`_build_furniture_analysis_item` has optional `bbox_normalized` and
+`reasoning_short` params.  When the corresponding env flags are on:
+- `bbox` is output as `{x, y, w, h}` (normalized, derived from
+  `bbox_normalized` which is `[ymin, xmin, ymax, xmax]`)
+- `reasoning_short` is included if non-empty
+
+These are additive fields — existing `x/y` and required keys are unchanged.
+
+#### B4 — iOS parse bbox + optional bbox-center usage
+
+**Files:** `ios-frontend/lib/models/shop_product.dart`,
+`ios-frontend/lib/widgets/interactive_image_widget.dart`
+
+`ProductHotspot` has nullable fields: `bboxX`, `bboxY`, `bboxW`, `bboxH`,
+`confidence`, `correctedClickX`, `correctedClickY`.  Parsed tolerantly in
+`fromJson` — null if absent.
+
+In `mapHotspotToRenderedImageTopLeft`, effective coords are chosen by priority:
+1. `kUseCorrectedClickIfPresent` + corrected coords present -> use them
+2. `kUseBboxCenterIfPresent` + bbox present -> use bbox center
+3. Otherwise -> original `hotspot.x` / `hotspot.y`
+
+#### B5 — Corrected click output
+
+**File:** `backend/supabase_data_manager.py`
+
+When `MARKERS_CORRECTED_CLICK=1` and a valid bbox is present,
+`_build_furniture_analysis_item` computes `corrected_click_x = bbox_x + bbox_w/2`
+and `corrected_click_y = bbox_y + bbox_h/2`.  Added as optional output fields.
+Original `click_x`/`click_y` are never overwritten.
+
+### Key Design Decisions
+
+1. **All marker changes are feature-flagged** — deploy with flags off = zero
+   behavior change.  Flip flags on per-environment.
+2. **Deferred selections use `status: "deferred"`, not `error: "deferred"`** —
+   avoids iOS error-handling UI triggering on a marker that simply hasn't been
+   analyzed yet.
+3. **Shared base download uses `_get_image_bytes_from_storage`** — same
+   storage-client auth path as `_get_pil_image_from_storage` and `_temp_image`.
+   Guarded with try/except; falls back to independent downloads.
+4. **PERF_SUMMARY logs are per-component** — not a single "visible total" number,
+   since client polling/download also contributes.  Sum `generate_image` +
+   `analyze_furniture_batch` for the server-side component of user-felt latency.
+
+### Files Changed
+
+- `backend/supabase_data_manager.py` — A1, A2, A3, B1, B3, B5
+- `backend/background_tasks.py` — A4
+- `backend/main.py` — A4 (endpoint-level PERF_SUMMARY)
+- `backend/spatial_utils.py` — B1, B3
+- `ios-frontend/lib/constants/feature_flags.dart` — B0 (new file)
+- `ios-frontend/lib/models/shop_product.dart` — B4
+- `ios-frontend/lib/screens/dream_space_screen.dart` — B2
+- `ios-frontend/lib/widgets/interactive_image_widget.dart` — B2, B4
+
+---
+
+## Restore BoxFit.cover on Dream Space with Correct Marker Clamping
+
+### Problem
+
+Dream Space was using `BoxFit.contain`, which creates ugly black letterbox bars around the generated image. This was a stability workaround because markers drifted off-target under `BoxFit.cover` mode. The marker mapping math itself was correct, but the **clamping logic** had a bug: it clamped to either `imageRect` or `containerRect` depending on a flag, when it should clamp to the **visible intersection** of both.
+
+### Solution: `visibleRect = imageRect.intersect(containerRect)`
+
+Replaced the `if (kDreamSpaceUseContainFit) ... else ...` clamping branch in `mapHotspotToRenderedImageTopLeft()` with a single unified path that computes the intersection of the rendered image rect and the container rect:
+
+```dart
+final imageRect = Rect.fromLTWH(
+  displayOffset.dx, displayOffset.dy,
+  displaySize.width, displaySize.height,
+);
+final containerRect = Rect.fromLTWH(
+  0, 0, visibleSize.width, visibleSize.height,
+);
+Rect visibleRect = imageRect.intersect(containerRect);
+```
+
+**Why this works for both modes:**
+- **Cover** (`BoxFit.cover`): `imageRect` is larger than container (negative offsets) → `intersect` = `containerRect` → markers clamp to visible screen bounds
+- **Contain** (`BoxFit.contain`): `imageRect` is smaller than container (positive offsets / letterbox) → `intersect` = `imageRect` → markers clamp within the image, preventing drift into letterbox areas
+
+A defensive fallback handles the degenerate case where the intersection is empty (shouldn't happen in practice):
+```dart
+if (visibleRect.width <= 0 || visibleRect.height <= 0) {
+  visibleRect = containerRect;
+}
+```
+
+### Feature Flags Flipped
+
+| Flag | Old | New | Effect |
+|------|-----|-----|--------|
+| `kDreamSpaceUseContainFit` | `true` | `false` | Restores `BoxFit.cover` for full-bleed images |
+| `kUseBboxCenterIfPresent` | `false` | `true` | Uses bbox center for marker placement when available |
+| `kUseCorrectedClickIfPresent` | `false` | `true` | Uses backend-corrected click coordinates when available |
+
+### Backend Env Vars Required
+
+```
+MARKERS_ADD_BBOX=1
+MARKERS_CORRECTED_CLICK=1
+```
+
+No backend code changes — these enable the bbox and corrected-click fields that the frontend flags now consume.
+
+### Files Changed
+
+- `ios-frontend/lib/constants/feature_flags.dart` — flipped 3 feature flags
+- `ios-frontend/lib/widgets/interactive_image_widget.dart` — replaced clamping block with `visibleRect = imageRect.intersect(containerRect)`
+
+---
+
+## Product Search Filter Pipeline & Retry Strategy
+
+### `is_valid_product()` — 3-Tier Title Filter (`backend/config.py`)
+
+Filters out non-product titles (plans, blueprints, PDFs, articles, accessories) using three tiers:
+
+1. **Tier 1 — Phrase match (substring):** `EXCLUDED_PHRASES` list catches high-signal multi-word terms like `"floor plan"`, `"pdf download"`, `"chair cover"`, `"gas lift"`, `"seat cover"`. Checked via simple `in` on lowercased title.
+2. **Tier 2 — Word-boundary match:** `EXCLUDED_WORD_BOUNDARY` list catches single words like `"plan"`, `"blueprint"`, `"pdf"`, `"slipcover"`. Uses pre-compiled `\b...\b` regexes so `"platform bed"` does NOT match `"plan"`.
+3. **Tier 3 — Article/listicle regex:** `_ARTICLE_PATTERNS` compiled regexes catch editorial content: `"the 15 best"`, `"top 10"`, `"| Houzz"`, `"buying guide"`, and `"review"` at end of title (catches `"Aeron Chair Review"` but not `"Review-Resistant Fabric"`).
+
+Plus: rejects empty titles, titles shorter than 5 chars, and bare domain names (`"Amazon.com"`).
+
+### `_filter_products_with_images()` — Image Validation (`backend/supabase_data_manager.py`)
+
+Strict image filter applied to all formatted products before display:
+
+- **Length check:** Image URL must be >10 characters.
+- **Protocol check:** Must start with `http://` or `https://` (rejects data URIs, relative paths, `//cdn...`).
+- **Bad pattern check:** Drops images matching any of: `placeholder`, `.svg`, `no-image`, `default`, `blank`, `empty`, `missing`, `1x1`, `pixel`, `spacer`, `logo`.
+- **No imageless backfill:** If an image fails any check, the product is dropped entirely. A spacer pixel is garbage, not a "lower quality image". Two good products is always better than two good + two imageless.
+
+### Retry Query Strategy (`backend/supabase_data_manager.py`)
+
+When the initial search returns fewer than 4 products after filtering, retry with category-aware query variants:
+
+1. **3 query variants tried in order:** `"{category} furniture buy"`, `"{category} for home"`, `"{category} shop"`.
+2. **Early stop at 6:** Loop breaks as soon as `formatted_products >= 6`.
+3. **Full validation applied:** Every retry result goes through the same checks as the primary path:
+   - Image length, `http://`/`https://` protocol, bad-pattern rejection
+   - `is_valid_product()` title validation
+   - URL dedup (`existing_urls` set) AND image dedup (`existing_imgs` set) to prevent visual duplicates from different tracking URLs
+4. **Applied in both sync and async paths** (sync ~line 2720, async ~line 4750).
+
+*Last updated: February 16, 2026 — bulletproof product search filters follow-up tweaks*
+
+---
+
+## Post-Implementation Tweaks: Prewarm / DreamSpace Polling Robustness
+
+Seven small robustness and UX tweaks applied after the main perf optimization (parallelize phases, adaptive polling, prewarm, hard timeout, DreamSpace overlay). Tweak 7 (fingerprint caching) was skipped — not worth the complexity.
+
+### Tweak 1: Prewarm Only When Inputs Are Stable
+
+**File:** `ios-frontend/lib/screens/create_flow_screen.dart` (improvements case)
+
+**Problem:** The 400ms prewarm delay was too aggressive — it fired before the user settled on the Improvements screen, wasting backend work when they changed selections.
+
+**Fix:** Increased delay to 800ms and added a guard requiring `selectedRecommendations.isNotEmpty`:
+
+```dart
+if (prewarmProvider.productRecommendations.isNotEmpty &&
+    prewarmProvider.selectedRecommendations.isNotEmpty) {
+  Future.delayed(const Duration(milliseconds: 800), () {
+    // start prewarm
+  });
+}
+```
+
+### Tweak 2: Force-Invalidate Prewarm Before Saves
+
+**Files:** `ios-frontend/lib/screens/create_flow_screen.dart`, `ios-frontend/lib/providers/project_provider.dart`
+
+**Problem:** `invalidatePrewarmIfStale()` ran only AFTER saves completed. If the user changed color/style/recs, the prewarm job kept running during saves (~1-3s of wasted compute).
+
+**Fix:** Check pending save flags at the TOP of `improvementsAnalyzing` asyncWork. If any are set, call `forceInvalidatePrewarm()` immediately (saves will change the fingerprint):
+
+```dart
+if (_pendingNeedsColorSave || _pendingNeedsStyleSave ||
+    (_pendingRecsToSelect != null && _pendingRecsToSelect!.isNotEmpty)) {
+  provider.forceInvalidatePrewarm();
+}
+```
+
+New method added to `ProjectProvider`:
+
+```dart
+void forceInvalidatePrewarm() {
+  if (_generateDesignFuture != null) {
+    AppLogger.info('PERF_PREWARM force_invalidated (pending saves detected)');
+    _generateDesignFuture = null;
+    _prewarmFingerprint = null;
+  }
+  _lastPrewarmReused = false;
+}
+```
+
+The existing `invalidatePrewarmIfStale()` after saves is kept as a safety net.
+
+### Tweak 3: Remove Subtitle Update in Timeout Path
+
+**File:** `ios-frontend/lib/screens/create_flow_screen.dart`
+
+**Problem:** In the timeout branch, the code set a subtitle but `onComplete` fires immediately to navigate to DreamSpace. The subtitle change was wasted and could cause lifecycle issues if the widget disposes mid-frame.
+
+**Fix:** Removed the subtitle line. The timeout path now only has a comment explaining the flow.
+
+### Tweak 4: Make DreamSpace Overlay Alive with Local Phase/Progress (CRITICAL)
+
+**File:** `ios-frontend/lib/screens/dream_space_screen.dart`
+
+**Problem:** `pollJobUntilDone` only calls the `onProgress` callback — it does NOT call `notifyListeners()` or update provider state. The `onProgress` handler was empty (just checked `_disposed`), so the overlay text was frozen on "Finishing your design..." until polling finished.
+
+**Fix:** Added local state fields and wired them through `onProgress` → `setState` → overlay:
+
+```dart
+// State fields:
+String? _localPhase;
+int _localProgress = 0;
+
+// onProgress callback now calls setState:
+onProgress: (progressPct, phase) {
+  if (_disposed) return;
+  if (mounted) {
+    setState(() {
+      _localProgress = progressPct;
+      _localPhase = phase;
+    });
+  }
+},
+
+// Overlay uses local state with fallback chain:
+final phase = _localPhase ?? provider.jobPhase ?? 'Finishing your design...';
+// Progress subtitle:
+_localProgress > 0 ? '$_localProgress% complete' : 'Almost there'
+```
+
+Now the overlay shows live phase text and progress percentage as the backend reports them.
+
+### Tweak 5: Lazy Shimmer Controller
+
+**File:** `ios-frontend/lib/screens/dream_space_screen.dart`
+
+**Problem:** `_shimmerController` was created with `..repeat()` in `initState`, even when the image was already loaded (the normal path). This wasted CPU on every DreamSpace visit.
+
+**Fix:** Create the controller without starting it. Only call `repeat()` when polling is needed, and `stop()` when polling completes:
+
+```dart
+// initState — create but don't start:
+_shimmerController = AnimationController(vsync: this, duration: ...);
+
+// postFrameCallback — start only when needed:
+if (no image yet && currentJobId != null) {
+  _shimmerController.repeat();
+  _startBackgroundPolling(provider);
+}
+
+// On polling complete (both success and failure) — stop:
+_shimmerController.stop();
+```
+
+### Tweak 6: Add `approach` to Fingerprint
+
+**File:** `ios-frontend/lib/providers/project_provider.dart`
+
+**Problem:** The prompt uses `approach` (e.g. "trendy" vs "exact match") but `redesignInputsFingerprint` didn't include it. Could lead to false prewarm reuse if approach changed.
+
+**Fix:** Added `'approach': _currentProject?.approach` to the fingerprint `fields` map.
+
+### Files Changed
+
+| File | Tweaks |
+|------|--------|
+| `ios-frontend/lib/screens/create_flow_screen.dart` | #1 (prewarm delay+guard), #2 (early force-invalidate), #3 (remove subtitle in timeout) |
+| `ios-frontend/lib/providers/project_provider.dart` | #2 (add `forceInvalidatePrewarm()`), #6 (add `approach` to fingerprint) |
+| `ios-frontend/lib/screens/dream_space_screen.dart` | #4 (local phase/progress state), #5 (lazy shimmer controller) |
+
+*Last updated: February 16, 2026 — prewarm/DreamSpace polling robustness tweaks*
+
+---
+
+## Iterative Marker-Only Bug Fix (2026-02-16)
+
+### Problem
+Iterative mode with improvement markers but zero product recommendations was rejected by the backend (400) and blocked by the frontend (`ensureRecommendationsLoaded` hung indefinitely). Users who placed markers on their photo but had no recs loaded could never generate.
+
+### Fix Summary
+
+**Backend relaxation** (`backend/main.py`, `/inspiration-redesign` endpoint):
+- Added `allow_marker_only = is_iterative and has_improvement_markers` gate.
+- Validation now passes when iterative mode has markers, even with zero recs/inspiration images.
+- `improvement_mode` is always a string (`"iterative"` or `"complete_revamp"`) — enforced by DB CHECK constraint and Pydantic model. No bool variant exists. The backend has no `approach` field on `ProjectContext`; `approach` is a frontend-only getter.
+- Diagnostic log emitted after validation: `"Inspiration redesign validation passed"` with `allow_marker_only`, `marker_count`, `improvement_mode`.
+
+**Frontend recs timeout** (`ios-frontend/lib/screens/create_flow_screen.dart`):
+- `ensureRecommendationsLoaded` now has a 15-second `.timeout()`.
+- If timeout fires AND `isIterative && markerCount > 0` → skips recs gracefully.
+- If timeout fires but NOT iterative or zero markers → still throws original error.
+- `PERF_IOS pre_generation` log emitted before `generateDesignImage()` with approach, markerCount, recsCount, selectedRecsCount, projectId.
+
+**Safe notifyListeners** (`ios-frontend/lib/providers/project_provider.dart`):
+- `_safeNotifyListeners()` helper defers `notifyListeners()` to a post-frame callback if called during `persistentCallbacks` or `midFrameMicrotasks` scheduler phase. Prevents "setState during build" crashes.
+- Replaced at 16 async callback sites in `_doGenerateDesignImage` and the recs fetch callback. Synchronous `notifyListeners()` calls left unchanged.
+- Enhanced `[gen] attempt=1 phase=start` log with approach, markerCount, recsCount, projectId.
+
+**DreamSpace fallback log** (`ios-frontend/lib/screens/dream_space_screen.dart`):
+- `AppLogger.warning('[DreamSpace] FALLBACK original_image ...')` emitted when falling back to original image (generatedImageUrl=null, generatedImageBytes=null, currentJobId=null). Helps diagnose whether generation never started vs. produced same image.
+
+### Key Diagnostic Logs to Watch
+
+| Log | Source | Meaning |
+|-----|--------|---------|
+| `PERF_IOS pre_generation approach=iterative markerCount=2 ...` | create_flow_screen.dart | Frontend about to call generateDesignImage |
+| `[gen] attempt=1 phase=start approach=iterative markerCount=2 ...` | project_provider.dart | Provider starting generation job |
+| `"Inspiration redesign validation passed" allow_marker_only: true` | backend main.py | Backend accepted iterative+markers without recs |
+| `PERF_IOS recs_timeout_15s isIterative=true markerCount=2` | create_flow_screen.dart | Recs timed out, skip path taken |
+| `PERF_IOS iterative_skip_recs markerCount=2` | create_flow_screen.dart | Recs skipped successfully |
+| `[DreamSpace] FALLBACK original_image ...` | dream_space_screen.dart | Generation never completed before DreamSpace render |
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `backend/main.py` | `allow_marker_only` gate + diagnostic log |
+| `ios-frontend/lib/screens/create_flow_screen.dart` | 15s recs timeout + skip logic + pre-generation log |
+| `ios-frontend/lib/providers/project_provider.dart` | `_safeNotifyListeners()` helper + 16 async replacements + enhanced start log |
+| `ios-frontend/lib/screens/dream_space_screen.dart` | Fallback warning log |
+
+## Fix Null Check Crashes in Hotspot Prime Pipeline (2026-02-16)
+
+**Root cause**: `Null check operator used on a null value` crash at `project_provider.dart` in `primeFurnitureHotspotsAndPrefetch`. `_furniturePrefetchCompleter` gets nulled by `_resetHotspotPrefetchStateForNewImage()` during async gaps. The 30s generation timeout in `create_flow_screen.dart` navigates to DreamSpace while the generation pipeline is still running, causing hotspot priming to execute in inconsistent state. Logs showed `Auto-detect source image: nullxnull` — backend had no active image.
+
+### Changes (all in `ios-frontend/lib/providers/project_provider.dart`)
+
+**1. Active image guard at pipeline entry** (`_prepareDreamSpaceHotspots`):
+- Early-return guard checks `_generatedImageUrl` and `_generatedImageBytes` before entering the hotspot pipeline.
+- Prevents priming when the 30s timeout fires and DreamSpace polls via `fetchGeneratedImage` before the image actually exists.
+- Logs `'Hotspot prime skipped: no generated image available'` with url/bytes presence flags.
+
+**2. Capture `projectId` before `await` boundaries** (3 methods):
+- `primeFurnitureHotspotsAndPrefetch`: `final projectId = _currentProject!.id;` captured after null check, used in `autoDetectFurnitureForPrefetch` and `analyzeFurnitureBatchForPrefetch` calls.
+- `_runRescueHotspotAnalysis`: same pattern, used in `ApiService.analyzeFurnitureBatch` call.
+- `_runRobustHotspotAnalysisWithImageType`: same pattern, used in `analyzeFurnitureBatchForHotspotRobust` call.
+- Rationale: `_currentProject!.id` after an `await` is unsafe — another coroutine can reset `_currentProject` during the gap.
+
+**3. Guard `_furniturePrefetchCompleter!` forced unwraps** (4 sites in `primeFurnitureHotspotsAndPrefetch`):
+- Changed `_furniturePrefetchCompleter!.complete(...)` → `_furniturePrefetchCompleter?.complete(...)` at all sites outside the existing null guard.
+- The 3 remaining `!` usages (getter `isFurniturePrefetching` and the dedup block) are inside `!= null` checks — left as-is.
+- Pattern: `_furniturePrefetchCompleter?.complete(value); _furniturePrefetchCompleter = null;` — consistent "complete then null" everywhere.
+
+**4. Guard `_generatedImageBytes!` in inspiration logging**:
+- `_generatedImageBytes!.length` → `_generatedImageBytes?.length ?? 0` in the inspiration design success log.
+- Zero `_generatedImageBytes!` usages remain in the file.
+
+**5. Clean up `nullxnull` dimension log**:
+- `'Auto-detect source image: ${sourceW}x${sourceH}'` → `'${sourceW ?? '?'}x${sourceH ?? '?'}'`.
+- Added warning: `'Auto-detect returned null dimensions — backend may lack active image'` when either is null.
+
+### What was NOT changed
+
+- **30s timeout UX** (`create_flow_screen.dart`): The timeout + DreamSpace polling pattern is correct by design. Changes 1–3 make the background pipeline safe to run after navigation.
+- **DreamSpace rendering** (`dream_space_screen.dart`): Already has null guards and shimmer overlay.
+- **Client-side image dimension decoding**: Not needed — backend resolves `imageType: 'active'` server-side and returns normalized 0–1 coordinates.
+
+### Verification
+
+- `flutter analyze` — no new warnings (10 pre-existing info-level lints unchanged).
+- `grep '_furniturePrefetchCompleter!'` — only 3 hits, all inside null guards.
+- `grep '_generatedImageBytes!'` — zero hits.
+- 4 `_currentProject!.id` usages replaced with captured `projectId` locals.
+
+---
+
+## Inspiration Flow End-to-End Fix (2026-02-16)
+
+### Problem
+
+Two bugs prevented the inspiration flow from working:
+
+1. **DB constraint**: `projects_improvement_mode_check` only allowed `'iterative'` and `'complete_revamp'`, so selecting inspiration returned a 500 error.
+2. **Inspiration images never passed to Gemini image generation**: The text-analysis step used inspiration images (for recommendations), but the actual image generation call only received the room photo + product refs. The model never *saw* the inspiration photos when generating the redesigned room, so style transfer was impossible.
+
+### Root Cause
+
+In `supabase_data_manager.py:generate_inspiration_redesign()` (and `data_manager.py`), the call to `gemini_client.generate_room_redesign()` had no parameter for inspiration images. The method signature itself didn't accept them.
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `backend/validators.py` | Added `"inspiration"` to `VALID_IMPROVEMENT_MODES` |
+| `backend/migrations/002_create_projects_tables.sql` | Added `'inspiration'` to CHECK constraint |
+| `backend/migrations/004_add_inspiration_mode.sql` | New ALTER migration for existing DBs |
+| `backend/models.py` | Updated `improvement_mode` field description |
+| `backend/main.py` | Updated endpoint docstring |
+| `backend/gemini_client.py` | Added `inspiration_images` param, load+resize logic, prompt labeling, contents ordering |
+| `backend/supabase_data_manager.py` | Download inspiration images, diagnostic logs, pass to Gemini, prompt template update |
+| `backend/data_manager.py` | Resolve local inspiration paths, pass to Gemini, prompt template update |
+
+### How It Works Now
+
+#### `gemini_client.py` — `generate_room_redesign()`
+
+**New parameter**: `inspiration_images: Optional[List[str]] = None` — list of temp file paths.
+
+**Image loading & resize** (after loading `original_room_image`):
+```python
+MAX_INSPO_EDGE = 1536
+inspo_img = Image.open(inspo_path)
+inspo_img = ImageOps.exif_transpose(inspo_img)
+inspo_img = inspo_img.convert("RGB")
+inspo_img.thumbnail((MAX_INSPO_EDGE, MAX_INSPO_EDGE))
+```
+Each inspiration image is downscaled to max 1536px on long edge, converted to RGB. This improves style transfer consistency and reduces latency.
+
+**Prompt labeling** — `inspiration_reference_text` block tells the model:
+- Image 1 = user's room (preserve layout)
+- Images 2..N = inspiration references (style/color/material cues)
+- DO NOT copy room layout from inspiration images
+- Includes `REQUIRED STYLE APPLICATION` hard constraints (see below)
+
+**Contents ordering** — images first, prompt last:
+```python
+contents = [original_room_image] + loaded_inspiration_images + downloaded_product_images + [final_prompt]
+```
+For Gemini multimodal, images-first is the most reliable pattern. Text-first can cause the model to anchor on text without properly conditioning on the images, leading to minimal edits.
+
+**Product image numbering** adapts dynamically:
+```python
+img_offset = 2 + len(loaded_inspiration_images)
+```
+
+#### `supabase_data_manager.py` — `generate_inspiration_redesign()`
+
+**Downloads inspiration images** before the Gemini call:
+```python
+inspiration_urls = self._get_image_urls(project_id, "inspiration")  # confirmed correct image_type
+inspo_tmp_paths = []
+for url in inspiration_urls[:3]:  # cap at 3
+    inspo_tmp_paths.append(self._download_image_to_tempfile(url, suffix=".jpg"))
+```
+
+**Diagnostic logging**:
+- `inspiration_urls_count={len(inspiration_urls)}`
+- `inspiration_images_count={len(inspo_tmp_paths)}`
+- First URL basename (not full signed URL)
+
+**Passes to Gemini**:
+```python
+generated_b64, model_used = self.gemini_client.generate_room_redesign(
+    original_room_image_path=tmp_base,
+    prompt=prompt,
+    product_images=product_images if product_images else None,
+    inspiration_images=inspo_tmp_paths if inspo_tmp_paths else None,
+)
+```
+
+**Cleanup** in `finally` block — unlinks all temp files including inspiration downloads.
+
+**Prompt template** — added `### INSPIRATION IMAGE REFERENCE` section after `### 3. DESIGN SPECIFICATIONS` with the `REQUIRED STYLE APPLICATION` block.
+
+#### `data_manager.py` — `generate_inspiration_redesign()` (local fallback)
+
+**Resolves local file paths** from `context.inspiration_images` (stored as absolute paths by `upload_inspiration_image()`):
+```python
+for img_path_str in context.inspiration_images[:3]:
+    img_path = Path(img_path_str)
+    if not img_path.is_absolute():
+        img_path = DATA_FILE.parent / img_path_str
+    if img_path.exists():
+        inspiration_image_paths.append(str(img_path))
+```
+
+Same prompt template update as supabase_data_manager.
+
+### REQUIRED STYLE APPLICATION Block
+
+Added to all three files (gemini_client inline, supabase_data_manager prompt template, data_manager prompt template) to force strong style transfer instead of minimal "added a vase" results:
+
+```
+REQUIRED STYLE APPLICATION:
+- You MUST apply the inspiration palette/materials to the room in a clearly visible way.
+- Make at least 3 substantial style changes (e.g., wall paint, bedding/sofa textile, rug, curtains, lighting, major decor).
+- Do NOT satisfy the request by only adding a small object (e.g., a vase).
+- The result must look like a deliberate, cohesive style transformation inspired by the reference images.
+```
+
+### Existing Utilities Reused
+
+- `self._get_image_urls(project_id, "inspiration")` — retrieves all inspiration image URLs (`supabase_data_manager.py:362`)
+- `self._download_image_to_tempfile(url, suffix)` — downloads URL to temp file (`supabase_data_manager.py:493`)
+- `Image.open()` + `ImageOps.exif_transpose()` — PIL image loading already used throughout gemini_client.py
+- `Image.thumbnail((max_w, max_h))` — PIL resize (aspect-preserving) for the downscale step
+
+### Key Design Decisions
+
+1. **Images-first contents order**: `[room, inspo_1..N, product_1..M, prompt]`. Gemini multimodal conditioning is strongest when images come first. Prompt-first can cause the model to generate before fully processing the images.
+2. **Max 3 inspiration images**: Caps downloads to avoid excessive latency and token usage.
+3. **1536px max edge**: Balances quality vs. latency. Larger than needed for style cues, smaller than raw uploads.
+4. **RGB conversion**: Strips alpha channels that can cause issues with Gemini image generation.
+5. **Strong style transfer language**: "Extract aesthetic direction" was too polite — model often made minimal changes. Hard constraints force at least 3 substantial changes.
+
+### Verification Checklist
+
+1. Run `004_add_inspiration_mode.sql` on Supabase + sanity-check with UPDATE
+2. Restart backend
+3. Select inspiration → continue (no 500)
+4. Upload inspiration image → confirm → generation starts
+5. Check logs for `inspiration_urls_count=N`, `inspiration_images_count=N`, first URL basename
+6. Verify generated image reflects inspiration style (not just text recs)
+
+---
+
+## Delete Icon on Saved Cards (saved_screen.dart)
+
+### What Was Added
+
+A visible delete icon (trash can) on each saved project card in the Saved screen, positioned in the top-right corner of the card's image area. This gives users a direct tap target for deletion without requiring them to discover the swipe-to-delete gesture.
+
+### Where It Lives
+
+`ios-frontend/lib/screens/saved_screen.dart` → `_buildProjectCard()` method (line ~337). The icon is rendered inside a `Stack` that wraps the card's image section.
+
+### How It Works
+
+The card image area uses a `Stack` with two children:
+
+1. **Image** (`SizedBox` at 200px height) — the existing card thumbnail.
+2. **Delete overlay** (`Positioned` top: 8, right: 8) — a `GestureDetector` wrapping a 32×32 circular `Container` with a semi-transparent black background (`Colors.black.withOpacity(0.45)`) and a white `Icons.delete_outline` icon (size 18).
+
+On tap, the overlay calls the existing `_deleteProject(project)` method which shows a confirmation `AlertDialog` ("Delete Space — Are you sure?") and, on confirmation, removes the project via the provider.
+
+### Key Design Decisions
+
+1. **`HitTestBehavior.opaque`** on the `GestureDetector` — ensures the 32×32 circle absorbs the entire tap even if the user taps on the transparent padding area between the icon and the circle edge. Without this, taps on the gap would fall through to the card's own `onTap` (which navigates into the project).
+2. **Semi-transparent background (`0.45` opacity)** — the dark circle provides enough contrast against any image to keep the icon visible, while still letting the image show through so the card doesn't feel cluttered.
+3. **Coexists with swipe-to-delete** — the card is still wrapped in a `Dismissible` (swipe end-to-start) that also calls `_deleteProject`. Both paths share the same confirmation dialog and delete logic, so the icon is an additive affordance, not a replacement.
+4. **Reuses `_deleteProject()`** — no new deletion logic was introduced; the icon tap handler is a one-liner that calls the same method the `Dismissible.confirmDismiss` uses (line ~112).
+
+---
+
+## Inspiration + Iterative Dream Space Parity + Settings Icon Cleanup (2026-02-20)
+
+### Issue
+
+Three UX parity gaps remained across generation flows:
+
+1. Dream Space hotspot prep in direct inspiration and iterative retry needed explicit parity logging and non-fatal guardrails.
+2. Iterative Dream Space still forced `BoxFit.cover`, which could crop images.
+3. Multiple top-right settings icons were present as placeholders/no-op handlers across screens.
+
+### Root Cause
+
+- Flow orchestration had hotspot prep calls but did not consistently treat prep failures as explicitly non-fatal in inspiration-direct and retry code paths.
+- `dream_space_screen.dart` had an iterative-only fit override returning `BoxFit.cover`.
+- Header components reused a settings affordance pattern before real settings navigation existed.
+
+### Files Touched
+
+| File | Change |
+|------|--------|
+| `ios-frontend/lib/providers/project_provider.dart` | Added non-fatal `try/catch` wrapping around Dream Space hotspot prep in `_generateInspirationDirectlyOnce()` and `_retryDesignImageOnce()` + parity start/end logs with hotspot counts |
+| `ios-frontend/lib/screens/dream_space_screen.dart` | Removed iterative `BoxFit.cover` override so Dream Space fit uses contain-flag path consistently |
+| `ios-frontend/lib/screens/choose_approach_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/upload_inspiration_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/confirm_inspiration_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/preferred_stores_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/home_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/choose_items_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/confirm_selection_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/design_style_selection_screen.dart` | Removed top no-op settings icon from header |
+| `ios-frontend/lib/screens/improvements_screen.dart` | Removed both top no-op settings icons and deleted `_openSettings()` placeholder handler |
+
+### Verification Steps
+
+1. `flutter test test/providers/project_provider_furniture_prefetch_test.dart`
+2. `flutter analyze`
+3. Manual inspiration flow: generate with inspiration and verify Dream Space opens with markers ready.
+4. Manual iterative flow: retry/improve and verify Dream Space opens with markers ready.
+5. Manual visual check: generated and original pages use contain-fit (no crop regression), including iterative.
+6. Manual marker tap check: hotspot opens Choose Products.
+7. Failure-path check: hotspot prep failure does not block landing in Dream Space.
+
+### Notes
+
+- `ios-frontend/lib/screens/cart_screen.dart` was referenced in earlier planning notes but does not exist in this codebase snapshot.
+- Settings icon cleanup was applied across all currently present no-op header instances in `ios-frontend/lib/screens/`.

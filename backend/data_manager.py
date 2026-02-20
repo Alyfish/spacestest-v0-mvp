@@ -439,6 +439,75 @@ class DataManager:
         image.save(buffer, format=format)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
+    def _normalize_generated_image_aspect(
+        self,
+        generated_bytes: bytes,
+        *,
+        base_width: int | None = None,
+        base_height: int | None = None,
+        base_image_path: str | Path | None = None,
+    ) -> tuple[bytes, bool]:
+        """Pad generated image to base image aspect ratio without cropping content."""
+        try:
+            from io import BytesIO
+            from PIL import Image, ImageOps
+
+            if base_width and base_height:
+                base_w, base_h = base_width, base_height
+            elif base_image_path:
+                with Image.open(base_image_path) as base_img:
+                    base_img = ImageOps.exif_transpose(base_img)
+                    base_w, base_h = base_img.size
+            else:
+                return generated_bytes, False
+
+            if base_w <= 0 or base_h <= 0:
+                return generated_bytes, False
+
+            generated = Image.open(BytesIO(generated_bytes))
+            generated = ImageOps.exif_transpose(generated)
+            generated.load()
+            if generated.mode not in ("RGB", "RGBA"):
+                generated = generated.convert("RGB")
+            if generated.mode == "RGBA":
+                generated = generated.convert("RGB")
+
+            gen_w, gen_h = generated.size
+            if gen_w <= 0 or gen_h <= 0:
+                return generated_bytes, False
+
+            target_ratio = base_w / base_h
+            current_ratio = gen_w / gen_h
+            if abs(current_ratio - target_ratio) < 0.01:
+                return generated_bytes, False
+
+            if current_ratio > target_ratio:
+                target_w = gen_w
+                target_h = max(1, int(round(gen_w / target_ratio)))
+            else:
+                target_h = gen_h
+                target_w = max(1, int(round(gen_h * target_ratio)))
+
+            corners = [
+                generated.getpixel((0, 0)),
+                generated.getpixel((gen_w - 1, 0)),
+                generated.getpixel((0, gen_h - 1)),
+                generated.getpixel((gen_w - 1, gen_h - 1)),
+            ]
+            fill = tuple(
+                int(sum(px[i] for px in corners) / len(corners)) for i in range(3)
+            )
+            canvas = Image.new("RGB", (target_w, target_h), fill)
+            offset = ((target_w - gen_w) // 2, (target_h - gen_h) // 2)
+            canvas.paste(generated, offset)
+
+            out = BytesIO()
+            canvas.save(out, format="PNG")
+            return out.getvalue(), True
+        except Exception as exc:
+            self.logger.warning(f"Aspect normalization skipped (non-fatal): {exc}")
+            return generated_bytes, False
+
     def upload_image_to_imgbb(self, image_base64: str) -> Optional[str]:
         """Upload base64 image to ImgBB and return public URL."""
         import requests
@@ -749,6 +818,25 @@ class DataManager:
     def get_all_projects(self, user_id: str | None = None) -> dict:
         """Get all projects"""
         return self._load_projects()
+
+    def get_project_summaries(self, user_id: str) -> list[dict]:
+        """Get lightweight project summaries for the list view."""
+        projects = self._load_projects()
+        summaries = []
+        for pid, p in projects.items():
+            ctx = p.get("context", {})
+            summaries.append({
+                "id": pid,
+                "status": p.get("status", ""),
+                "created_at": p.get("created_at", ""),
+                "space_type": ctx.get("space_type"),
+                "improvement_mode": ctx.get("improvement_mode"),
+                "base_image": ctx.get("base_image"),
+                "generated_image": ctx.get("generated_image_base64"),
+                "inspiration_generated_image": ctx.get("inspiration_generated_image_base64"),
+            })
+        summaries.sort(key=lambda s: s["created_at"], reverse=True)
+        return summaries
 
     def delete_project(self, project_id: str, user_id: str | None = None) -> bool:
         """
@@ -4046,7 +4134,7 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
             print("-"*70)
 
             # Determine which prompt will be used
-            if has_inspiration_images:
+            if has_inspiration_images and improvement_mode != "iterative":
                 prompt_type = "INSPIRATION"
                 prompt_reason = "Inspiration images were uploaded"
             elif improvement_mode == "iterative":
@@ -4060,11 +4148,16 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
             print(f"   Reason: {prompt_reason}")
             print("="*70 + "\n")
 
-            # Get selected trending products for all prompt types
+            # Get selected inputs for prompt construction.
             selected_trending = context.selected_trending_products or []
+            selected_products = context.selected_products or []
+            selected_recommendations = context.selected_product_recommendations or []
+            all_recommendations = context.product_recommendations or []
+            prompt_branch = "integration"
+            prompt_items_count = 0
 
             # Branch based on inspiration images and improvement mode
-            if has_inspiration_images:
+            if has_inspiration_images and improvement_mode != "iterative":
                 # ============================================
                 # INSPIRATION PROMPT (photorealistic redesign)
                 # Only used when actual inspiration images were uploaded
@@ -4123,8 +4216,8 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
 
                 # 2. Build PRODUCT UPDATES
                 product_list_str = "None specified"
-                selected_recs = context.selected_product_recommendations or []
-                ai_recs = context.product_recommendations or []
+                selected_recs = selected_recommendations
+                ai_recs = all_recommendations
                 primary_recs = list(selected_recs) if selected_recs else []
                 complementary_recs = []
                 if ai_recs:
@@ -4140,6 +4233,8 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
                         parts.append("COMPLEMENTARY ENHANCEMENTS (AI Suggested - optional):\n" +
                                      "\n".join([f"- {clean(rec)}" for rec in complementary_recs]))
                     product_list_str = "\n\n".join(parts)
+                prompt_branch = "inspiration"
+                prompt_items_count = len(primary_recs) + len(complementary_recs)
 
                 # 3. Inspiration Prompt - PHOTOREALISM FOCUSED
                 prompt = f"""### ROLE & OBJECTIVE
@@ -4191,6 +4286,15 @@ FURNITURE UPDATES:
 
 IMPORTANT: Prioritize PRIMARY CHANGES (user-selected). COMPLEMENTARY ENHANCEMENTS are optional improvements to consider if they enhance the overall design cohesion.
 
+### INSPIRATION IMAGE REFERENCE
+If inspiration reference images are attached, apply their palette, materials, textures, and lighting mood throughout the room. DO NOT copy the room layout from inspiration images; only use them for style transfer.
+
+REQUIRED STYLE APPLICATION:
+- You MUST apply the inspiration palette/materials to the room in a clearly visible way.
+- Make at least 3 substantial style changes (e.g., wall paint, bedding/sofa textile, rug, curtains, lighting, major decor).
+- Do NOT satisfy the request by only adding a small object (e.g., a vase).
+- The result must look like a deliberate, cohesive style transformation inspired by the reference images.
+
 DECOR & TEXTILES:
 - If adding a rug, ensure it tucks realistically under nearby furniture legs.
 - Any wall art should have appropriate frames matching the style (e.g., thin black metal for modern, ornate wood for traditional).
@@ -4203,23 +4307,37 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
 
             elif improvement_mode == "iterative":
                 # ============================================
-                # ITERATIVE PROMPT (surgical edits only)
-                # No color/style enforcement, minimal changes
+                # ITERATIVE PROMPT (surgical edits with color/style uplift)
+                # Passes color & style data for autonomous design uplift
                 # ============================================
-                print("🔧 Using ITERATIVE prompt (surgical edits, no color/style enforcement)")
+                has_markers = bool(context.improvement_markers)
+                print(f"🔧 Using ITERATIVE prompt (with color/style uplift, markers={'YES' if has_markers else 'NO — autonomous uplift'})")
 
                 # Format selected products for iterative prompt
+                iterative_prompt_products = list(selected_products)
+                if not iterative_prompt_products:
+                    fallback_recs = selected_recommendations or all_recommendations
+                    iterative_prompt_products = [
+                        {"title": rec, "store": "Recommendation"}
+                        for rec in fallback_recs
+                    ]
+
                 selected_products_formatted = []
-                for p in selected_trending:
+                for p in iterative_prompt_products:
                     selected_products_formatted.append({
                         'title': p.get('title', 'Unknown product'),
                         'store': p.get('store', 'Unknown'),
                     })
+                prompt_branch = "iterative"
+                prompt_items_count = len(selected_products_formatted)
 
                 # Use the iterative prompt from gemini_client
                 prompt = self.gemini_client._create_iterative_prompt(
                     selected_products=selected_products_formatted,
                     marker_locations=context.improvement_markers or [],
+                    color_scheme=context.color_scheme,
+                    style_analysis=context.style_analysis,
+                    color_analysis=context.color_analysis,
                 )
 
             else:
@@ -4237,7 +4355,7 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
 
                 # Add selected recommendations if no trending products
                 if not product_titles:
-                    product_titles = context.selected_product_recommendations or []
+                    product_titles = selected_recommendations or all_recommendations
 
                 # Use the integration prompt from gemini_client
                 prompt = self.gemini_client._create_integration_prompt(
@@ -4249,11 +4367,30 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                     color_scheme=context.color_scheme,
                     design_style=context.style_analysis,
                 )
+                prompt_branch = "integration"
+                prompt_items_count = len(product_titles)
+
+            self.logger.info(
+                "Inspiration redesign prompt branch selected",
+                extra={
+                    "project_id": project_id,
+                    "extra_data": {
+                        "branch": prompt_branch,
+                        "selected_products_count": len(selected_products),
+                        "selected_recommendations_count": len(selected_recommendations),
+                        "prompt_items_count": prompt_items_count,
+                    },
+                },
+            )
 
             # ========================================
             # FINAL PROMPT VERIFICATION
             # ========================================
-            actual_prompt_type = 'INSPIRATION' if has_inspiration_images else ('ITERATIVE' if improvement_mode == 'iterative' else 'INTEGRATION')
+            actual_prompt_type = (
+                'INSPIRATION'
+                if has_inspiration_images and improvement_mode != 'iterative'
+                else ('ITERATIVE' if improvement_mode == 'iterative' else 'INTEGRATION')
+            )
             print("\n" + "="*70)
             print("📝 FINAL PROMPT VERIFICATION")
             print("="*70)
@@ -4276,9 +4413,14 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                 print("   ✓ Should create cohesive high-end look")
             elif "High-End Virtual Stager" in prompt:
                 print("🔍 DETECTED: ITERATIVE prompt (High-End Virtual Stager)")
-                print("   ✓ Should make surgical edits only")
-                print("   ✓ Should NOT change color/style")
-                print("   ✓ Should keep room mostly the same")
+                print("   ✓ Should make surgical edits with color/style uplift")
+                if "AUTONOMOUS DESIGN UPLIFT" in prompt:
+                    print("   ✓ AUTONOMOUS UPLIFT mode — AI will identify 3-5 items to upgrade")
+                else:
+                    print("   ✓ MARKER-DRIVEN mode — changes focused on marked areas")
+                if "COLOR & STYLE DESIGN DIRECTION" in prompt:
+                    print("   ✓ Color palette and style direction included")
+                print("   ✓ Should keep room mostly the same (structural lockdown)")
             elif "master of Architectural Photography" in prompt:
                 print("🔍 DETECTED: INSPIRATION prompt (Architectural Photography)")
                 print("   ✓ Should create photorealistic result")
@@ -4308,16 +4450,85 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                     f"Passing {len(product_images_for_gemini)} trending product images to Gemini"
                 )
 
+            # Resolve inspiration image file paths for visual style transfer
+            inspiration_image_paths = []
+            if context.inspiration_images:
+                for img_path_str in context.inspiration_images[:3]:
+                    img_path = Path(img_path_str)
+                    if not img_path.is_absolute():
+                        img_path = DATA_FILE.parent / img_path_str
+                    if img_path.exists():
+                        inspiration_image_paths.append(str(img_path))
+                    else:
+                        print(f"⚠️ Inspiration image not found: {img_path}")
+                self.logger.info(
+                    f"Inspiration images: count={len(context.inspiration_images)}, "
+                    f"resolved={len(inspiration_image_paths)}"
+                )
+
+            # Read base dimensions before Gemini call so normalization never re-crops.
+            try:
+                from PIL import Image as _PILImage, ImageOps as _ImageOps
+
+                with _PILImage.open(original_room_image_path) as _base_img:
+                    _base_img = _ImageOps.exif_transpose(_base_img)
+                    _base_w, _base_h = _base_img.size
+            except Exception:
+                _base_w, _base_h = None, None
+
             # Call Gemini API using the new method
             t_prompt = time.time()
             print(f"[TIMING] inspiration_redesign.prompt_build: {t_prompt - t_start:.2f}s")
             generated_image_base64, model_used = self.gemini_client.generate_room_redesign(
                 original_room_image_path=original_room_image_path,
                 prompt=prompt,
-                product_images=product_images_for_gemini
+                product_images=product_images_for_gemini,
+                inspiration_images=inspiration_image_paths if inspiration_image_paths else None,
             )
             t_gemini = time.time()
             print(f"[TIMING] inspiration_redesign.gemini_call: {t_gemini - t_prompt:.2f}s")
+
+            # Preserve full composition by padding to base aspect ratio (never crop).
+            import base64
+
+            generated_bytes = base64.b64decode(generated_image_base64)
+            try:
+                from io import BytesIO as _BytesIO
+                from PIL import Image as _PILImage
+
+                with _PILImage.open(_BytesIO(generated_bytes)) as _generated_img:
+                    _gen_w, _gen_h = _generated_img.size
+                base_ratio = round((_base_w / _base_h), 4) if _base_w and _base_h else None
+                generated_ratio = round((_gen_w / _gen_h), 4) if _gen_w and _gen_h else None
+                self.logger.info(
+                    "Inspiration redesign aspect before normalization",
+                    extra={
+                        "project_id": project_id,
+                        "extra_data": {
+                            "base_width": _base_w,
+                            "base_height": _base_h,
+                            "generated_width": _gen_w,
+                            "generated_height": _gen_h,
+                            "base_ratio": base_ratio,
+                            "generated_ratio": generated_ratio,
+                        },
+                    },
+                )
+            except Exception:
+                pass
+
+            generated_bytes, aspect_adjusted = self._normalize_generated_image_aspect(
+                generated_bytes,
+                base_width=_base_w,
+                base_height=_base_h,
+            )
+            if aspect_adjusted:
+                generated_image_base64 = base64.b64encode(generated_bytes).decode(
+                    "utf-8"
+                )
+                self.logger.info(
+                    f"Applied aspect normalization for inspiration redesign image ({project_id})"
+                )
 
             # Update context with generated image
             context.inspiration_generated_image_base64 = generated_image_base64

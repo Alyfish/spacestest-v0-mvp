@@ -418,6 +418,8 @@ class SupabaseDataManager:
         self,
         project_id: str,
         generated_bytes: bytes,
+        base_width: Optional[int] = None,
+        base_height: Optional[int] = None,
     ) -> Tuple[bytes, bool]:
         """Pad generated image to base image aspect ratio without cropping content."""
         try:
@@ -426,8 +428,11 @@ class SupabaseDataManager:
             return generated_bytes, False
 
         try:
-            base_img, _ = self._get_pil_image_from_storage(project_id, "base")
-            base_w, base_h = base_img.size
+            if base_width and base_height:
+                base_w, base_h = base_width, base_height
+            else:
+                base_img, _ = self._get_pil_image_from_storage(project_id, "base")
+                base_w, base_h = base_img.size
             if base_w <= 0 or base_h <= 0:
                 return generated_bytes, False
 
@@ -732,6 +737,57 @@ class SupabaseDataManager:
             str(row["id"]): self._row_to_project_dict(row)
             for row in (result.data or [])
         }
+
+    def get_project_summaries(self, user_id: str) -> list[dict]:
+        """Get lightweight project summaries for the list view (2 queries total)."""
+        # 1. Fetch only the columns needed for the list view
+        result = (
+            self._supabase.table("projects")
+            .select("id, status, created_at, space_type, improvement_mode")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        if not result.data:
+            return []
+
+        project_ids = [str(r["id"]) for r in result.data]
+
+        # 2. Batch fetch image URLs for ALL projects in one query
+        images_result = (
+            self._supabase.table("project_images")
+            .select("project_id, image_type, public_url")
+            .in_("project_id", project_ids)
+            .in_("image_type", ["base", "generated", "inspiration_generated"])
+            .execute()
+        )
+
+        # Group images by project_id and type
+        images_by_project: dict[str, dict[str, str]] = {}
+        for img in images_result.data or []:
+            pid = str(img["project_id"])
+            if pid not in images_by_project:
+                images_by_project[pid] = {}
+            images_by_project[pid][img["image_type"]] = img["public_url"]
+
+        # 3. Build lightweight summaries
+        summaries = []
+        for row in result.data:
+            pid = str(row["id"])
+            imgs = images_by_project.get(pid, {})
+            summaries.append({
+                "id": pid,
+                "status": row["status"],
+                "created_at": row.get("created_at", ""),
+                "space_type": row.get("space_type"),
+                "improvement_mode": row.get("improvement_mode"),
+                "base_image": imgs.get("base"),
+                "generated_image": imgs.get("generated"),
+                "inspiration_generated_image": imgs.get("inspiration_generated"),
+            })
+
+        return summaries
 
     def delete_project(self, project_id: str, user_id: str | None = None) -> bool:
         """Delete a project, its storage files, and all related data."""
@@ -1106,9 +1162,15 @@ class SupabaseDataManager:
         markers: List[ImprovementMarker],
     ) -> str:
         """Create a labelled image with marker overlays and upload to Storage."""
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw, ImageFont, ImageOps
 
         img = Image.open(base_image_path)
+        try:
+            img = ImageOps.exif_transpose(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+        except Exception:
+            pass
         draw = ImageDraw.Draw(img)
         width, height = img.size
 
@@ -1177,6 +1239,13 @@ class SupabaseDataManager:
         resp.raise_for_status()
         return resp.content
 
+    @staticmethod
+    def _normalize_pil_for_vision(img):
+        """Apply EXIF orientation transpose and convert to RGB."""
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(img)
+        return img.convert("RGB")
+
     def _get_pil_image_from_storage(self, project_id: str, image_type: str):
         """Download image from Storage and return (PIL.Image, raw_bytes) tuple."""
         from PIL import Image
@@ -1184,6 +1253,20 @@ class SupabaseDataManager:
         if raw is None:
             raise ValueError(f"No {image_type} image found for project {project_id}")
         img = Image.open(BytesIO(raw))
+        try:
+            from PIL import ImageOps
+            original_size = img.size
+            img = ImageOps.exif_transpose(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            if img.size != original_size:
+                self.logger.info(
+                    f"EXIF normalization changed image size: {original_size} -> {img.size}",
+                    extra={"project_id": project_id, "image_type": image_type},
+                )
+        except Exception:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
         return img, raw
 
     def _replace_image_in_storage(
@@ -1345,28 +1428,22 @@ class SupabaseDataManager:
                 p.get("image_url") or p.get("thumbnail") or
                 (p.get("images") or [None])[0] or p.get("image")
             )
-        bad_patterns = ["placeholder", ".svg", "no-image", "default", "blank", "empty", "missing"]
+        bad_patterns = [
+            "placeholder", ".svg", "no-image", "default", "blank", "empty",
+            "missing", "1x1", "pixel", "spacer", "logo",
+        ]
         with_good_images = []
-        with_any_images = []
-        without_images = []
         for p in products:
             img = get_image(p)
-            if img and len(img) > 10:
-                p["image_url"] = img
-                if any(pat in img.lower() for pat in bad_patterns):
-                    with_any_images.append(p)
-                else:
-                    with_good_images.append(p)
-            else:
-                without_images.append(p)
-        result = with_good_images[:min_count]
-        if len(result) < min_count:
-            needed = min_count - len(result)
-            result.extend(with_any_images[:needed])
-        if len(result) < min_count:
-            needed = min_count - len(result)
-            result.extend(without_images[:needed])
-        return result
+            if not img or len(img) <= 10:
+                continue
+            if not (img.startswith("http://") or img.startswith("https://")):
+                continue
+            if any(pat in img.lower() for pat in bad_patterns):
+                continue
+            p["image_url"] = img
+            with_good_images.append(p)
+        return with_good_images[:min_count]
 
     def _select_best_recommendations(self, context: ProjectContext, max_count: int = 2) -> List[str]:
         """Auto-select best recommendations based on style analysis."""
@@ -1967,6 +2044,20 @@ For each product, score quality_score (0-1) and style_match (0-1). Be critical."
 
         return detection
 
+    def _correct_marker_position(self, detection, click_x, click_y):
+        """Snap marker position to bbox center when available."""
+        bbox = detection.get("bbox_normalized")
+        if bbox and len(bbox) == 4:
+            ymin, xmin, ymax, xmax = bbox
+            w = max(0.0, xmax - xmin)
+            h = max(0.0, ymax - ymin)
+            area = w * h
+            touches_edge = xmin < 0.01 or ymin < 0.01 or xmax > 0.99 or ymax > 0.99
+            # Only snap when bbox looks like a real object, not wall/floor
+            if area < 0.35 and not touches_edge:
+                return (xmin + xmax) / 2, (ymin + ymax) / 2
+        return click_x, click_y
+
     def _is_actual_bed(self, label: str) -> bool:
         """Determine if a furniture label refers to a bed or bed region."""
         label_lower = label.lower()
@@ -2271,7 +2362,7 @@ For each component (pillows, bedding, throw, bed_frame), determine:
 
     # --- Phase 2: AI methods ---
 
-    def apply_color_scheme(self, project_id: str, palette_name: str, colors: List[str], let_ai_decide: bool = False) -> Dict[str, Any]:
+    def apply_color_scheme(self, project_id: str, palette_name: str, colors: List[str], let_ai_decide: bool = False, _base_image_path: Optional[str] = None) -> Dict[str, Any]:
         """Apply a color scheme using the Color Agent."""
         row = self._get_project_row(project_id)
         if not row:
@@ -2281,11 +2372,17 @@ For each component (pillows, bedding, throw, bed_frame), determine:
             raise ValueError("No base image found for this project")
         if not context.space_type:
             raise ValueError("No space type selected for this project")
-        with self._temp_image(project_id, "base", suffix=".jpg") as tmp_path:
+        if _base_image_path and os.path.exists(_base_image_path):
             color_analysis = self.gemini_client.analyze_color_application(
-                image_path=tmp_path, palette_name=palette_name, palette_colors=colors,
+                image_path=_base_image_path, palette_name=palette_name, palette_colors=colors,
                 space_type=context.space_type, let_ai_decide=let_ai_decide,
             )
+        else:
+            with self._temp_image(project_id, "base", suffix=".jpg") as tmp_path:
+                color_analysis = self.gemini_client.analyze_color_application(
+                    image_path=tmp_path, palette_name=palette_name, palette_colors=colors,
+                    space_type=context.space_type, let_ai_decide=let_ai_decide,
+                )
         color_scheme_data = {"palette_name": palette_name, "colors": colors, "let_ai_decide": let_ai_decide}
         self._save_project_fields(project_id, {
             "color_analysis": color_analysis, "color_scheme": color_scheme_data, "color_analysis_skipped": False,
@@ -2293,7 +2390,7 @@ For each component (pillows, bedding, throw, bed_frame), determine:
         self._try_generate_marker_recommendations(project_id)
         return color_analysis
 
-    def apply_style(self, project_id: str, style_name: str, let_ai_decide: bool = False) -> Dict[str, Any]:
+    def apply_style(self, project_id: str, style_name: str, let_ai_decide: bool = False, _base_image_path: Optional[str] = None) -> Dict[str, Any]:
         """Apply an interior design style using the Style Agent."""
         row = self._get_project_row(project_id)
         if not row:
@@ -2304,11 +2401,17 @@ For each component (pillows, bedding, throw, bed_frame), determine:
         if not context.space_type:
             raise ValueError("No space type selected for this project")
         color_scheme = context.color_scheme
-        with self._temp_image(project_id, "base", suffix=".jpg") as tmp_path:
+        if _base_image_path and os.path.exists(_base_image_path):
             style_analysis = self.gemini_client.analyze_style_application(
-                image_path=tmp_path, style_name=style_name, space_type=context.space_type,
+                image_path=_base_image_path, style_name=style_name, space_type=context.space_type,
                 color_scheme=color_scheme, let_ai_decide=let_ai_decide,
             )
+        else:
+            with self._temp_image(project_id, "base", suffix=".jpg") as tmp_path:
+                style_analysis = self.gemini_client.analyze_style_application(
+                    image_path=tmp_path, style_name=style_name, space_type=context.space_type,
+                    color_scheme=color_scheme, let_ai_decide=let_ai_decide,
+                )
         design_style_data = {"style_name": style_name, "let_ai_decide": let_ai_decide}
         self._save_project_fields(project_id, {
             "style_analysis": style_analysis, "design_style": design_style_data, "style_analysis_skipped": False,
@@ -2661,39 +2764,55 @@ incorporate the selected color palette and design style, and are practical for t
                     })
                 formatted_products = self._filter_products_with_images(formatted_products, min_count=4)
 
-                # Retry with broader query if too few products
+                # Retry with category-aware query variants if too few products
                 if len(formatted_products) < 4 and self.serp_client:
-                    fallback_query = f"{rec_lower} buy online"
-                    queries_attempted.append(f"RETRY: {fallback_query}")
-                    try:
-                        retry_images = self.serp_client.search_images(
-                            query=fallback_query, num_results=20,
-                        )
-                        api_call_count += 1
-                        retry_products = []
-                        for img in retry_images:
-                            image_url = img.get("thumbnail") or img.get("image_url") or ""
-                            if not image_url or len(image_url) < 10:
-                                continue
-                            retry_products.append({
-                                "url": img.get("url", ""),
-                                "title": img.get("title", ""),
-                                "image_url": image_url,
-                                "store": img.get("source", "Unknown"),
-                            })
-                        # Merge with existing, dedupe
-                        existing_urls = {p.get("url", "") for p in formatted_products}
-                        for p in retry_products:
-                            if p["url"] and p["url"] not in existing_urls:
-                                formatted_products.append(p)
-                                existing_urls.add(p["url"])
-                            if len(formatted_products) >= 6:
-                                break
-                        self.logger.info(
-                            f"Retry search for '{recommendation}': now have {len(formatted_products)} products"
-                        )
-                    except Exception as retry_err:
-                        self.logger.warning(f"Retry search failed for '{recommendation}': {retry_err}")
+                    retry_queries = [
+                        f"{rec_lower} furniture buy",
+                        f"{rec_lower} for home",
+                        f"{rec_lower} shop",
+                    ]
+                    existing_urls = {p.get("url", "") for p in formatted_products}
+                    existing_imgs = {p.get("image_url", "") for p in formatted_products}
+                    for fallback_query in retry_queries:
+                        if len(formatted_products) >= 6:
+                            break
+                        queries_attempted.append(f"RETRY: {fallback_query}")
+                        try:
+                            retry_images = self.serp_client.search_images(
+                                query=fallback_query, num_results=20,
+                            )
+                            api_call_count += 1
+                            for img in retry_images:
+                                image_url = img.get("thumbnail") or img.get("image_url") or ""
+                                if not image_url or len(image_url) < 10:
+                                    continue
+                                if not (image_url.startswith("http://") or image_url.startswith("https://")):
+                                    continue
+                                image_lower = image_url.lower()
+                                if any(pat in image_lower for pat in ["placeholder", ".svg", "no-image", "default", "blank", "empty", "missing", "1x1", "pixel", "spacer", "logo"]):
+                                    continue
+                                title = img.get("title", "")
+                                if not is_valid_product(title):
+                                    continue
+                                url = img.get("url", "")
+                                if image_url in existing_imgs:
+                                    continue
+                                if url and url not in existing_urls:
+                                    formatted_products.append({
+                                        "url": url,
+                                        "title": title,
+                                        "image_url": image_url,
+                                        "store": img.get("source", "Unknown"),
+                                    })
+                                    existing_urls.add(url)
+                                    existing_imgs.add(image_url)
+                                if len(formatted_products) >= 6:
+                                    break
+                            self.logger.info(
+                                f"Retry search for '{recommendation}': now have {len(formatted_products)} products"
+                            )
+                        except Exception as retry_err:
+                            self.logger.warning(f"Retry search failed for '{recommendation}': {retry_err}")
 
                 random.shuffle(formatted_products)
                 try:
@@ -2923,7 +3042,12 @@ Do NOT add walls, windows, doors, arches, columns, or any architectural element 
 Do NOT change room dimensions or make the room appear larger or smaller.
 Do NOT assume or infer structural features — only what is VISIBLE in the photo exists."""
 
-        if has_inspiration:
+        selected_recommendations = context.selected_product_recommendations or []
+        all_recommendations = context.product_recommendations or []
+        prompt_branch = "integration"
+        prompt_items_count = 0
+
+        if has_inspiration and not is_iterative:
             # Build detailed DESIGN CONTEXT for VAPO-optimized inspiration prompt
             design_context_lines = []
 
@@ -2969,8 +3093,8 @@ Do NOT assume or infer structural features — only what is VISIBLE in the photo
 
             # Build PRODUCT UPDATES for inspiration prompt
             product_list_str = "None specified"
-            selected_recs = context.selected_product_recommendations or []
-            ai_recs = context.product_recommendations or []
+            selected_recs = selected_recommendations
+            ai_recs = all_recommendations
             primary_recs = list(selected_recs) if selected_recs else []
             complementary_recs = []
             if ai_recs:
@@ -2986,6 +3110,8 @@ Do NOT assume or infer structural features — only what is VISIBLE in the photo
                     parts.append("COMPLEMENTARY ENHANCEMENTS (AI Suggested - optional):\n" +
                                  "\n".join([f"- {clean(rec)}" for rec in complementary_recs]))
                 product_list_str = "\n\n".join(parts)
+            prompt_items_count = len(primary_recs) + len(complementary_recs)
+            prompt_branch = "inspiration"
 
             space_type = context.space_type or "living space"
 
@@ -3038,6 +3164,15 @@ FURNITURE UPDATES:
 
 IMPORTANT: Prioritize PRIMARY CHANGES (user-selected). COMPLEMENTARY ENHANCEMENTS are optional improvements to consider if they enhance the overall design cohesion.
 
+### INSPIRATION IMAGE REFERENCE
+If inspiration reference images are attached, apply their palette, materials, textures, and lighting mood throughout the room. DO NOT copy the room layout from inspiration images; only use them for style transfer.
+
+REQUIRED STYLE APPLICATION:
+- You MUST apply the inspiration palette/materials to the room in a clearly visible way.
+- Make at least 3 substantial style changes (e.g., wall paint, bedding/sofa textile, rug, curtains, lighting, major decor).
+- Do NOT satisfy the request by only adding a small object (e.g., a vase).
+- The result must look like a deliberate, cohesive style transformation inspired by the reference images.
+
 DECOR & TEXTILES:
 - If adding a rug, ensure it tucks realistically under nearby furniture legs.
 - Any wall art should have appropriate frames matching the style (e.g., thin black metal for modern, ornate wood for traditional).
@@ -3048,32 +3183,88 @@ DECLUTTERING: Remove all small loose items, trash, and visible cables from desks
 ### 4. OUTPUT REQUIREMENT
 Generate a high-resolution photograph. If the image looks like a "3D concept render" or has a smooth, plastic, digital art appearance, it has FAILED. It MUST look like a "before and after" photo taken by the same camera in the same physical room. The final image should be indistinguishable from a real photograph shot for a high-end interior design magazine."""
         elif is_iterative:
-            prompt = f"""SURGICAL EDIT of this {context.space_type or 'room'}. Make minimal, targeted changes:
+            has_markers = bool(markers)
+            print(f"🔧 Using ITERATIVE prompt (with color/style uplift, markers={'YES' if has_markers else 'NO — autonomous uplift'})")
 
-Changes requested:
-{clean(markers_text) if markers_text else clean(chr(10).join(product_recs[:4]))}
+            # Format selected products for iterative prompt
+            iterative_prompt_products = list(selected_products)
+            if not iterative_prompt_products:
+                fallback_recs = selected_recommendations or all_recommendations
+                iterative_prompt_products = [
+                    {"title": rec, "store": "Recommendation"}
+                    for rec in fallback_recs
+                ]
 
-{'Products:' + chr(10) + clean(product_context) if product_context else ''}
-{structural_lockdown}
+            selected_products_formatted = []
+            for p in iterative_prompt_products:
+                selected_products_formatted.append({
+                    'title': p.get('title', 'Unknown product'),
+                    'store': p.get('store', 'Unknown'),
+                })
+            prompt_items_count = len(selected_products_formatted)
+            prompt_branch = "iterative"
 
-IMPORTANT: Preserve camera angle, lighting, and unchanged areas. Only modify what is explicitly requested."""
+            prompt = self.gemini_client._create_iterative_prompt(
+                selected_products=selected_products_formatted,
+                marker_locations=markers,
+                color_scheme=context.color_scheme,
+                style_analysis=context.style_analysis,
+                color_analysis=context.color_analysis,
+            )
         else:
-            prompt = f"""COMPREHENSIVE REDESIGN of this {context.space_type or 'room'}.
+            print("🎨 Using INTEGRATION prompt (full redesign with color/style enforcement)")
 
-Design Vision:
-{clean(chr(10).join(design_goals[:6]))}
+            # Prepare product titles for integration prompt
+            product_titles = []
+            for p in selected_products:
+                if p.get('title'):
+                    product_titles.append(p.get('title'))
 
-{'Improvement Areas:' + chr(10) + clean(markers_text) if markers_text else ''}
-{'Color Guidelines: ' + clean(color_guidance) if color_guidance else ''}
-{'Style Guidelines: ' + clean(style_guidance) if style_guidance else ''}
-{'Products to incorporate:' + chr(10) + clean(product_context) if product_context else ''}
-{structural_lockdown}
+            # Add selected recommendations if no product titles
+            if not product_titles:
+                product_titles = selected_recommendations or all_recommendations
 
-Create a photorealistic complete redesign of this room."""
+            prompt = self.gemini_client._create_integration_prompt(
+                space_type=context.space_type or 'room',
+                product_titles=product_titles,
+                inspiration_recommendations=context.inspiration_recommendations or [],
+                marker_locations=markers,
+                custom_prompt=None,
+                color_scheme=context.color_scheme,
+                design_style=context.style_analysis,
+            )
+            prompt_items_count = len(product_titles)
+            prompt_branch = "integration"
+
+        self.logger.info(
+            "Inspiration redesign prompt branch selected",
+            extra={
+                "project_id": project_id,
+                "extra_data": {
+                    "branch": prompt_branch,
+                    "selected_products_count": len(selected_products),
+                    "selected_recommendations_count": len(selected_recommendations),
+                    "prompt_items_count": prompt_items_count,
+                },
+            },
+        )
 
         # Download base room image and call Gemini
         tmp_base = self._download_image_to_tempfile(
             self._get_image_url(project_id, "base"), suffix=".jpg"
+        )
+        # Download inspiration images for visual style transfer
+        inspiration_urls = self._get_image_urls(project_id, "inspiration")
+        inspo_tmp_paths = []
+        for url in inspiration_urls[:3]:
+            try:
+                inspo_tmp_paths.append(self._download_image_to_tempfile(url, suffix=".jpg"))
+            except Exception as dl_err:
+                self.logger.warning(f"Failed to download inspiration image: {dl_err}")
+        self.logger.info(
+            f"Inspiration images: inspiration_urls_count={len(inspiration_urls)}, "
+            f"inspiration_images_count={len(inspo_tmp_paths)}"
+            + (f", first_url_basename={os.path.basename(inspiration_urls[0].split('?')[0])}" if inspiration_urls else "")
         )
         # Pass product dicts directly — gemini_client downloads images itself
         product_images = [p for p in selected_products[:2] if p.get("image_url")]
@@ -3087,24 +3278,65 @@ Create a photorealistic complete redesign of this room."""
                     existing_urls.add(fav.get('url'))
         self.logger.info(
             f"Calling generate_room_redesign(original_room_image_path=..., "
-            f"product_images_count={len(product_images)})"
+            f"product_images_count={len(product_images)}, "
+            f"inspiration_images_count={len(inspo_tmp_paths)})"
         )
+
+        # Read base dimensions before Gemini call to avoid re-downloading later
+        try:
+            from PIL import Image as _PILImage, ImageOps as _ImageOps
+            with _PILImage.open(tmp_base) as _base_img:
+                _base_img = _ImageOps.exif_transpose(_base_img)
+                _base_w, _base_h = _base_img.size
+        except Exception:
+            _base_w, _base_h = None, None
 
         try:
             generated_b64, model_used = self.gemini_client.generate_room_redesign(
                 original_room_image_path=tmp_base,
                 prompt=prompt,
                 product_images=product_images if product_images else None,
+                inspiration_images=inspo_tmp_paths if inspo_tmp_paths else None,
             )
         finally:
             if os.path.exists(tmp_base):
                 os.unlink(tmp_base)
+            for p in inspo_tmp_paths:
+                if os.path.exists(p):
+                    os.unlink(p)
 
         # Upload to Storage
         file_bytes = base64.b64decode(generated_b64)
+        try:
+            from io import BytesIO as _BytesIO
+            from PIL import Image as _PILImage
+
+            with _PILImage.open(_BytesIO(file_bytes)) as _generated_img:
+                _gen_w, _gen_h = _generated_img.size
+            base_ratio = round((_base_w / _base_h), 4) if _base_w and _base_h else None
+            generated_ratio = round((_gen_w / _gen_h), 4) if _gen_w and _gen_h else None
+            self.logger.info(
+                "Inspiration redesign aspect before normalization",
+                extra={
+                    "project_id": project_id,
+                    "extra_data": {
+                        "base_width": _base_w,
+                        "base_height": _base_h,
+                        "generated_width": _gen_w,
+                        "generated_height": _gen_h,
+                        "base_ratio": base_ratio,
+                        "generated_ratio": generated_ratio,
+                    },
+                },
+            )
+        except Exception:
+            pass
+
         file_bytes, aspect_adjusted = self._normalize_generated_image_aspect(
             project_id,
             file_bytes,
+            base_width=_base_w,
+            base_height=_base_h,
         )
         if aspect_adjusted:
             self.logger.info(
@@ -3317,6 +3549,32 @@ Create a photorealistic complete redesign of this room."""
 
         return f"sel_{int(time.time() * 1000)}_{index}"
 
+    def _extract_click_coords(self, selection: Any) -> Tuple[float, float]:
+        """Extract (click_x, click_y) from various selection shapes.
+
+        Handles: Pydantic model with .x/.y, dict with x/y keys, dict with
+        nested click.x/y, and attributes click_x/click_y.  Falls back to
+        (0.5, 0.5) if nothing found.
+        """
+        # Pydantic model / object with .x, .y
+        if hasattr(selection, "x") and hasattr(selection, "y"):
+            return float(selection.x), float(selection.y)
+        if isinstance(selection, dict):
+            # Top-level x/y
+            if "x" in selection and "y" in selection:
+                return float(selection["x"]), float(selection["y"])
+            # Nested click dict
+            click = selection.get("click")
+            if isinstance(click, dict) and "x" in click and "y" in click:
+                return float(click["x"]), float(click["y"])
+            # Flat click_x / click_y
+            if "click_x" in selection and "click_y" in selection:
+                return float(selection["click_x"]), float(selection["click_y"])
+        # Object attributes click_x / click_y
+        if hasattr(selection, "click_x") and hasattr(selection, "click_y"):
+            return float(selection.click_x), float(selection.click_y)
+        return 0.5, 0.5
+
     def _build_furniture_analysis_item(
         self,
         *,
@@ -3333,6 +3591,8 @@ Create a photorealistic complete redesign of this room."""
         click_x: Optional[float] = None,
         click_y: Optional[float] = None,
         error: Optional[str] = None,
+        bbox_normalized: Optional[List[float]] = None,
+        reasoning_short: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Build a schema-safe furniture analysis item payload."""
         item: Dict[str, Any] = {
@@ -3351,6 +3611,18 @@ Create a photorealistic complete redesign of this room."""
             item["click"] = {"x": click_x, "y": click_y}
         if error:
             item["error"] = error
+        # Optional marker accuracy fields (additive, gated by env flags)
+        if os.getenv("MARKERS_ADD_BBOX", "0") == "1" and bbox_normalized:
+            ymin, xmin, ymax, xmax = bbox_normalized
+            bbox_x, bbox_y = xmin, ymin
+            bbox_w, bbox_h = xmax - xmin, ymax - ymin
+            item["bbox"] = {"x": bbox_x, "y": bbox_y, "w": bbox_w, "h": bbox_h}
+            # Corrected click = bbox center (only when bbox is available)
+            if os.getenv("MARKERS_CORRECTED_CLICK", "0") == "1" and bbox_w > 0 and bbox_h > 0:
+                item["corrected_click_x"] = bbox_x + bbox_w / 2
+                item["corrected_click_y"] = bbox_y + bbox_h / 2
+        if os.getenv("MARKERS_ADD_CONFIDENCE", "0") == "1" and reasoning_short:
+            item["reasoning_short"] = reasoning_short
         return item
 
     def _flatten_bed_component_products(
@@ -3534,10 +3806,23 @@ Create a photorealistic complete redesign of this room."""
         normalized_mode = self._normalize_analysis_mode(mode)
         profile = self._analysis_mode_profile(normalized_mode)
 
+        deferred_selections: List[Any] = []
+        if normalized_mode == "fast_prefetch" and len(selections) > 4:
+            self.logger.info(
+                f"Capping fast_prefetch selections from {len(selections)} to 4",
+                extra={"project_id": project_id},
+            )
+            deferred_selections = selections[4:]
+            selections = selections[:4]
+
         storage_type = self._resolve_generated_storage_type(project_id, image_type)
         resolved_image_type = self._storage_type_to_image_type(storage_type)
         pil_img, raw_bytes = self._get_pil_image_from_storage(project_id, storage_type)
         width, height = pil_img.size
+        # Re-encode corrected image for Gemini/spatial calls only
+        buf = BytesIO()
+        pil_img.save(buf, format="JPEG", quality=92)
+        vision_bytes = buf.getvalue()
 
         timeout_counts: Dict[str, int] = {}
         results: List[Dict[str, Any]] = []
@@ -3641,7 +3926,7 @@ Create a photorealistic complete redesign of this room."""
                 if normalized_mode == "full" and detector and step_timeout("spatial_timeout") > 0.1:
                     detection = self._run_with_timeout(
                         lambda: detector.get_object_bbox(
-                            raw_bytes,
+                            vision_bytes,
                             click_x=click_x,
                             click_y=click_y,
                             image_width=width,
@@ -3666,6 +3951,9 @@ Create a photorealistic complete redesign of this room."""
                             detection,
                             click_x,
                             click_y,
+                        )
+                        click_x, click_y = self._correct_marker_position(
+                            detection, click_x, click_y,
                         )
 
                 label = "furniture"
@@ -3939,6 +4227,10 @@ Create a photorealistic complete redesign of this room."""
                 # Enforce per-selection product cap from profile
                 search_products = search_products[:max_products_per_sel]
 
+                # Extract optional marker accuracy fields from detection
+                _det_bbox_norm = detection.get("bbox_normalized") if detection else None
+                _det_reasoning = detection.get("reasoning_short", "") if detection else ""
+
                 results.append(
                     self._build_furniture_analysis_item(
                         selection_id=selection_id,
@@ -3959,6 +4251,8 @@ Create a photorealistic complete redesign of this room."""
                         bed_components=bed_components,
                         click_x=click_x,
                         click_y=click_y,
+                        bbox_normalized=_det_bbox_norm,
+                        reasoning_short=_det_reasoning,
                     )
                 )
             except Exception as exc:
@@ -3999,6 +4293,29 @@ Create a photorealistic complete redesign of this room."""
                 },
             },
         )
+        # Append lightweight placeholders for deferred (capped) selections so
+        # iOS can render the marker and treat it as "tap to analyze".
+        # Uses additive "status":"deferred" instead of "error" to avoid
+        # triggering iOS error-handling UI for these markers.
+        for deferred_idx, deferred_sel in enumerate(deferred_selections):
+            deferred_id = self._extract_selection_id(deferred_sel, len(selections) + deferred_idx)
+            d_click_x, d_click_y = self._extract_click_coords(deferred_sel)
+            placeholder = self._build_furniture_analysis_item(
+                selection_id=deferred_id,
+                label="furniture",
+                confidence=0.0,
+                style="",
+                material="",
+                color="",
+                search_query="",
+                products=[],
+                is_bed=False,
+                click_x=d_click_x,
+                click_y=d_click_y,
+            )
+            placeholder["status"] = "deferred"
+            results.append(placeholder)
+
         return {
             "project_id": project_id,
             "selections": results,
@@ -4353,6 +4670,7 @@ Create a photorealistic complete redesign of this room."""
         storage_type = self._resolve_generated_storage_type(project_id, image_type)
         resolved_image_type = self._storage_type_to_image_type(storage_type)
         pil_img, raw_bytes = self._get_pil_image_from_storage(project_id, storage_type)
+        source_w, source_h = pil_img.size
 
         timeout_counts: Dict[str, int] = {}
         gemini_detections: List[Dict[str, Any]] = []
@@ -4399,6 +4717,8 @@ Create a photorealistic complete redesign of this room."""
                     "requested_image_type": image_type,
                     "resolved_image_type": resolved_image_type,
                     "resolved_storage_type": storage_type,
+                    "source_image_width": source_w,
+                    "source_image_height": source_h,
                     "gemini_count": len(gemini_detections),
                     "yolo_count": len(yolo_detections),
                     "final_count": len(final_detections),
@@ -4414,6 +4734,8 @@ Create a photorealistic complete redesign of this room."""
             "status": "success",
             "resolved_image_type": resolved_image_type,
             "resolved_storage_type": storage_type,
+            "source_image_width": source_w,
+            "source_image_height": source_h,
         }
 
     def process_furniture_selection(self, project_id: str, selected_products: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -4583,39 +4905,57 @@ Create a photorealistic complete redesign of this room."""
             })
         formatted = self._filter_products_with_images(formatted, min_count=4)
 
-        # Retry with broader query if too few products
+        # Retry with category-aware query variants if too few products
         if len(formatted) < 4 and self.serp_client:
-            fallback_query = f"{rec_lower} buy online"
-            try:
-                retry_images = await to_thread_with_sem(
-                    sems["img_search"],
-                    self.serp_client.search_images,
-                    fallback_query,
-                    20,
-                )
-                retry_products = []
-                for img in retry_images:
-                    image_url = img.get("thumbnail") or img.get("image_url") or ""
-                    if not image_url or len(image_url) < 10:
-                        continue
-                    retry_products.append({
-                        "url": img.get("url", ""),
-                        "title": img.get("title", ""),
-                        "image_url": image_url,
-                        "store": img.get("source", "Unknown"),
-                    })
-                existing_urls = {p.get("url", "") for p in formatted}
-                for p in retry_products:
-                    if p["url"] and p["url"] not in existing_urls:
-                        formatted.append(p)
-                        existing_urls.add(p["url"])
-                    if len(formatted) >= 6:
-                        break
-                self.logger.info(
-                    f"Async retry search for '{recommendation}': now have {len(formatted)} products"
-                )
-            except Exception as retry_err:
-                self.logger.warning(f"Async retry search failed for '{recommendation}': {retry_err}")
+            from config import is_valid_product
+            retry_queries = [
+                f"{rec_lower} furniture buy",
+                f"{rec_lower} for home",
+                f"{rec_lower} shop",
+            ]
+            existing_urls = {p.get("url", "") for p in formatted}
+            existing_imgs = {p.get("image_url", "") for p in formatted}
+            for fallback_query in retry_queries:
+                if len(formatted) >= 6:
+                    break
+                try:
+                    retry_images = await to_thread_with_sem(
+                        sems["img_search"],
+                        self.serp_client.search_images,
+                        fallback_query,
+                        20,
+                    )
+                    for img in retry_images:
+                        image_url = img.get("thumbnail") or img.get("image_url") or ""
+                        if not image_url or len(image_url) < 10:
+                            continue
+                        if not (image_url.startswith("http://") or image_url.startswith("https://")):
+                            continue
+                        image_lower = image_url.lower()
+                        if any(pat in image_lower for pat in ["placeholder", ".svg", "no-image", "default", "blank", "empty", "missing", "1x1", "pixel", "spacer", "logo"]):
+                            continue
+                        title = img.get("title", "")
+                        if not is_valid_product(title):
+                            continue
+                        url = img.get("url", "")
+                        if image_url in existing_imgs:
+                            continue
+                        if url and url not in existing_urls:
+                            formatted.append({
+                                "url": url,
+                                "title": title,
+                                "image_url": image_url,
+                                "store": img.get("source", "Unknown"),
+                            })
+                            existing_urls.add(url)
+                            existing_imgs.add(image_url)
+                        if len(formatted) >= 6:
+                            break
+                    self.logger.info(
+                        f"Async retry search for '{recommendation}': now have {len(formatted)} products"
+                    )
+                except Exception as retry_err:
+                    self.logger.warning(f"Async retry search failed for '{recommendation}': {retry_err}")
 
         if len(formatted) < 4:
             self.logger.warning(
@@ -4712,25 +5052,52 @@ Create a photorealistic complete redesign of this room."""
         if not row:
             raise ValueError(f"Project {project_id} not found")
 
-        async def run_color():
-            async with timed("color_analysis", timings):
-                return await to_thread_with_sem(
-                    sems["llm"], self.apply_color_scheme, project_id,
-                    color_palette_name or "AI Selected", color_colors or [], color_let_ai_decide,
+        # Download base image once via the same storage-client path that
+        # _temp_image / _get_pil_image_from_storage use, then share the
+        # temp file between both parallel analysis calls.
+        # If the shared download fails, shared_base_path stays None and each
+        # call falls back to its own internal _temp_image download.
+        shared_base_path = None
+        try:
+            try:
+                raw_bytes = self._get_image_bytes_from_storage(project_id, "base")
+                if raw_bytes:
+                    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                    tmp.write(raw_bytes)
+                    tmp.close()
+                    shared_base_path = tmp.name
+            except Exception as dl_err:
+                self.logger.warning(
+                    f"Shared base download failed, each analysis will download independently: {dl_err}",
+                    extra={"project_id": project_id},
                 )
+                shared_base_path = None
 
-        async def run_style():
-            async with timed("style_analysis", timings):
-                return await to_thread_with_sem(
-                    sems["llm"], self.apply_style, project_id,
-                    style_name or "AI Selected", style_let_ai_decide,
-                )
+            async def run_color():
+                async with timed("color_analysis", timings):
+                    return await to_thread_with_sem(
+                        sems["llm"], self.apply_color_scheme, project_id,
+                        color_palette_name or "AI Selected", color_colors or [],
+                        color_let_ai_decide,
+                        _base_image_path=shared_base_path,
+                    )
 
-        async with timed("parallel_design", timings):
-            results = await gather_with_timeout([run_color(), run_style()], timeout=30.0)
-        color_result = results[0] if not isinstance(results[0], Exception) else None
-        style_result = results[1] if not isinstance(results[1], Exception) else None
-        return {"color_analysis": color_result, "style_analysis": style_result, "debug_timings": timings}
+            async def run_style():
+                async with timed("style_analysis", timings):
+                    return await to_thread_with_sem(
+                        sems["llm"], self.apply_style, project_id,
+                        style_name or "AI Selected", style_let_ai_decide,
+                        _base_image_path=shared_base_path,
+                    )
+
+            async with timed("parallel_design", timings):
+                results = await gather_with_timeout([run_color(), run_style()], timeout=30.0)
+            color_result = results[0] if not isinstance(results[0], Exception) else None
+            style_result = results[1] if not isinstance(results[1], Exception) else None
+            return {"color_analysis": color_result, "style_analysis": style_result, "debug_timings": timings}
+        finally:
+            if shared_base_path and os.path.exists(shared_base_path):
+                os.unlink(shared_base_path)
 
     # ImgBB upload helper (same as DataManager)
     def upload_image_to_imgbb(self, image_base64: str) -> Optional[str]:

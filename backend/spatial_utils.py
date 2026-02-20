@@ -51,6 +51,19 @@ class SpatialDetector:
         """
         try:
             image = Image.open(BytesIO(image_bytes))
+            try:
+                from PIL import ImageOps
+                original_size = image.size
+                image = ImageOps.exif_transpose(image)
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
+                if image.size != original_size:
+                    logger.info(
+                        f"EXIF normalization changed image: {original_size} -> {image.size}"
+                    )
+            except Exception:
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
             if image_width is None:
                 image_width = image.width
             if image_height is None:
@@ -58,7 +71,14 @@ class SpatialDetector:
             
             click_x_pct = int(click_x * 100)
             click_y_pct = int(click_y * 100)
-            
+
+            _add_confidence = os.getenv("MARKERS_ADD_CONFIDENCE", "0") == "1"
+            confidence_fields = (
+                ',\n        "confidence": 0.0-1.0,\n'
+                '        "reasoning_short": "1-sentence explanation of detection"'
+                if _add_confidence else ""
+            )
+
             prompt = f"""Analyze this interior room image. The user clicked at ({click_x_pct}% from left, {click_y_pct}% from top).
 
 CLICK PROXIMITY RULE (CRITICAL - READ FIRST):
@@ -107,7 +127,7 @@ Return JSON with this EXACT structure:
         "color": "primary color",
         "material": "main material (wood, upholstered fabric, metal, etc)",
         "style": "design style (modern, art deco, traditional, etc)",
-        "search_query": "4-6 word shopping query for finding this exact item"
+        "search_query": "4-6 word shopping query for finding this exact item"{confidence_fields}
     }},
     "additional_items": [
         {{
@@ -124,7 +144,7 @@ BBOX: Use 0-1000 scale (0=top/left, 1000=bottom/right).
 Return ONLY valid JSON, no markdown."""
 
             # Determine mime type
-            image_format = image.format or "PNG"
+            image_format = image.format or "JPEG"
             mime_type = f"image/{image_format.lower()}"
             if mime_type == "image/jpg":
                 mime_type = "image/jpeg"
@@ -193,7 +213,16 @@ Return ONLY valid JSON, no markdown."""
             detected_label = primary.get("label", "furniture")
             print(f"✅ SpatialDetector: Detected '{detected_label}' at bbox {bbox_normalized}")
             
-            return {
+            detection_confidence = 0.90
+            reasoning_short = ""
+            if _add_confidence:
+                try:
+                    detection_confidence = float(primary.get("confidence", 0.7))
+                except (ValueError, TypeError):
+                    detection_confidence = 0.7
+                reasoning_short = str(primary.get("reasoning_short", ""))
+
+            result_dict = {
                 "label": detected_label,
                 "bbox": bbox,
                 "bbox_normalized": bbox_normalized,
@@ -202,11 +231,14 @@ Return ONLY valid JSON, no markdown."""
                     "material": primary.get("material", "unknown"),
                     "style": primary.get("style", "unknown"),
                 },
-                "confidence": 0.90,
+                "confidence": detection_confidence,
                 "search_query": primary.get("search_query", primary.get("label", "furniture")),
                 "click_point": {"x": click_x, "y": click_y},
                 "additional_items": additional_items,
             }
+            if _add_confidence and reasoning_short:
+                result_dict["reasoning_short"] = reasoning_short
+            return result_dict
             
         except Exception as e:
             logger.error(f"Spatial detection failed: {e}", exc_info=True)

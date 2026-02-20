@@ -152,10 +152,13 @@ class JobManager:
         if self._supabase:
             try:
                 # Check for existing job with same idempotency key
+                # Only reuse jobs that are still in-flight (queued/processing).
+                # Completed/error/cancelled jobs are ignored so that repeated
+                # generation requests always produce a new image.
                 if idempotency_key:
                     existing = (
                         self._supabase.table("jobs")
-                        .select("id")
+                        .select("id, status")
                         .eq("project_id", project_id)
                         .eq("job_type", job_type.value)
                         .eq("idempotency_key", idempotency_key)
@@ -166,10 +169,28 @@ class JobManager:
 
                     if result.data:
                         existing_id = result.data[0]["id"]
+                        existing_status = result.data[0].get("status", "")
                         logger.info(
-                            f"Returning existing job {existing_id} for idempotency_key={idempotency_key}"
+                            f"[REGEN_VERIFY] idempotency_check: key={idempotency_key} "
+                            f"project={project_id} type={job_type.value} "
+                            f"existing_id={existing_id} existing_status={existing_status} "
+                            f"action={'REUSE' if existing_status in ('queued', 'processing') else 'CREATE_NEW'}"
                         )
-                        return existing_id
+                        if existing_status in (JobStatus.QUEUED.value, JobStatus.PROCESSING.value):
+                            logger.info(
+                                f"Returning in-flight job {existing_id} for idempotency_key={idempotency_key}"
+                            )
+                            return existing_id
+                        logger.info(
+                            f"Ignoring finished job {existing_id} (status={existing_status}) "
+                            f"for idempotency_key={idempotency_key}, creating new job"
+                        )
+
+                if idempotency_key:
+                    logger.info(
+                        f"[REGEN_VERIFY] no_existing_job: key={idempotency_key} "
+                        f"project={project_id} creating_new"
+                    )
 
                 # Create new job
                 job_data = {
@@ -188,6 +209,10 @@ class JobManager:
 
                 self._supabase.table("jobs").insert(job_data).execute()
                 logger.info(
+                    f"[REGEN_VERIFY] job_created: id={job_id} key={idempotency_key} "
+                    f"project={project_id} type={job_type.value}"
+                )
+                logger.info(
                     f"Created job {job_id}",
                     extra={
                         "job_id": job_id,
@@ -200,13 +225,14 @@ class JobManager:
             except Exception as e:
                 logger.warning(f"Supabase insert failed, falling back to memory: {e}")
 
-        # In-memory fallback
+        # In-memory fallback — only reuse in-flight jobs
         if idempotency_key:
             for jid, job in self._in_memory_jobs.items():
                 if (
                     job["project_id"] == project_id
                     and job["job_type"] == job_type.value
                     and job.get("idempotency_key") == idempotency_key
+                    and job["status"] in (JobStatus.QUEUED.value, JobStatus.PROCESSING.value)
                 ):
                     return jid
 

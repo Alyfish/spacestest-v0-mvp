@@ -66,8 +66,13 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
       );
 
       if (images.isNotEmpty && mounted) {
-        final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
-        projectProvider.setInspirationImages(images.map((x) => File(x.path)).toList());
+        final projectProvider = Provider.of<ProjectProvider>(
+          context,
+          listen: false,
+        );
+        projectProvider.setInspirationImages(
+          images.map((x) => File(x.path)).toList(),
+        );
 
         // Navigate to confirm screen
         if (widget.onConfirmSelection != null) {
@@ -105,7 +110,7 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
           body: SafeArea(
             child: Column(
               children: [
-                // Header with logo and settings
+                // Header with logo
                 _buildHeader(),
 
                 // Progress bar
@@ -182,34 +187,9 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           // Spaces. logo
-          Image.asset(
-            'assets/logo/logo.png',
-            height: 32,
-          ),
-          // Settings icon
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppTheme.dividerColor,
-                width: 1,
-              ),
-            ),
-            child: IconButton(
-              icon: const Icon(
-                Icons.settings_outlined,
-                color: AppTheme.textPrimary,
-                size: 22,
-              ),
-              onPressed: () {},
-            ),
-          ),
+          Image.asset('assets/logo/logo.png', height: 32),
         ],
       ),
     );
@@ -224,10 +204,7 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
         decoration: BoxDecoration(
           color: AppTheme.surfaceColor,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: AppTheme.dividerColor,
-            width: 1.5,
-          ),
+          border: Border.all(color: AppTheme.dividerColor, width: 1.5),
         ),
         child: Column(
           children: [
@@ -321,7 +298,10 @@ class _UploadInspirationContentState extends State<UploadInspirationContent> {
                 child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppTheme.textPrimary,
-                    side: const BorderSide(color: AppTheme.dividerColor, width: 1.5),
+                    side: const BorderSide(
+                      color: AppTheme.dividerColor,
+                      width: 1.5,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),

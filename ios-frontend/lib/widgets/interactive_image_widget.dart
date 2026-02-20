@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import '../models/shop_product.dart';
+import '../constants/feature_flags.dart';
 
 typedef ImageBoundsCallback =
     Widget Function(
@@ -67,15 +68,45 @@ Offset mapHotspotToRenderedImageTopLeft(
   double markerRadius = 20,
   Size? visibleSize,
 }) {
-  final rawX = displayOffset.dx + (hotspot.x * displaySize.width);
-  final rawY = displayOffset.dy + (hotspot.y * displaySize.height);
+  // Determine effective normalized coordinates, preferring corrected/bbox
+  // sources when the corresponding feature flags are enabled.
+  double normX = hotspot.x;
+  double normY = hotspot.y;
+  if (kUseCorrectedClickIfPresent &&
+      hotspot.correctedClickX != null &&
+      hotspot.correctedClickY != null) {
+    normX = hotspot.correctedClickX!;
+    normY = hotspot.correctedClickY!;
+  } else if (kUseBboxCenterIfPresent &&
+      hotspot.bboxX != null &&
+      hotspot.bboxW != null &&
+      hotspot.bboxY != null &&
+      hotspot.bboxH != null) {
+    normX = hotspot.bboxX! + hotspot.bboxW! / 2;
+    normY = hotspot.bboxY! + hotspot.bboxH! / 2;
+  }
 
-  // Clamp center to visible rect with inset so marker stays partially visible
+  final rawX = displayOffset.dx + (normX * displaySize.width);
+  final rawY = displayOffset.dy + (normY * displaySize.height);
+
+  // Clamp center to the visible portion of the rendered image (cover + contain safe)
   final double cx, cy;
   if (visibleSize != null) {
     const inset = kClampInset;
-    cx = rawX.clamp(inset, visibleSize.width - inset);
-    cy = rawY.clamp(inset, visibleSize.height - inset);
+    final imageRect = Rect.fromLTWH(
+      displayOffset.dx, displayOffset.dy,
+      displaySize.width, displaySize.height,
+    );
+    final containerRect = Rect.fromLTWH(
+      0, 0, visibleSize.width, visibleSize.height,
+    );
+    Rect visibleRect = imageRect.intersect(containerRect);
+    // Defensive fallback if intersect is empty/degenerate
+    if (visibleRect.width <= 0 || visibleRect.height <= 0) {
+      visibleRect = containerRect;
+    }
+    cx = rawX.clamp(visibleRect.left + inset, visibleRect.right - inset);
+    cy = rawY.clamp(visibleRect.top + inset, visibleRect.bottom - inset);
   } else {
     cx = rawX;
     cy = rawY;

@@ -22,10 +22,10 @@
   },
   "iterative_surgical": {
     "category": "image_generation",
-    "description": "Targeted furniture replacement with minimal changes",
+    "description": "Targeted furniture replacement with autonomous design uplift (dual-mode: marker-driven or AI-driven)",
     "target_models": ["gemini-3-pro-image"],
     "file": "iterative_surgical.json",
-    "variables": ["changes_str", "products_str"]
+    "variables": ["changes_str", "products_str", "delta_budget", "design_direction_section", "step_a", "step_c", "extra_negative"]
   },
   "room_redesign": {
     "category": "image_generation",

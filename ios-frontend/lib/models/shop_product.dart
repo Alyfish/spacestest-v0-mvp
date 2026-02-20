@@ -8,6 +8,7 @@ class ShopProduct {
   final String retailerName;
   final String? retailerLogoUrl;
   final String imageUrl;
+  final String? productUrl;
   final String? color;
   final String? category;
 
@@ -20,6 +21,7 @@ class ShopProduct {
     required this.retailerName,
     this.retailerLogoUrl,
     required this.imageUrl,
+    this.productUrl,
     this.color,
     this.category,
   });
@@ -34,6 +36,7 @@ class ShopProduct {
       'retailerName': retailerName,
       'retailerLogoUrl': retailerLogoUrl,
       'imageUrl': imageUrl,
+      'productUrl': productUrl,
       'color': color,
       'category': category,
     };
@@ -63,6 +66,10 @@ class ShopProduct {
           json['retailer_logo_url'] as String?,
       imageUrl:
           json['imageUrl'] as String? ?? json['image_url'] as String? ?? '',
+      productUrl:
+          json['productUrl'] as String? ??
+          json['url'] as String? ??
+          json['link'] as String?,
       color: json['color'] as String?,
       category: json['category'] as String?,
     );
@@ -77,6 +84,7 @@ class ShopProduct {
     String? retailerName,
     String? retailerLogoUrl,
     String? imageUrl,
+    String? productUrl,
     String? color,
     String? category,
   }) {
@@ -89,6 +97,7 @@ class ShopProduct {
       retailerName: retailerName ?? this.retailerName,
       retailerLogoUrl: retailerLogoUrl ?? this.retailerLogoUrl,
       imageUrl: imageUrl ?? this.imageUrl,
+      productUrl: productUrl ?? this.productUrl,
       color: color ?? this.color,
       category: category ?? this.category,
     );
@@ -141,19 +150,62 @@ class ProductHotspot {
   final String itemType; // 'couch', 'lamp', 'vase', etc.
   final String label;
 
+  // Optional marker-accuracy fields (nullable, absent = not provided)
+  final double? bboxX;
+  final double? bboxY;
+  final double? bboxW;
+  final double? bboxH;
+  final double? confidence;
+  final double? correctedClickX;
+  final double? correctedClickY;
+
   const ProductHotspot({
     required this.id,
     required this.x,
     required this.y,
     required this.itemType,
     required this.label,
+    this.bboxX,
+    this.bboxY,
+    this.bboxW,
+    this.bboxH,
+    this.confidence,
+    this.correctedClickX,
+    this.correctedClickY,
   });
 
   Map<String, dynamic> toJson() {
-    return {'id': id, 'x': x, 'y': y, 'itemType': itemType, 'label': label};
+    final map = <String, dynamic>{
+      'id': id,
+      'x': x,
+      'y': y,
+      'itemType': itemType,
+      'label': label,
+    };
+    if (bboxX != null) {
+      map['bbox'] = {'x': bboxX, 'y': bboxY, 'w': bboxW, 'h': bboxH};
+    }
+    if (confidence != null) {
+      map['confidence'] = confidence;
+    }
+    if (correctedClickX != null) {
+      map['corrected_click_x'] = correctedClickX;
+      map['corrected_click_y'] = correctedClickY;
+    }
+    return map;
   }
 
   factory ProductHotspot.fromJson(Map<String, dynamic> json) {
+    // Parse optional bbox
+    final bbox = json['bbox'] as Map<String, dynamic>?;
+    double? bx, by, bw, bh;
+    if (bbox != null) {
+      bx = (bbox['x'] as num?)?.toDouble();
+      by = (bbox['y'] as num?)?.toDouble();
+      bw = (bbox['w'] as num?)?.toDouble();
+      bh = (bbox['h'] as num?)?.toDouble();
+    }
+
     return ProductHotspot(
       id: json['id'] as String,
       x: (json['x'] as num).toDouble(),
@@ -164,6 +216,13 @@ class ProductHotspot {
           json['furniture_type'] as String? ??
           'item',
       label: json['label'] as String? ?? 'Product',
+      bboxX: bx,
+      bboxY: by,
+      bboxW: bw,
+      bboxH: bh,
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      correctedClickX: (json['corrected_click_x'] as num?)?.toDouble(),
+      correctedClickY: (json['corrected_click_y'] as num?)?.toDouble(),
     );
   }
 

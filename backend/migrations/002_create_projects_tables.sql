@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS public.projects (
 
   -- Queryable scalar fields (from ProjectContext in models.py:502-613)
   space_type TEXT,
-  improvement_mode TEXT CHECK (improvement_mode IS NULL OR improvement_mode IN ('iterative', 'complete_revamp')),
+  improvement_mode TEXT CHECK (improvement_mode IS NULL OR improvement_mode IN ('iterative', 'complete_revamp', 'inspiration')),
   is_base_image_empty_room BOOLEAN DEFAULT NULL,
   inspiration_images_skipped BOOLEAN DEFAULT FALSE,
   color_analysis_skipped BOOLEAN DEFAULT FALSE,

@@ -75,6 +75,7 @@ VALID_SPACE_TYPES: Set[str] = {
 VALID_IMPROVEMENT_MODES: Set[str] = {
     "iterative",
     "complete_revamp",
+    "inspiration",
 }
 
 # UUID regex pattern

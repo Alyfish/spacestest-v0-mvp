@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import '../providers/project_provider.dart';
+import '../services/api_service.dart';
+import '../services/notification_service.dart';
+import '../services/supabase_service.dart';
 import '../theme.dart';
 import '../utils/logger.dart';
 import '../widgets/app_bottom_nav_bar.dart';
@@ -46,25 +49,66 @@ enum CreateFlowStep {
   inspirationAnalyzing, // Direct inspiration → generation (skips recs/improvements)
 }
 
+/// Map a backend project status string to the correct CreateFlowStep for resumption.
+CreateFlowStep stepForProjectStatus(String status) {
+  switch (status) {
+    case 'NEW':
+      return CreateFlowStep.uploadPhoto;
+    case 'BASE_IMAGE_UPLOADED':
+      return CreateFlowStep.chooseSpace;
+    case 'SPACE_TYPE_SELECTED':
+      return CreateFlowStep.chooseItems;
+    case 'IMPROVEMENT_MARKERS_SAVED':
+    case 'MARKER_RECOMMENDATIONS_READY':
+      return CreateFlowStep.chooseApproach;
+    case 'INSPIRATION_IMAGES_UPLOADED':
+    case 'INSPIRATION_RECOMMENDATIONS_READY':
+      return CreateFlowStep.inspirationAnalyzing;
+    case 'PRODUCT_RECOMMENDATIONS_READY':
+    case 'PRODUCT_RECOMMENDATIONS_SELECTED':
+    case 'PRODUCT_SEARCH_STARTED':
+    case 'PRODUCT_SEARCH_COMPLETE':
+    case 'PRODUCT_SELECTED':
+      return CreateFlowStep.improvements;
+    case 'IMAGE_GENERATED':
+    case 'INSPIRATION_REDESIGN_COMPLETE':
+      return CreateFlowStep.dreamSpace;
+    default:
+      return CreateFlowStep.uploadPhoto;
+  }
+}
+
 /// Full-screen route that manages the redesign flow.
 /// Pushed from Home - completely separate from bottom navigation.
 class CreateFlowScreen extends StatefulWidget {
   final bool isCamera;
+  final CreateFlowStep? startStep;
 
-  const CreateFlowScreen({super.key, this.isCamera = false});
+  const CreateFlowScreen({super.key, this.isCamera = false, this.startStep});
 
   @override
   State<CreateFlowScreen> createState() => _CreateFlowScreenState();
 }
 
 class _CreateFlowScreenState extends State<CreateFlowScreen> {
-  CreateFlowStep _currentStep = CreateFlowStep.uploadPhoto;
+  late CreateFlowStep _currentStep;
   ProductHotspot? _selectedHotspot;
   String? _pendingRetryFeedback;
   ValueNotifier<String?>? _analyzingSubtitleNotifier;
   List<String>? _pendingRecsToSelect;
   bool _pendingNeedsColorSave = false;
   bool _pendingNeedsStyleSave = false;
+  final Set<String> _notifyPromptShownJobIds = <String>{};
+
+  // PERF timing
+  int? _flowStartMs;
+  int? _improvementsShownMs;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentStep = widget.startStep ?? CreateFlowStep.uploadPhoto;
+  }
 
   @override
   void dispose() {
@@ -110,7 +154,9 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
         for (final product in products) {
           if (product is! Map) continue;
           final url =
-              (product['image_url'] ?? product['imageUrl'] ?? product['thumbnail'])
+              (product['image_url'] ??
+                      product['imageUrl'] ??
+                      product['thumbnail'])
                   ?.toString()
                   .trim();
           if (url != null && url.isNotEmpty) urls.add(url);
@@ -121,6 +167,98 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
     extract(provider.productSuggestions);
     extract(provider.trendingProducts);
     return urls;
+  }
+
+  Future<void> _maybePromptNotifyWhenReady(ProjectProvider provider) async {
+    final jobId = provider.currentJobId;
+    final projectId = provider.currentProject?.id;
+    if (!mounted || jobId == null || projectId == null) return;
+    if (_notifyPromptShownJobIds.contains(jobId)) return;
+    _notifyPromptShownJobIds.add(jobId);
+
+    final action = await showDialog<_NotifyWhenReadyAction>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Tell me when to come back!'),
+          content: const Text(
+            'We can notify your phone as soon as your design is ready.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(_NotifyWhenReadyAction.notNow),
+              child: const Text('Not now'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(_NotifyWhenReadyAction.notifyMe),
+              child: const Text('Notify me'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || action != _NotifyWhenReadyAction.notifyMe) return;
+
+    final authToken = SupabaseService.accessToken;
+    if (authToken == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please sign in to enable notifications.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final registration =
+        await NotificationService.requestPermissionAndGetToken();
+    if (registration == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Notifications are disabled. Enable them in settings to get alerts.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final response = await ApiService.notifyWhenReady(
+        projectId,
+        jobId,
+        authToken,
+        deviceToken: registration.token,
+        platform: registration.platform,
+      );
+      final status = (response['status'] ?? 'registered').toString();
+      final message = status == 'already_done'
+          ? 'Your design is already ready.'
+          : 'Great, we will notify you when your design is ready.';
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (e) {
+      AppLogger.error('Failed to register notify-when-ready', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not register notification. Please try again.'),
+          ),
+        );
+      }
+    }
   }
 
   void _goBack() {
@@ -393,34 +531,32 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               listen: false,
             );
             final stopwatch = Stopwatch()..start();
-            const maxWait = Duration(seconds: 45);
-            const pollInterval = Duration(seconds: 2);
+            const maxWait = Duration(seconds: 120);
 
-            // Phase 1: Sync preferred stores (~500ms)
-            await provider
+            _flowStartMs ??= DateTime.now().millisecondsSinceEpoch;
+            AppLogger.info('PERF_IOS analyzing_start');
+
+            // Phases 1+2 in parallel — blocks max(5s, 15s) instead of 5s+15s
+            final storeSync = provider
                 .ensurePreferredStoresSynced(context)
-                .timeout(
-                  const Duration(seconds: 5),
-                  onTimeout: () => false,
-                );
+                .timeout(const Duration(seconds: 5), onTimeout: () => false);
+
+            final recsLoad = provider
+                .ensureRecommendationsLoaded(context)
+                .timeout(const Duration(seconds: 15), onTimeout: () => false);
+
+            await Future.wait([storeSync, recsLoad]);
 
             if (!mounted) return;
 
-            // Phase 2: Ensure recommendations loaded
-            // (likely already done — started at Choose Approach ~10-20s ago)
-            await provider
-                .ensureRecommendationsLoaded(context)
-                .timeout(
-                  const Duration(seconds: 15),
-                  onTimeout: () => false,
-                );
+            AppLogger.info(
+              'PERF_IOS phases_1_2_done_ms=${DateTime.now().millisecondsSinceEpoch - _flowStartMs!}',
+            );
 
-            // Phase 3: Ensure search job is running
+            // Phase 3: Ensure search job is running (AFTER recs — needs productRecommendations)
             final searchRecs = provider.productRecommendations;
             if (searchRecs.isNotEmpty) {
-              unawaited(
-                provider.ensureSearchJobStarted(null, searchRecs),
-              );
+              unawaited(provider.ensureSearchJobStarted(null, searchRecs));
             }
 
             // Phase 4: Poll until image-backed products are ready.
@@ -446,10 +582,21 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
 
               if (provider.hasImageBackedSuggestions) break;
 
+              // Adaptive polling: 1s for first 20s, 2s after
+              final pollInterval = stopwatch.elapsed.inSeconds < 20
+                  ? const Duration(seconds: 1)
+                  : const Duration(seconds: 2);
+
               final remaining = deadline.difference(DateTime.now());
               if (remaining <= Duration.zero) break;
               await Future.delayed(
                 remaining < pollInterval ? remaining : pollInterval,
+              );
+            }
+
+            if (provider.hasImageBackedSuggestions) {
+              AppLogger.info(
+                'PERF_IOS products_ready_ms=${DateTime.now().millisecondsSinceEpoch - _flowStartMs!}',
               );
             }
 
@@ -460,9 +607,11 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                 final imageUrls = _extractProductImageUrls(provider);
                 if (imageUrls.isNotEmpty && mounted) {
                   await Future.wait(
-                    imageUrls.take(8).map(
-                      (url) => precacheImage(NetworkImage(url), context),
-                    ),
+                    imageUrls
+                        .take(8)
+                        .map(
+                          (url) => precacheImage(NetworkImage(url), context),
+                        ),
                   ).timeout(
                     const Duration(seconds: 5),
                     onTimeout: () => <void>[],
@@ -481,6 +630,26 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
         );
 
       case CreateFlowStep.improvements:
+        _improvementsShownMs = DateTime.now().millisecondsSinceEpoch;
+
+        // Pre-warm image generation after a settle delay (800ms).
+        // Guards: must be mounted, must have recs AND selections, 800ms prevents waste on rapid tap-through.
+        final prewarmProvider = Provider.of<ProjectProvider>(
+          context,
+          listen: false,
+        );
+        if (prewarmProvider.productRecommendations.isNotEmpty &&
+            prewarmProvider.selectedRecommendations.isNotEmpty) {
+          Future.delayed(const Duration(milliseconds: 800), () {
+            if (mounted) {
+              Provider.of<ProjectProvider>(
+                context,
+                listen: false,
+              ).startPrewarmGeneration();
+            }
+          });
+        }
+
         return ImprovementsScreen(
           onBack: _goBack,
           onImprove: (recsToSelect, needsColorSave, needsStyleSave) {
@@ -498,71 +667,224 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
           title: 'Redesigning Your Space and\nFinding Products..',
           subtitle: 'Please wait a moment while we prepare\nyour new space',
           subtitleNotifier: _analyzingSubtitleNotifier,
-          onComplete: () => _goToStep(CreateFlowStep.dreamSpace),
+          onComplete: () {
+            AppLogger.info(
+              'PERF_IOS dream_space_navigate_total_ms='
+              '${DateTime.now().millisecondsSinceEpoch - (_flowStartMs ?? 0)}',
+            );
+            _goToStep(CreateFlowStep.dreamSpace);
+          },
           asyncWork: () async {
             final provider = Provider.of<ProjectProvider>(
               context,
               listen: false,
             );
 
-            // Phase 0: Run pending saves in parallel (deferred from ImprovementsScreen)
-            final saveFutures = <Future<bool>>[];
+            final improvementsTimeMs =
+                DateTime.now().millisecondsSinceEpoch -
+                (_improvementsShownMs ?? 0);
+            AppLogger.info('PERF_IOS improvements_time_ms=$improvementsTimeMs');
+            AppLogger.info(
+              'PERF_IOS improvements_analyzing_start_ms='
+              '${DateTime.now().millisecondsSinceEpoch - (_flowStartMs ?? 0)}',
+            );
+
+            // Phase 0a: Force-invalidate prewarm early if any saves are pending
+            // (we know saves will change the fingerprint, no point letting prewarm run)
+            if (_pendingNeedsColorSave ||
+                _pendingNeedsStyleSave ||
+                (_pendingRecsToSelect != null &&
+                    _pendingRecsToSelect!.isNotEmpty)) {
+              provider.forceInvalidatePrewarm();
+            }
+
+            // Phase 0b: Run pending saves in parallel (deferred from ImprovementsScreen)
+            final saveOperations = <String, Future<bool> Function()>{};
             if (_pendingNeedsColorSave) {
-              saveFutures.add(provider.saveColorPalette(
-                context, 'ai_decide', 'Let AI Decide', [],
-                letAiDecide: true, background: false,
-              ));
+              saveOperations['color'] = () => provider.saveColorPalette(
+                context,
+                'ai_decide',
+                'Let AI Decide',
+                [],
+                letAiDecide: true,
+                background: false,
+              );
             }
             if (_pendingNeedsStyleSave) {
-              saveFutures.add(provider.saveDesignStyle(
-                context, 'ai_decide', 'Let AI Decide',
-                letAiDecide: true, background: false,
-              ));
+              saveOperations['style'] = () => provider.saveDesignStyle(
+                context,
+                'ai_decide',
+                'Let AI Decide',
+                letAiDecide: true,
+                background: false,
+              );
             }
-            if (_pendingRecsToSelect != null && _pendingRecsToSelect!.isNotEmpty) {
-              saveFutures.add(provider.setSelectedRecommendations(context, _pendingRecsToSelect!));
+            if (_pendingRecsToSelect != null &&
+                _pendingRecsToSelect!.isNotEmpty) {
+              saveOperations['selected_recommendations'] = () => provider
+                  .setSelectedRecommendations(context, _pendingRecsToSelect!);
             }
-            final safeFutures = saveFutures.map((f) async {
-              try {
-                return await f;
-              } catch (e, st) {
-                debugPrint('[DEFERRED_SAVE] Save failed (non-blocking): $e');
-                debugPrint('$st');
-                return false;
+
+            Future<Map<String, bool>> runSavePass(
+              List<String> keys,
+              String phase,
+            ) async {
+              final entries = await Future.wait(
+                keys.map((key) async {
+                  final operation = saveOperations[key];
+                  if (operation == null) return MapEntry(key, true);
+                  try {
+                    final ok = await operation();
+                    return MapEntry(key, ok);
+                  } catch (e, st) {
+                    debugPrint(
+                      '[DEFERRED_SAVE] Save failed ($phase, $key): $e',
+                    );
+                    debugPrint('$st');
+                    return MapEntry(key, false);
+                  }
+                }),
+              );
+              return Map<String, bool>.fromEntries(entries);
+            }
+
+            if (saveOperations.isNotEmpty) {
+              final pendingKeys = saveOperations.keys.toList();
+              AppLogger.info(
+                '[gen_ctx_sync] start pending=${pendingKeys.join(",")}',
+              );
+
+              final firstPassResults = await runSavePass(
+                pendingKeys,
+                'first_pass',
+              );
+              final firstPassFailed = firstPassResults.entries
+                  .where((entry) => entry.value == false)
+                  .map((entry) => entry.key)
+                  .toList();
+              AppLogger.info(
+                '[gen_ctx_sync] first_pass '
+                'success=${pendingKeys.length - firstPassFailed.length} '
+                'failed=${firstPassFailed.length}',
+              );
+
+              if (firstPassFailed.isNotEmpty) {
+                AppLogger.warning(
+                  '[gen_ctx_sync] retry_pass pending=${firstPassFailed.join(",")}',
+                );
+                final retryPassResults = await runSavePass(
+                  firstPassFailed,
+                  'retry_pass',
+                );
+                final retryStillFailed = retryPassResults.entries
+                    .where((entry) => entry.value == false)
+                    .map((entry) => entry.key)
+                    .toList();
+                AppLogger.info(
+                  '[gen_ctx_sync] retry_pass '
+                  'success=${firstPassFailed.length - retryStillFailed.length} '
+                  'failed=${retryStillFailed.length}',
+                );
+                if (retryStillFailed.isNotEmpty) {
+                  AppLogger.warning(
+                    '[gen_ctx_sync] proceed_with_partial '
+                    'failed=${retryStillFailed.join(",")}',
+                  );
+                }
               }
-            }).toList();
-            if (safeFutures.isNotEmpty) {
-              await Future.wait(safeFutures);
             }
+
             _pendingRecsToSelect = null;
             _pendingNeedsColorSave = false;
             _pendingNeedsStyleSave = false;
 
+            // Invalidate pre-warm if saves changed the inputs
+            provider.invalidatePrewarmIfStale();
+
             if (!mounted) return;
             if (provider.productRecommendations.isEmpty) {
-              final recommendationsReady = await provider
-                  .ensureRecommendationsLoaded(context);
+              final isIterative = provider.approach == 'iterative';
+              final markerCount = provider.markers.length;
+              final canSkip = isIterative && markerCount > 0;
+
+              final ok = await provider
+                  .ensureRecommendationsLoaded(context)
+                  .timeout(
+                    const Duration(seconds: 15),
+                    onTimeout: () {
+                      AppLogger.warning(
+                        'PERF_IOS recs_timeout_15s isIterative=$isIterative markerCount=$markerCount',
+                      );
+                      return false;
+                    },
+                  );
               if (!mounted) return;
-              if (!recommendationsReady) {
-                throw Exception(
-                  provider.errorMessage ??
-                      'Still preparing recommendations. Please try again in a moment.',
-                );
+              if (!ok) {
+                if (canSkip) {
+                  AppLogger.info(
+                    'PERF_IOS iterative_skip_recs markerCount=$markerCount',
+                  );
+                } else {
+                  throw Exception(
+                    provider.errorMessage ??
+                        'Still preparing recommendations. Please try again in a moment.',
+                  );
+                }
               }
             }
+
+            AppLogger.info(
+              'PERF_IOS pre_generation approach=${provider.approach} '
+              'markerCount=${provider.markers.length} '
+              'recsCount=${provider.productRecommendations.length} '
+              'selectedRecsCount=${provider.selectedRecommendations.length} '
+              'projectId=${provider.currentProject?.id}',
+            );
+
             final isRetry =
                 _pendingRetryFeedback != null &&
                 _pendingRetryFeedback!.trim().isNotEmpty;
-            final success = isRetry
-                ? await provider.retryDesignImage(
-                    _pendingRetryFeedback!,
-                    onRetrying: () => _analyzingSubtitleNotifier?.value = 'Reconnecting...',
-                  )
-                : await provider.generateDesignImage(
-                    onRetrying: () => _analyzingSubtitleNotifier?.value = 'Reconnecting...',
-                  );
+
+            final success =
+                await (isRetry
+                        ? provider.retryDesignImage(
+                            _pendingRetryFeedback!,
+                            onRetrying: () =>
+                                _analyzingSubtitleNotifier?.value =
+                                    'Reconnecting...',
+                          )
+                        : provider.generateDesignImage(
+                            onRetrying: () =>
+                                _analyzingSubtitleNotifier?.value =
+                                    'Reconnecting...',
+                          ))
+                    .timeout(
+                      const Duration(seconds: 120),
+                      onTimeout: () {
+                        AppLogger.warning(
+                          'PERF_IOS design_generation_timeout after 120s — proceeding to DreamSpace',
+                        );
+                        return false; // NOT a failure — just a timeout
+                      },
+                    );
+
+            final prewarmReused = provider.lastPrewarmReused;
+            AppLogger.info(
+              'PERF_IOS design_image_done_ms='
+              '${DateTime.now().millisecondsSinceEpoch - (_flowStartMs ?? 0)} '
+              'prewarm_reused=$prewarmReused success=$success',
+            );
+
             _analyzingSubtitleNotifier?.value = null;
-            if (!success) {
+
+            // Distinguish timeout (job alive) from real failure (no job)
+            if (!success && provider.currentJobId != null) {
+              // TIMEOUT path: job still running on backend, proceed to DreamSpace.
+              // Do NOT throw, do NOT clear job_id — DreamSpace will pick up polling.
+              // (onComplete fires next → navigates to DreamSpace with loading overlay)
+              await _maybePromptNotifyWhenReady(provider);
+            } else if (!success) {
+              // REAL FAILURE: no job_id means the job never started or truly failed
               throw Exception(
                 provider.errorMessage ?? 'Failed to generate design image',
               );
@@ -604,7 +926,8 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
             if (!mounted) return;
             final success = await provider.generateInspirationDirectly(
               context,
-              onRetrying: () => _analyzingSubtitleNotifier?.value = 'Reconnecting...',
+              onRetrying: () =>
+                  _analyzingSubtitleNotifier?.value = 'Reconnecting...',
             );
             _analyzingSubtitleNotifier?.value = null;
             if (!success) {
@@ -666,3 +989,5 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
     }
   }
 }
+
+enum _NotifyWhenReadyAction { notNow, notifyMe }

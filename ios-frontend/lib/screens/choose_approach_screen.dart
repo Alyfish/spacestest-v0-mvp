@@ -83,7 +83,7 @@ class _ChooseApproachContentState extends State<ChooseApproachContent> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Header with logo and settings
+        // Header with logo
         _buildHeader(),
 
         // Progress bar
@@ -154,28 +154,9 @@ class _ChooseApproachContentState extends State<ChooseApproachContent> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           // Spaces. logo
           Image.asset('assets/logo/logo.png', height: 32),
-          // Settings icon
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppTheme.dividerColor, width: 1),
-            ),
-            child: IconButton(
-              icon: const Icon(
-                Icons.settings_outlined,
-                color: AppTheme.textPrimary,
-                size: 22,
-              ),
-              onPressed: () {},
-            ),
-          ),
         ],
       ),
     );

@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 from async_utils import timed
 from job_manager import job_manager, JobType, JobStatus
 from logger_config import setup_logging
+from push_notifications import dispatch_job_ready_notifications
 
 logger = setup_logging()
 
@@ -175,15 +176,46 @@ async def execute_generate_image(
                 "timings_ms": timings,
                 "total_ms": total_ms,
             }
+            logger.info(
+                f"[REGEN_VERIFY] generate_complete: job_id={job_id} "
+                f"image_url={result.get('generated_image_url', 'N/A')}"
+            )
 
         # 100% - Complete
         await job_manager.complete_job(job_id, stored_result)
+        try:
+            notify_summary = await asyncio.to_thread(
+                dispatch_job_ready_notifications,
+                job_id,
+                project_id,
+            )
+            if notify_summary["total"] > 0:
+                logger.info(
+                    f"Job {job_id} design-ready notifications dispatched: "
+                    f"sent={notify_summary['sent']} failed={notify_summary['failed']}"
+                )
+        except Exception as notify_error:
+            logger.warning(
+                f"Design-ready notification dispatch failed for job {job_id}: "
+                f"{notify_error}"
+            )
+
         logger.info(
             f"Job {job_id} completed: generate_image",
             extra={
                 "job_id": job_id,
                 "project_id": project_id,
                 "extra_data": {"timings_ms": timings, "total_ms": total_ms},
+            },
+        )
+        logger.info(
+            f"PERF_SUMMARY generate_image total={total_ms:.0f}ms "
+            + " ".join(f"{k}={v:.0f}ms" for k, v in timings.items()),
+            extra={
+                "job_id": job_id,
+                "project_id": project_id,
+                "extra_data": {"type": "perf_summary", "job_type": "generate_image",
+                               "total_ms": total_ms, "breakdown_ms": timings},
             },
         )
 
@@ -288,14 +320,45 @@ async def execute_inspiration_redesign(
                 "timings_ms": timings,
                 "total_ms": total_ms,
             }
+            logger.info(
+                f"[REGEN_VERIFY] inspiration_complete: job_id={job_id} "
+                f"image_url={result.get('generated_image_url', 'N/A')}"
+            )
 
         await job_manager.complete_job(job_id, stored_result)
+        try:
+            notify_summary = await asyncio.to_thread(
+                dispatch_job_ready_notifications,
+                job_id,
+                project_id,
+            )
+            if notify_summary["total"] > 0:
+                logger.info(
+                    f"Job {job_id} design-ready notifications dispatched: "
+                    f"sent={notify_summary['sent']} failed={notify_summary['failed']}"
+                )
+        except Exception as notify_error:
+            logger.warning(
+                f"Design-ready notification dispatch failed for job {job_id}: "
+                f"{notify_error}"
+            )
+
         logger.info(
             f"Job {job_id} completed: inspiration_redesign",
             extra={
                 "job_id": job_id,
                 "project_id": project_id,
                 "extra_data": {"timings_ms": timings, "total_ms": total_ms},
+            },
+        )
+        logger.info(
+            f"PERF_SUMMARY inspiration_redesign total={total_ms:.0f}ms "
+            + " ".join(f"{k}={v:.0f}ms" for k, v in timings.items()),
+            extra={
+                "job_id": job_id,
+                "project_id": project_id,
+                "extra_data": {"type": "perf_summary", "job_type": "inspiration_redesign",
+                               "total_ms": total_ms, "breakdown_ms": timings},
             },
         )
 
@@ -408,6 +471,16 @@ async def execute_search_recommendations(
                 "project_id": project_id,
                 "total_products": stored_result["total_products"],
                 "extra_data": {"timings_ms": timings, "total_ms": total_ms},
+            },
+        )
+        logger.info(
+            f"PERF_SUMMARY search_recommendations total={total_ms:.0f}ms "
+            + " ".join(f"{k}={v:.0f}ms" for k, v in timings.items()),
+            extra={
+                "job_id": job_id,
+                "project_id": project_id,
+                "extra_data": {"type": "perf_summary", "job_type": "search_recommendations",
+                               "total_ms": total_ms, "breakdown_ms": timings},
             },
         )
 

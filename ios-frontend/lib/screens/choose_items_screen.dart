@@ -168,7 +168,7 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Header with logo and settings
+        // Header with logo
         _buildHeader(),
 
         // Progress bar
@@ -227,36 +227,9 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           // Spaces. logo
-          Image.asset(
-            'assets/logo/logo.png',
-            height: 32,
-          ),
-          // Settings icon
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppTheme.dividerColor,
-                width: 1,
-              ),
-            ),
-            child: IconButton(
-              icon: const Icon(
-                Icons.settings_outlined,
-                color: AppTheme.textPrimary,
-                size: 22,
-              ),
-              onPressed: () {
-                AppLogger.info('Settings pressed');
-              },
-            ),
-          ),
+          Image.asset('assets/logo/logo.png', height: 32),
         ],
       ),
     );
@@ -270,7 +243,10 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
         // Demo mode: use placeholder image when no project image
         final isDemoMode = imageProvider == null || ProjectProvider.demoMode;
         final displayProvider = isDemoMode
-            ? const AssetImage('assets/images_for_choose_spaces_new/1_pb_8pa89uOlXOTsrM8sFWg.jpg') as ImageProvider
+            ? const AssetImage(
+                    'assets/images_for_choose_spaces_new/1_pb_8pa89uOlXOTsrM8sFWg.jpg',
+                  )
+                  as ImageProvider
             : imageProvider;
 
         return Container(
@@ -295,20 +271,21 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
                     imageProvider: displayProvider,
                     fit: BoxFit.contain,
                     onImageTap: _showMarkerDialog,
-                    overlayBuilder: (imageWidth, imageHeight, displaySize, displayOffset) {
-                      return Consumer<ProjectProvider>(
-                        builder: (context, provider, child) {
-                          return MarkerOverlay(
-                            markers: provider.markers,
-                            onMarkerTap: _editMarker,
-                            imageWidth: imageWidth,
-                            imageHeight: imageHeight,
-                            displaySize: displaySize,
-                            displayOffset: displayOffset,
+                    overlayBuilder:
+                        (imageWidth, imageHeight, displaySize, displayOffset) {
+                          return Consumer<ProjectProvider>(
+                            builder: (context, provider, child) {
+                              return MarkerOverlay(
+                                markers: provider.markers,
+                                onMarkerTap: _editMarker,
+                                imageWidth: imageWidth,
+                                imageHeight: imageHeight,
+                                displaySize: displaySize,
+                                displayOffset: displayOffset,
+                              );
+                            },
                           );
                         },
-                      );
-                    },
                   ),
                 ),
               ),
@@ -318,7 +295,10 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
                   top: 12,
                   left: 12,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(20),
@@ -375,10 +355,7 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
       child: OutlinedButton(
         style: OutlinedButton.styleFrom(
           foregroundColor: AppTheme.textSecondary,
-          side: BorderSide(
-            color: AppTheme.dividerColor,
-            width: 1.5,
-          ),
+          side: BorderSide(color: AppTheme.dividerColor, width: 1.5),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -407,10 +384,7 @@ class _ChooseItemsContentState extends State<ChooseItemsContent> {
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppTheme.textPrimary,
                 backgroundColor: AppTheme.scaffoldBackground,
-                side: BorderSide(
-                  color: AppTheme.dividerColor,
-                  width: 1.5,
-                ),
+                side: BorderSide(color: AppTheme.dividerColor, width: 1.5),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),

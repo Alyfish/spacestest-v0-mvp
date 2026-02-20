@@ -797,6 +797,7 @@ REMEMBER: Keep walls, doors, flooring, ceiling unchanged. Focus on furniture, de
         original_room_image_path: str,
         prompt: str,
         product_images: Optional[List[Dict[str, str]]] = None,
+        inspiration_images: Optional[List[str]] = None,
     ) -> str:
         """
         Generate a redesigned room image based on inspiration
@@ -806,6 +807,7 @@ REMEMBER: Keep walls, doors, flooring, ceiling unchanged. Focus on furniture, de
             original_room_image_path: Path to the original room image
             prompt: The generation prompt
             product_images: Optional list of dicts with 'image_url' and 'title' for trending products
+            inspiration_images: Optional list of temp file paths for inspiration reference images
         """
         try:
             print(f"🎨 Generating room redesign...")
@@ -813,6 +815,22 @@ REMEMBER: Keep walls, doors, flooring, ceiling unchanged. Focus on furniture, de
             # Load room image
             original_room_image = Image.open(original_room_image_path)
             original_room_image = ImageOps.exif_transpose(original_room_image)
+
+            # Load and resize inspiration images if provided
+            loaded_inspiration_images = []
+            if inspiration_images:
+                MAX_INSPO_EDGE = 1536
+                for inspo_path in inspiration_images:
+                    try:
+                        inspo_img = Image.open(inspo_path)
+                        inspo_img = ImageOps.exif_transpose(inspo_img)
+                        inspo_img = inspo_img.convert("RGB")
+                        inspo_img.thumbnail((MAX_INSPO_EDGE, MAX_INSPO_EDGE))
+                        loaded_inspiration_images.append(inspo_img)
+                    except Exception as inspo_err:
+                        print(f"⚠️ Skipping inspiration image {inspo_path}: {inspo_err}")
+                if loaded_inspiration_images:
+                    print(f"🎨 Loaded {len(loaded_inspiration_images)} inspiration reference images (max {MAX_INSPO_EDGE}px)")
 
             # Download product images if provided
             downloaded_product_images = []
@@ -836,13 +854,33 @@ REMEMBER: Keep walls, doors, flooring, ceiling unchanged. Focus on furniture, de
                 temperature=0.3,  # Low temperature for structure preservation
             )
 
+            # Add inspiration reference instruction if we have inspiration images
+            inspiration_reference_text = ""
+            if loaded_inspiration_images:
+                inspiration_reference_text = f"""
+
+### INSPIRATION REFERENCE IMAGES
+{len(loaded_inspiration_images)} inspiration reference image(s) are attached after these instructions.
+When counting image attachments only:
+- Image 1 is the user's room (preserve its layout exactly).
+- Images 2..{1 + len(loaded_inspiration_images)} are inspiration references (style/color/material cues).
+Apply the inspiration palette, materials, textures, and lighting mood throughout the room.
+DO NOT copy the room layout or architecture from the inspiration images; the original room (Image 1) defines the target space.
+
+REQUIRED STYLE APPLICATION:
+- You MUST apply the inspiration palette/materials to the room in a clearly visible way.
+- Make at least 3 substantial style changes (e.g., wall paint, bedding/sofa textile, rug, curtains, lighting, major decor).
+- Do NOT satisfy the request by only adding a small object (e.g., a vase).
+- The result must look like a deliberate, cohesive style transformation inspired by the reference images."""
+
             # Add product reference instruction if we have product images
             product_reference_text = ""
             if downloaded_product_images:
+                img_offset = 2 + len(loaded_inspiration_images)
                 product_reference_text = f"""
 
 ### PRODUCT REFERENCE IMAGES (CRITICAL)
-The following {len(downloaded_product_images)} product reference images are provided. You MUST incorporate these EXACT products into the room:
+When counting image attachments only, the following {len(downloaded_product_images)} product reference images are provided as Images {img_offset}..{img_offset + len(downloaded_product_images) - 1}. You MUST incorporate these EXACT products into the room:
 {chr(10).join([f"- {title}" for title in product_titles])}
 
 MATCH THE PRODUCTS EXACTLY:
@@ -852,14 +890,26 @@ MATCH THE PRODUCTS EXACTLY:
 - DO NOT improvise or change any aspect of the product appearance
 - Use the product images as authoritative reference for how these items should look"""
 
+            frame_lock_text = """
+### NON-NEGOTIABLE FRAME LOCK
+- Preserve the full visible boundaries of Image 1.
+- Do NOT crop, zoom, recompose, rotate, or change perspective.
+- Keep the same camera position, lens feel, and field of view as Image 1.
+"""
+
             # Keep generated output aligned with source framing/aspect.
             final_prompt = (
-                f"{prompt}{product_reference_text}\n\n"
+                f"{prompt}{frame_lock_text}{inspiration_reference_text}{product_reference_text}\n\n"
                 "Technical Requirement: Preserve the exact input image aspect ratio."
             )
 
-            # Prepare contents: Image FIRST for structure preservation, then prompt, then product images
-            contents = [original_room_image, final_prompt] + downloaded_product_images
+            # Keep Image 1 + instruction block first to anchor framing/geometry
+            # before additional style/product references.
+            contents = (
+                [original_room_image, final_prompt]
+                + loaded_inspiration_images
+                + downloaded_product_images
+            )
 
             # Retry logic: Try primary model multiple times, then fallback
             import time
@@ -893,10 +943,12 @@ MATCH THE PRODUCTS EXACTLY:
                 except Exception as e:
                     last_error = e
                     error_str = str(e).lower()
-                    # Check if it's a retryable error (503/overloaded)
-                    if "503" in error_str or "overloaded" in error_str or "unavailable" in error_str:
+                    # Check if it's a retryable error (503/overloaded/connection dropped)
+                    if ("503" in error_str or "overloaded" in error_str or "unavailable" in error_str
+                            or "server disconnected" in error_str or "connection closed" in error_str
+                            or "connection reset" in error_str):
                         if attempt < max_retries - 1:
-                            print(f"⚠️ {primary_model} overloaded (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                            print(f"⚠️ {primary_model} overloaded/disconnected (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
                             time.sleep(retry_delay)
                             continue
                         else:
@@ -1072,9 +1124,11 @@ Technical Requirement: Preserve the exact input image aspect ratio."""
                 except Exception as e:
                     last_error = e
                     error_str = str(e).lower()
-                    if "503" in error_str or "overloaded" in error_str or "unavailable" in error_str:
+                    if ("503" in error_str or "overloaded" in error_str or "unavailable" in error_str
+                            or "server disconnected" in error_str or "connection closed" in error_str
+                            or "connection reset" in error_str):
                         if attempt < max_retries - 1:
-                            print(f"⚠️ {primary_model} overloaded (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                            print(f"⚠️ {primary_model} overloaded/disconnected (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
                             time.sleep(retry_delay)
                             continue
                         else:
@@ -1235,10 +1289,12 @@ Technical Requirement: Preserve the exact input image aspect ratio."""
                 except Exception as e:
                     last_error = e
                     error_str = str(e).lower()
-                    # Check if it's a retryable error (503/overloaded)
-                    if "503" in error_str or "overloaded" in error_str or "unavailable" in error_str:
+                    # Check if it's a retryable error (503/overloaded/connection dropped)
+                    if ("503" in error_str or "overloaded" in error_str or "unavailable" in error_str
+                            or "server disconnected" in error_str or "connection closed" in error_str
+                            or "connection reset" in error_str):
                         if attempt < max_retries - 1:
-                            print(f"⚠️ {primary_model} overloaded (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                            print(f"⚠️ {primary_model} overloaded/disconnected (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
                             time.sleep(retry_delay)
                             continue
                         else:
@@ -1488,11 +1544,14 @@ Before finalizing, verify against the original photo:
         trending_products: list = None,
         style_analysis: dict = None,
         color_scheme: dict = None,
+        color_analysis: dict = None,
     ) -> str:
         """Create a surgical/iterative prompt for targeted furniture replacement.
 
-        This prompt focuses on small, precise changes - replacing specific items
-        and adding a few complementary styling pieces to enhance the room.
+        This prompt focuses on precise changes — replacing specific items and adding
+        complementary styling pieces. When markers are present, changes focus on marked
+        areas. When NO markers are present, the AI autonomously identifies 3-5 items
+        to upgrade using the user's color palette and design style.
 
         Args:
             selected_products: User-selected products to insert
@@ -1500,7 +1559,10 @@ Before finalizing, verify against the original photo:
             trending_products: Additional trending products for styling suggestions
             style_analysis: Design style context (materials, characteristics)
             color_scheme: Color palette context (primary, secondary, accent colors)
+            color_analysis: Full ColorAnalysis dict with 60-30-10 palette and assignments
         """
+
+        has_markers = bool(marker_locations)
 
         # 1. Format the specific changes from markers
         changes_list = []
@@ -1516,7 +1578,7 @@ Before finalizing, verify against the original photo:
                 desc = "Replace item"
                 pos = "marked area"
             changes_list.append(f"TARGET AREA {i+1}: At position {pos}, remove existing item and {desc}.")
-        changes_str = "\n".join(changes_list) if changes_list else "No specific markers provided."
+        changes_str = "\n".join(changes_list) if changes_list else ""
 
         # 2. Format the specific products (user-selected)
         product_details = []
@@ -1528,31 +1590,101 @@ Before finalizing, verify against the original photo:
 
         # 3. Format additional recommendations (trending + complementary)
         additional_recommendations = []
-
-        # Add trending products as styling suggestions
         if trending_products:
-            for tp in trending_products[:2]:  # Max 2 trending products
+            for tp in trending_products[:2]:
                 title = tp.get('title', 'Unknown')
                 additional_recommendations.append(f"- TRENDING: {title}")
+        additional_str = "\n".join(additional_recommendations) if additional_recommendations else ""
 
-        # Add AI-suggested complementary items based on style/color
-        if style_analysis:
-            style_name = style_analysis.get('style_name', '')
-            materials = style_analysis.get('materials', [])
-            if style_name:
-                additional_recommendations.append(f"- STYLE SUGGESTION: Add a {style_name}-inspired accent piece (throw pillow, small vase, or decorative object)")
-            if materials:
-                mat_str = ", ".join(materials[:2]) if isinstance(materials, list) else str(materials)
-                additional_recommendations.append(f"- MATERIAL SUGGESTION: Incorporate {mat_str} textures in props")
+        # 4. Build rich COLOR DIRECTION from color_analysis (or fallback to color_scheme)
+        color_direction = self._build_color_direction(color_analysis, color_scheme)
 
-        if color_scheme:
-            accent_color = color_scheme.get('accent', {}).get('name', '')
-            if accent_color:
-                additional_recommendations.append(f"- COLOR SUGGESTION: Add a small accent in {accent_color} tone")
+        # 5. Build rich STYLE DIRECTION from style_analysis
+        style_direction = self._build_style_direction(style_analysis)
 
-        additional_str = "\n".join(additional_recommendations) if additional_recommendations else "Use your design judgment to add 1-2 complementary styling props."
+        # 6. Build the COLOR & STYLE DESIGN DIRECTION section
+        design_direction_section = ""
+        if color_direction or style_direction:
+            design_direction_section = "\n### COLOR & STYLE DESIGN DIRECTION\n"
+            design_direction_section += "Weave these colors and style cues into EVERY change you make. Every item you add or replace must be consistent with this direction.\n"
+            if color_direction:
+                design_direction_section += f"\n**COLOR PALETTE (60-30-10 Rule)**\n{color_direction}\n"
+            if style_direction:
+                design_direction_section += f"\n**DESIGN STYLE**\n{style_direction}\n"
 
-        # 4. The "Iterative / Enhanced Surgical" Prompt - SMALL CHANGES WITH STYLING
+        # 7. Branch prompt behavior based on has_markers
+        if has_markers:
+            # --- MARKER-DRIVEN MODE ---
+            delta_budget = """**DELTA BUDGET (EXPANDED)**
+- You may change UP TO:
+  - 2-3 small anchor items (e.g., bedding + throw pillows, OR nightstand + lamp, OR rug + accent chair)
+  - Focus on items that work together as a cohesive upgrade
+- You may add UP TO:
+  - 3-4 styling props total (e.g., books, vases, plants, decorative objects)
+  - Props should be placed naturally throughout the visible area, not just next to changed items
+- You may NOT move large furniture positions (layout stays identical)
+- You may NOT replace ALL furniture at once - keep 60-70% of the room unchanged"""
+
+            step_a = f"""**Step A: Remove & Replace (Markers)**
+{changes_str}"""
+
+            step_c = f"""**Step C: Additional Styling Recommendations**
+{additional_str if additional_str else "Use your design judgment to add 1-2 complementary styling props that match the color & style direction above."}
+(Use these suggestions to enhance the room with complementary styling. Pick 1-2 that work well with Step A and B.)"""
+
+            extra_negative = ""
+
+        else:
+            # --- AUTONOMOUS UPLIFT MODE (no markers) ---
+            delta_budget = """**DELTA BUDGET (AUTONOMOUS UPLIFT — EXPANDED)**
+- You may change UP TO:
+  - 3-4 anchor items (e.g., bedding + throw pillows + nightstand lamp, OR rug + accent chair + side table)
+  - Focus on items that work together as a cohesive upgrade
+- You may add UP TO:
+  - 4-5 styling props total (e.g., books, vases, plants, throw blankets, decorative objects)
+  - Props should be placed naturally and DISTRIBUTED across the room
+- You may NOT move large furniture positions (layout stays identical)
+- You may NOT replace ALL furniture at once - keep 50-60% of the room unchanged"""
+
+            step_a = """**Step A: AUTONOMOUS DESIGN UPLIFT (No Markers — AI-Driven)**
+No specific markers were placed. You MUST proactively improve this room:
+
+1. **SCAN** the entire room and identify 3-5 items that would benefit most from an upgrade (e.g., dated bedding, bare nightstand, plain lamp, missing rug, empty wall space near furniture).
+2. **MINIMUM 3 distinct visible improvements** are REQUIRED. The room must look noticeably better.
+3. **Apply the color palette** across ALL changes — not just one accent pop. Multiple items should reflect the palette.
+4. **Apply the design style** coherently — materials, textures, proportions, and decor must match the style direction.
+5. **DISTRIBUTE changes** across the room — do NOT cluster all improvements in one corner. Spread upgrades across bed area, side surfaces, and visible floor/shelf space.
+6. **Prioritize high-impact swaps**: bedding/throws, lamp upgrades, nightstand styling, accent pillows, and decorative objects."""
+
+            step_c = """**Step C: Design Cohesion Check**
+Before finalizing, verify your autonomous upgrades:
+- Are at least 3 distinct improvements visible?
+- Do the changes reflect the color palette (not random colors)?
+- Do materials and textures match the design style?
+- Are improvements distributed across the room (not clustered)?
+- Does the room look noticeably better while keeping the same layout?"""
+
+            extra_negative = """- Do NOT make only 1-2 tiny changes. The MINIMUM is 3 visible, distributed improvements.
+- Do NOT ignore the color palette — every new item must use colors from the provided palette.
+- Do NOT add random style items — all additions must match the design style direction."""
+
+        # 8. Build priority order (conditional on design direction availability)
+        has_design_direction = bool(design_direction_section)
+        if has_design_direction:
+            priority_order = f"""1) CAMERA/GEOMETRY LOCK
+2) STRUCTURAL LOCKDOWN
+3) {"MARKERS + " if has_markers else ""}DELTA BUDGET
+4) COLOR & STYLE DESIGN DIRECTION
+5) PRODUCT REFERENCE MATCHING
+6) MICRO-STYLING PROTOCOL"""
+        else:
+            priority_order = f"""1) CAMERA/GEOMETRY LOCK
+2) STRUCTURAL LOCKDOWN
+3) {"MARKERS + " if has_markers else ""}DELTA BUDGET
+4) PRODUCT REFERENCE MATCHING
+5) MICRO-STYLING PROTOCOL"""
+
+        # 9. Assemble the full prompt
         prompt = f"""### ROLE & OBJECTIVE
 You are a High-End Virtual Stager and Architectural Retoucher.
 Your task is to perform an Enhanced Surgical Design Upgrade by EDITING the PROVIDED ROOM PHOTO (not re-generating a new view).
@@ -1560,12 +1692,7 @@ Goal: a polished "glow-up" that upgrades the room's value with targeted improvem
 
 ### PRIORITY ORDER (HARD RULES)
 If any instructions conflict, follow this order:
-1) CAMERA/GEOMETRY LOCK
-2) LIGHTING/EXPOSURE/WHITE BALANCE LOCK
-3) MARKERS (what to change) + DELTA BUDGET (how much can change)
-4) PRODUCT REFERENCE MATCHING
-5) ADDITIONAL STYLING RECOMMENDATIONS
-6) MICRO-STYLING PROTOCOL
+{priority_order}
 
 ### 1) CAMERA & GEOMETRY LOCK (ABSOLUTE PRIORITY)
 - Pixel alignment required: walls/windows/ceiling/background edges must match the original photo.
@@ -1588,19 +1715,11 @@ CRITICAL: Do NOT invent, add, or hallucinate any structural element not visible 
 - Do NOT paint walls, change flooring, or remove clutter unless markers explicitly instruct it.
 - Do NOT change time-of-day or lighting style; match original exposure + shadow hardness.
 
-### 3) ENHANCED ITERATIVE UPGRADE (EXPANDED DELTA BUDGET)
-This is still NOT a full revamp, but allows for a more complete styling upgrade.
+### 3) ENHANCED ITERATIVE UPGRADE
+This is still NOT a full revamp, but allows for a {"marker-driven" if has_markers else "proactive design"} upgrade.
 
-**DELTA BUDGET (EXPANDED)**
-- You may change UP TO:
-  - 2-3 small anchor items (e.g., bedding + throw pillows, OR nightstand + lamp, OR rug + accent chair)
-  - Focus on items that work together as a cohesive upgrade
-- You may add UP TO:
-  - 3-4 styling props total (e.g., books, vases, plants, decorative objects)
-  - Props should be placed naturally throughout the visible area, not just next to changed items
-- You may NOT move large furniture positions (layout stays identical)
-- You may NOT replace ALL furniture at once - keep 60-70% of the room unchanged
-
+{delta_budget}
+{design_direction_section}
 ### 4) SURGICAL INTEGRATION (Physics)
 - Contact shadows and ambient occlusion must match the existing floor.
 - Cast shadows must match the existing direction/hardness.
@@ -1613,16 +1732,13 @@ This is still NOT a full revamp, but allows for a more complete styling upgrade.
 - Add subtle "real-life" touches: a book, small plant, or decorative object where appropriate.
 
 ### 6) INPUT DATA CONTEXT
-**Step A: Remove & Replace (Markers)**
-{changes_str}
+{step_a}
 
 **Step B: Insert User-Selected Products**
 {products_str}
 (Match materials/colors of these products exactly to their reference images.)
 
-**Step C: Additional Styling Recommendations**
-{additional_str}
-(Use these suggestions to enhance the room with complementary styling. Pick 1-2 that work well with Step A and B.)
+{step_c}
 
 ### SPATIAL VERIFICATION (Self-Check Before Output)
 Before finalizing, verify against the original photo:
@@ -1642,9 +1758,127 @@ Before finalizing, verify against the original photo:
 - Do NOT recompose, crop, zoom, rotate, or change perspective.
 - Do NOT "upgrade" by moving the bed or changing layout.
 - Do NOT do a full redesign; respect the expanded but limited delta budget.
-- Do NOT exceed 3-4 styling props total.
 - Do NOT add walls, windows, doors, arches, columns, or any architectural element not in the original.
 - Do NOT change room dimensions or make the room appear larger or smaller.
-- Do NOT assume or infer structural features — only what is VISIBLE in the photo exists."""
+- Do NOT assume or infer structural features — only what is VISIBLE in the photo exists.
+{extra_negative}"""
 
         return prompt
+
+    def _build_color_direction(self, color_analysis: dict = None, color_scheme: dict = None) -> str:
+        """Build a rich color direction string from color_analysis or color_scheme fallback.
+
+        Returns a formatted string describing the full 60-30-10 palette, or empty string
+        if no color data is available.
+        """
+        if not color_analysis and not color_scheme:
+            return ""
+
+        lines = []
+
+        if color_analysis and isinstance(color_analysis, dict):
+            # Extract primary colors (60%)
+            primary_colors = color_analysis.get('primary_colors', [])
+            if primary_colors:
+                primaries = []
+                for c in primary_colors:
+                    if isinstance(c, dict):
+                        desc = c.get('description', '')
+                        hex_code = c.get('hex', '')
+                        primaries.append(f"{desc} ({hex_code})" if desc else hex_code)
+                if primaries:
+                    lines.append(f"PRIMARY (60%): {', '.join(primaries)}")
+
+            # Extract secondary colors (30%)
+            secondary_colors = color_analysis.get('secondary_colors', [])
+            if secondary_colors:
+                secondaries = []
+                for c in secondary_colors:
+                    if isinstance(c, dict):
+                        desc = c.get('description', '')
+                        hex_code = c.get('hex', '')
+                        secondaries.append(f"{desc} ({hex_code})" if desc else hex_code)
+                if secondaries:
+                    lines.append(f"SECONDARY (30%): {', '.join(secondaries)}")
+
+            # Extract accent colors (10%)
+            accent_colors = color_analysis.get('accent_colors', [])
+            if accent_colors:
+                accents = []
+                for c in accent_colors:
+                    if isinstance(c, dict):
+                        desc = c.get('description', '')
+                        hex_code = c.get('hex', '')
+                        accents.append(f"{desc} ({hex_code})" if desc else hex_code)
+                if accents:
+                    lines.append(f"ACCENT (10%): {', '.join(accents)}")
+
+            # Extract color assignments (element → color mapping)
+            assignments = color_analysis.get('color_assignments', [])
+            if assignments:
+                lines.append("\nELEMENT COLOR ASSIGNMENTS:")
+                for a in assignments:
+                    if isinstance(a, dict):
+                        element = a.get('element', '')
+                        color_name = a.get('color_name', '')
+                        color_hex = a.get('color_hex', '')
+                        finish = a.get('finish', '')
+                        assignment_line = f"  - {element}: {color_name} ({color_hex})"
+                        if finish:
+                            assignment_line += f" [{finish}]"
+                        lines.append(assignment_line)
+
+        elif color_scheme and isinstance(color_scheme, dict):
+            # Fallback: extract what we can from the simpler color_scheme
+            for role in ['primary', 'secondary', 'accent']:
+                color_data = color_scheme.get(role, {})
+                if isinstance(color_data, dict):
+                    name = color_data.get('name', '')
+                    hex_code = color_data.get('hex', '')
+                    if name or hex_code:
+                        lines.append(f"{role.upper()}: {name} ({hex_code})" if name else f"{role.upper()}: {hex_code}")
+                elif isinstance(color_data, str) and color_data:
+                    lines.append(f"{role.upper()}: {color_data}")
+
+        return "\n".join(lines)
+
+    def _build_style_direction(self, style_analysis: dict = None) -> str:
+        """Build a rich style direction string from style_analysis.
+
+        Returns a formatted string describing the design style, or empty string
+        if no style data is available.
+        """
+        if not style_analysis or not isinstance(style_analysis, dict):
+            return ""
+
+        lines = []
+
+        style_name = style_analysis.get('style_name', '')
+        if style_name:
+            lines.append(f"STYLE: {style_name}")
+
+        style_overview = style_analysis.get('style_overview', '')
+        if style_overview:
+            lines.append(f"OVERVIEW: {style_overview}")
+
+        materials = style_analysis.get('materials', [])
+        if materials and isinstance(materials, list):
+            lines.append(f"KEY MATERIALS: {', '.join(materials)}")
+
+        furniture_chars = style_analysis.get('furniture_characteristics', '')
+        if furniture_chars:
+            lines.append(f"FURNITURE: {furniture_chars}")
+
+        patterns = style_analysis.get('patterns_textures', '')
+        if patterns:
+            lines.append(f"PATTERNS & TEXTURES: {patterns}")
+
+        decor = style_analysis.get('decor_accessories', '')
+        if decor:
+            lines.append(f"DECOR & ACCESSORIES: {decor}")
+
+        anchor_pieces = style_analysis.get('anchor_pieces', [])
+        if anchor_pieces and isinstance(anchor_pieces, list):
+            lines.append(f"ANCHOR PIECES: {', '.join(anchor_pieces)}")
+
+        return "\n".join(lines)

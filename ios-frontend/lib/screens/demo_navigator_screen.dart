@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
 import '../providers/project_provider.dart';
-import '../providers/user_provider.dart';
 
 // Import all screens
 import 'home_screen.dart';
@@ -17,7 +16,6 @@ import 'confirm_selection_screen.dart';
 import 'confirm_inspiration_screen.dart';
 import 'analyzing_screen.dart';
 import 'discover_screen.dart';
-import 'cart_screen.dart';
 import 'saved_screen.dart';
 import 'profile_screen.dart';
 
@@ -35,7 +33,10 @@ class _DemoNavigatorScreenState extends State<DemoNavigatorScreen> {
     super.initState();
     // Ensure we have a demo project
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final projectProvider = Provider.of<ProjectProvider>(
+        context,
+        listen: false,
+      );
       if (projectProvider.currentProject == null) {
         projectProvider.createProject(context);
       }
@@ -69,29 +70,131 @@ class _DemoNavigatorScreenState extends State<DemoNavigatorScreen> {
           children: [
             // Main Flow Screens
             _buildSectionTitle('Main User Flow'),
-            _buildScreenTile('1. Home Screen', () => _navigateTo(context, const HomeScreen())),
-            _buildScreenTile('2. Upload Photo', () => _navigateTo(context, UploadPhotoContent(onBack: () => Navigator.pop(context), onConfirmSelection: () => Navigator.pop(context)))),
-            _buildScreenTile('3. Confirm Selection', () => _navigateTo(context, ConfirmSelectionContent(onBack: () => Navigator.pop(context), onSuccess: () => Navigator.pop(context)))),
-            _buildScreenTile('4. Choose Space', () => _navigateTo(context, ChooseSpaceContent(onBack: () => Navigator.pop(context), onContinue: () => Navigator.pop(context)))),
-            _buildScreenTile('5. Choose Items (Markers)', () => _navigateTo(context, ChooseItemsScreen(onBack: () => Navigator.pop(context), onContinue: () => Navigator.pop(context)))),
-            _buildScreenTile('6. Measure Room', () => _navigateTo(context, MeasureRoomScreen(onBack: () => Navigator.pop(context), onContinue: () => Navigator.pop(context)))),
-            _buildScreenTile('7. Upload Inspiration', () => _navigateTo(context, UploadInspirationContent(onBack: () => Navigator.pop(context), onConfirmSelection: () => Navigator.pop(context), onSkipToApproach: () => Navigator.pop(context)))),
-            _buildScreenTile('8. Confirm Inspiration', () => _navigateTo(context, ConfirmInspirationContent(onBack: () => Navigator.pop(context), onSuccess: () => Navigator.pop(context)))),
-            _buildScreenTile('9. Choose Approach', () => _navigateTo(context, ChooseApproachContent(onBack: () => Navigator.pop(context), onContinue: () => Navigator.pop(context)))),
-            _buildScreenTile('10. Preferred Stores', () => _navigateTo(context, PreferredStoresContent(onBack: () => Navigator.pop(context), onContinue: () => Navigator.pop(context)))),
-            _buildScreenTile('11. Analyzing', () => _navigateTo(context, AnalyzingScreen(onBack: () => Navigator.pop(context), onComplete: () => Navigator.pop(context)))),
-            
+            _buildScreenTile(
+              '1. Home Screen',
+              () => _navigateTo(context, const HomeScreen()),
+            ),
+            _buildScreenTile(
+              '2. Upload Photo',
+              () => _navigateTo(
+                context,
+                UploadPhotoContent(
+                  onBack: () => Navigator.pop(context),
+                  onConfirmSelection: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '3. Confirm Selection',
+              () => _navigateTo(
+                context,
+                ConfirmSelectionContent(
+                  onBack: () => Navigator.pop(context),
+                  onSuccess: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '4. Choose Space',
+              () => _navigateTo(
+                context,
+                ChooseSpaceContent(
+                  onBack: () => Navigator.pop(context),
+                  onContinue: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '5. Choose Items (Markers)',
+              () => _navigateTo(
+                context,
+                ChooseItemsScreen(
+                  onBack: () => Navigator.pop(context),
+                  onContinue: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '6. Measure Room',
+              () => _navigateTo(
+                context,
+                MeasureRoomScreen(
+                  onBack: () => Navigator.pop(context),
+                  onContinue: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '7. Upload Inspiration',
+              () => _navigateTo(
+                context,
+                UploadInspirationContent(
+                  onBack: () => Navigator.pop(context),
+                  onConfirmSelection: () => Navigator.pop(context),
+                  onSkipToApproach: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '8. Confirm Inspiration',
+              () => _navigateTo(
+                context,
+                ConfirmInspirationContent(
+                  onBack: () => Navigator.pop(context),
+                  onSuccess: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '9. Choose Approach',
+              () => _navigateTo(
+                context,
+                ChooseApproachContent(
+                  onBack: () => Navigator.pop(context),
+                  onContinue: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '10. Preferred Stores',
+              () => _navigateTo(
+                context,
+                PreferredStoresContent(
+                  onBack: () => Navigator.pop(context),
+                  onContinue: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+            _buildScreenTile(
+              '11. Analyzing',
+              () => _navigateTo(
+                context,
+                AnalyzingScreen(
+                  onBack: () => Navigator.pop(context),
+                  onComplete: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+
             const SizedBox(height: 24),
-            
+
             // Tab Navigation Screens
             _buildSectionTitle('Tab Navigation Screens'),
-            _buildScreenTile('Discover', () => _navigateTo(context, const DiscoverScreen())),
-            _buildScreenTile('Cart', () => _navigateTo(context, const CartScreen())),
-            _buildScreenTile('Saved', () => _navigateTo(context, const SavedScreen())),
-            _buildScreenTile('Profile', () => _navigateTo(context, const ProfileScreen())),
-            
+            _buildScreenTile(
+              'Discover',
+              () => _navigateTo(context, const DiscoverScreen()),
+            ),
+            _buildScreenTile(
+              'Saved',
+              () => _navigateTo(context, const SavedScreen()),
+            ),
+            _buildScreenTile(
+              'Profile',
+              () => _navigateTo(context, const ProfileScreen()),
+            ),
+
             const SizedBox(height: 24),
-            
+
             // Status info
             _buildSectionTitle('App Status'),
             Container(
@@ -114,7 +217,7 @@ class _DemoNavigatorScreenState extends State<DemoNavigatorScreen> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    '• Discover, Cart, Saved are placeholder screens\n'
+                    '• Discover and Saved are placeholder screens\n'
                     '• Results/Recommendations screen not yet implemented\n'
                     '• AR Measurement is commented out\n'
                     '• Demo mode bypasses all API calls',
@@ -157,7 +260,9 @@ class _DemoNavigatorScreenState extends State<DemoNavigatorScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            border: Border.all(color: AppTheme.grayColor.withValues(alpha: 0.3)),
+            border: Border.all(
+              color: AppTheme.grayColor.withValues(alpha: 0.3),
+            ),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
@@ -172,7 +277,11 @@ class _DemoNavigatorScreenState extends State<DemoNavigatorScreen> {
                   ),
                 ),
               ),
-              const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.grayColor),
+              const Icon(
+                Icons.arrow_forward_ios,
+                size: 16,
+                color: AppTheme.grayColor,
+              ),
             ],
           ),
         ),
@@ -183,10 +292,12 @@ class _DemoNavigatorScreenState extends State<DemoNavigatorScreen> {
   void _navigateTo(BuildContext context, Widget screen) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => Scaffold(
-        backgroundColor: AppTheme.backgroundColor,
-        body: SafeArea(child: screen),
-      )),
+      MaterialPageRoute(
+        builder: (context) => Scaffold(
+          backgroundColor: AppTheme.backgroundColor,
+          body: SafeArea(child: screen),
+        ),
+      ),
     );
   }
 }

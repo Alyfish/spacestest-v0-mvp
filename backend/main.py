@@ -30,6 +30,7 @@ from background_tasks import (
 )
 from job_reaper import job_reaper
 from supabase_client import is_supabase_configured
+from push_notifications import register_job_ready_notification
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
@@ -117,6 +118,12 @@ from models import (
     ProcessFurnitureSelectionResponse,
     # URL Normalizer Models
     NormalizeURLsRequest,
+    # Push notification subscription models
+    NotifyWhenReadyRequest,
+    NotifyWhenReadyResponse,
+    # Lightweight summaries
+    ProjectListItem,
+    ProjectSummariesResponse,
 )
 
 load_dotenv()
@@ -556,6 +563,14 @@ async def create_project(user: AuthenticatedUser = Depends(get_current_user)):
     return ProjectCreateResponse(project_id=project_id, status=project["status"])
 
 
+@app.get("/projects/summaries", response_model=ProjectSummariesResponse)
+async def get_project_summaries(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get lightweight project summaries for the saved spaces list view."""
+    summaries = data_manager.get_project_summaries(user_id=user.id)
+    items = [ProjectListItem(**s) for s in summaries]
+    return ProjectSummariesResponse(projects=items, total_count=len(items))
+
+
 @app.get("/projects", response_model=ProjectsListResponse)
 async def get_all_projects(user: AuthenticatedUser = Depends(get_current_user)):
     """Get all projects for the authenticated user"""
@@ -707,7 +722,7 @@ async def select_project_space_type(
 
 @app.post("/projects/{project_id}/improvement-mode", response_model=ImprovementModeResponse)
 async def set_improvement_mode(project_id: str, request: ImprovementModeRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    """Set the improvement mode for a project (iterative or complete_revamp)"""
+    """Set the improvement mode for a project (iterative, complete_revamp, or inspiration)"""
     # Verify project ownership first
     data_manager.get_project(project_id, user_id=user.id)
 
@@ -990,11 +1005,16 @@ async def generate_inspiration_redesign(
         and len(context.inspiration_images) > 0
     )
 
+    has_improvement_markers = bool(context.improvement_markers) and len(context.improvement_markers) > 0
+    is_iterative = context.improvement_mode == "iterative"
+    allow_marker_only = is_iterative and has_improvement_markers
+
     if (
         not use_stub
         and not has_inspiration_recs
         and not has_product_recs
         and not has_inspiration_images
+        and not allow_marker_only
     ):
         logger.warning(
             "Project has no inspiration images, inspiration recs, or product recs",
@@ -1010,6 +1030,15 @@ async def generate_inspiration_redesign(
             status_code=400,
             detail="Project must have inspiration images, inspiration recommendations, or product recommendations first.",
         )
+
+    logger.info("Inspiration redesign validation passed", extra={
+        "project_id": project_id,
+        "improvement_mode": context.improvement_mode,
+        "has_product_recs": has_product_recs,
+        "has_improvement_markers": has_improvement_markers,
+        "marker_count": len(context.improvement_markers) if context.improvement_markers else 0,
+        "allow_marker_only": allow_marker_only,
+    })
 
     # Create job in Supabase (idempotent)
     job_id = await job_manager.create_job(
@@ -2397,6 +2426,7 @@ async def analyze_furniture_batch(
         )
 
     try:
+        _batch_start = time.perf_counter()
         # Build singleflight key including image_id, mode, and selections hash
         image_url = ""
         if hasattr(data_manager, "_get_image_url"):
@@ -2425,6 +2455,22 @@ async def analyze_furniture_batch(
             key=sf_key,
             compute_fn=_compute,
             ttl=300,
+        )
+
+        _batch_total_ms = round((time.perf_counter() - _batch_start) * 1000, 2)
+        logger.info(
+            f"PERF_SUMMARY analyze_furniture_batch mode={req.mode} "
+            f"selections={len(req.selections)} total={_batch_total_ms:.0f}ms",
+            extra={
+                "project_id": project_id,
+                "extra_data": {
+                    "type": "perf_summary",
+                    "job_type": f"analyze_furniture_batch_{req.mode}",
+                    "total_ms": _batch_total_ms,
+                    "selection_count": len(req.selections),
+                    "mode": req.mode,
+                },
+            },
         )
 
         return BatchFurnitureAnalysisResponse(
@@ -3261,6 +3307,77 @@ async def cancel_project_job(
         "cancelled": cancelled,
         "message": "Job cancelled" if cancelled else "Job already completed or cancelled",
     }
+
+
+@app.post(
+    "/projects/{project_id}/jobs/{job_id}/notify-when-ready",
+    response_model=NotifyWhenReadyResponse,
+)
+async def subscribe_job_ready_notification(
+    project_id: str,
+    job_id: str,
+    payload: NotifyWhenReadyRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Register one-time push notification for a specific in-flight job."""
+    # Verify project ownership
+    data_manager.get_project(project_id, user_id=user.id)
+
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    if job.project_id != project_id:
+        raise HTTPException(404, "Job not found for this project")
+
+    if job.user_id and job.user_id != user.id:
+        raise HTTPException(403, "Not authorized to subscribe for this job")
+
+    if job.status == "done":
+        return NotifyWhenReadyResponse(
+            project_id=project_id,
+            job_id=job_id,
+            status="already_done",
+            message="Your design is already ready.",
+        )
+
+    if job.status in ("error", "cancelled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Job is no longer active",
+        )
+
+    try:
+        await asyncio.to_thread(
+            register_job_ready_notification,
+            job_id=job_id,
+            project_id=project_id,
+            user_id=user.id,
+            device_token=payload.device_token,
+            platform=payload.platform,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            f"Failed to register notify-when-ready subscription: {e}",
+            extra={
+                "project_id": project_id,
+                "job_id": job_id,
+                "user_id": user.id,
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to register notification request",
+        )
+
+    return NotifyWhenReadyResponse(
+        project_id=project_id,
+        job_id=job_id,
+        status="registered",
+        message="We will notify you when your design is ready.",
+    )
 
 
 if __name__ == "__main__":

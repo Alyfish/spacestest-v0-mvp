@@ -95,6 +95,90 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> getProjects(String authToken) async {
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.getProject}',
+      );
+
+      AppLogger.debug('Fetching all projects');
+
+      final response = await http.get(
+        url,
+        headers: ApiConstants.authHeaders(authToken),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        AppLogger.debug(
+          'Projects response keys: ${data.keys.toList()}, '
+          'projects type: ${data['projects']?.runtimeType}',
+        );
+        return data;
+      } else {
+        AppLogger.error(
+          'Failed to get projects: ${response.statusCode} - ${response.body}',
+        );
+        throw Exception('Failed to get projects: ${response.statusCode}');
+      }
+    } catch (e) {
+      final enrichedError = _maybeEnrichLoopbackConnectionError(e);
+      AppLogger.error('Error getting projects', enrichedError);
+      if (identical(enrichedError, e)) rethrow;
+      throw enrichedError;
+    }
+  }
+
+  static Future<Map<String, dynamic>> getProjectSummaries(
+    String authToken,
+  ) async {
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.getProjectSummaries}',
+      );
+
+      final response = await http.get(
+        url,
+        headers: ApiConstants.authHeaders(authToken),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      } else {
+        throw Exception(
+          'Failed to get project summaries: ${response.statusCode}',
+        );
+      }
+    } catch (e) {
+      final enrichedError = _maybeEnrichLoopbackConnectionError(e);
+      AppLogger.error('Error getting project summaries', enrichedError);
+      if (identical(enrichedError, e)) rethrow;
+      throw enrichedError;
+    }
+  }
+
+  static Future<void> deleteProject(String projectId, String authToken) async {
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.deleteProject}/$projectId',
+      );
+
+      final response = await http.delete(
+        url,
+        headers: ApiConstants.authHeaders(authToken),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to delete project: ${response.statusCode}');
+      }
+    } catch (e) {
+      final enrichedError = _maybeEnrichLoopbackConnectionError(e);
+      AppLogger.error('Error deleting project', enrichedError);
+      if (identical(enrichedError, e)) rethrow;
+      throw enrichedError;
+    }
+  }
+
   static Future<Map<String, dynamic>> getProject(
     String projectId,
     String authToken,
@@ -1053,7 +1137,7 @@ class ApiService {
 
       final response = await http
           .post(url, headers: headers)
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -1094,7 +1178,7 @@ class ApiService {
 
       final response = await http
           .post(url, headers: headers)
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -1187,6 +1271,50 @@ class ApiService {
       }
     } catch (e) {
       AppLogger.error('getJobStatus timeout/error for job=$jobId', e);
+      rethrow;
+    }
+  }
+
+  /// Register for a one-time push when a generation job is ready.
+  static Future<Map<String, dynamic>> notifyWhenReady(
+    String projectId,
+    String jobId,
+    String authToken, {
+    required String deviceToken,
+    required String platform,
+  }) async {
+    _requireProjectId(projectId);
+    try {
+      final path = ApiConstants.withProjectAndJobId(
+        ApiConstants.notifyWhenReady,
+        projectId,
+        jobId,
+      );
+      final url = Uri.parse('${ApiConstants.baseUrl}$path');
+      final response = await http
+          .post(
+            url,
+            headers: ApiConstants.authHeaders(authToken),
+            body: jsonEncode({
+              'device_token': deviceToken,
+              'platform': platform,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+
+      AppLogger.error(
+        'Failed to register notify-when-ready: '
+        '${response.statusCode} - ${response.body}',
+      );
+      throw Exception(
+        'Failed to register notify-when-ready: ${response.statusCode}',
+      );
+    } catch (e) {
+      AppLogger.error('Error registering notify-when-ready', e);
       rethrow;
     }
   }
