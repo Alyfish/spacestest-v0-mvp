@@ -234,6 +234,84 @@ Iterative Dream Space output was showing letterboxed composition instead of fill
 
 ---
 
+### 2026-02-21: Launch Hardening Pass (Backend Security + JSON Parity + iOS Provider/Test Contract)
+
+#### Scope
+- In scope:
+  - `backend/`
+  - `ios-frontend/`
+- Out of scope:
+  - `frontend/` lint debt
+  - RevenueCat gate enablement behavior
+  - localhost API default changes
+
+#### What Was Implemented
+
+1. **Backend CORS hardening** (`backend/main.py`)
+- Added env-driven CORS origin parsing:
+  - `CORS_ALLOW_ORIGINS` (comma-separated)
+  - `CORS_ALLOW_CREDENTIALS` (bool, default `true`)
+- Added safety guard:
+  - If `*` is configured and credentials are enabled, credentials are forced off with a warning.
+- Middleware now uses parsed env config instead of hardcoded wildcard defaults.
+
+2. **Backend 5xx detail sanitization** (`backend/main.py`)
+- `http_exception_handler` now sanitizes all `HTTPException` responses with `status_code >= 500` to:
+  - `"An internal error occurred. Please try again later."`
+- Original detail is still logged server-side for debugging/correlation.
+
+3. **Backend traceback print cleanup** (`backend/main.py`)
+- Removed direct stdout `print(...)` traceback emission in product-selection failure path.
+- Kept structured logger output with `exc_info=True`.
+
+4. **JSON DataManager parity with tests/async interface** (`backend/data_manager.py`)
+- In `search_products_for_recommendations(...)`, when request has >2 recommendations:
+  - now uses first two in request order (`recommendations[:2]`)
+  - no auto re-ranking in this path.
+- Added async compatibility wrapper:
+  - `search_products_for_recommendations_async(project_id, recommendations, app_state)`
+  - delegates to sync implementation via `asyncio.to_thread(...)`
+  - accepts `app_state` for interface parity with `SupabaseDataManager`.
+
+5. **iOS UserProvider API restoration** (`ios-frontend/lib/providers/user_provider.dart`)
+- Added provider error state:
+  - `_errorMessage`
+  - `errorMessage` getter
+- Added `signInWithApple()` mirroring Google flow via `SupabaseService.signInWithApple()`.
+- Both sign-in methods now:
+  - clear `_errorMessage` before attempt
+  - set `_errorMessage` on failure
+  - preserve existing auth-state transitions.
+
+6. **iOS test override signature parity** (`ios-frontend/test/providers/project_provider_furniture_prefetch_test.dart`)
+- Updated overrides to match provider method signatures with named params:
+  - `maxAttempts`
+  - `timeout` (prefetch path)
+- Applied to all affected test provider subclasses.
+
+7. **Environment template update** (`env.example`)
+- Added:
+  - `CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`
+  - `CORS_ALLOW_CREDENTIALS=true`
+
+#### Files Modified
+- `backend/main.py`
+- `backend/data_manager.py`
+- `ios-frontend/lib/providers/user_provider.dart`
+- `ios-frontend/test/providers/project_provider_furniture_prefetch_test.dart`
+- `env.example`
+
+#### Verification Results (2026-02-21)
+1. `cd backend && uv run pytest` — **passed** (`92 passed, 15 warnings`).
+2. `cd ios-frontend && flutter analyze` — **no hard `error` diagnostics**; command still non-zero due existing repo `info/warning` lint baseline.
+3. `cd ios-frontend && flutter test` — **passed** (`All tests passed`).
+4. `cd ios-frontend && flutter build ios --simulator` — **passed** (`Built Runner.app`).
+
+#### Operational Note
+- A direct runtime mini-probe that imports `backend/main.py` in this environment can trigger CLIP startup/model fetch attempts and stall under restricted network. This does not affect the validated code-path changes above; verification is covered by tests/builds and source-level handler/middleware updates.
+
+---
+
 ## 2. OVERALL PROJECT STRUCTURE
 
 ```
@@ -5842,3 +5920,135 @@ Three UX parity gaps remained across generation flows:
 
 - `ios-frontend/lib/screens/cart_screen.dart` was referenced in earlier planning notes but does not exist in this codebase snapshot.
 - Settings icon cleanup was applied across all currently present no-op header instances in `ios-frontend/lib/screens/`.
+
+---
+
+## Railway Backend Deployment Prep (2026-02-21)
+
+### Goal
+
+Prepare backend for Railway deployment without changing feature behavior.
+
+### Files Added
+
+| File | Purpose |
+|------|---------|
+| `backend/railway.json` | Railway config-as-code for build/deploy settings |
+| `backend/RAILWAY_DEPLOY.md` | Operator runbook with exact Railway setup steps |
+| `backend/scripts/railway_smoke_check.sh` | Post-deploy health check helper for Railway domain |
+
+### Files Updated
+
+| File | Change |
+|------|--------|
+| `backend/claude_client.py` | Added env fallback: `ANTHROPIC_API_KEY` or legacy `CLAUDE_API_KEY` |
+| `env.example` | Added production-oriented backend env template (Supabase, CORS, AI/search providers) |
+
+### Railway Config Decisions
+
+1. Start command uses single worker:
+   - `python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1`
+2. Healthcheck path:
+   - `/health`
+3. Restart policy:
+   - `ON_FAILURE` with max retries `10`
+4. Watch patterns scoped to backend paths to avoid unnecessary redeploy triggers from unrelated monorepo changes.
+
+### Deployment Notes
+
+1. Service root directory must be `backend`.
+2. Config-as-code path should be set to `/backend/railway.json`.
+3. iOS production runtime should use:
+   - `--dart-define=API_BASE_URL=https://<railway-domain>/api`
+
+---
+
+## Freemium Paywall System
+
+### Architecture Overview
+
+The freemium paywall uses a **credit_transactions** table in Supabase to track usage. Each billable action inserts a debit row; enforcement counts those rows against hard-coded limits.
+
+| Transaction Type | Trigger | Limit Constant |
+|---|---|---|
+| `generation_debit` | `POST /projects` (create project) | `FREE_GENERATION_LIMIT = 5` |
+| `redesign_debit` | `POST /projects/{id}/retry_redesign` | `FREE_ITERATION_LIMIT = 2` |
+
+Rows are keyed for idempotency:
+- **generation_debit**: one per `(user_id, project_id, transaction_type)` — creating the same project twice won't double-debit.
+- **redesign_debit**: one per `(user_id, project_id, transaction_type, description="retry:{attempt_id}")` — the frontend sends a unique `attempt_id` (UUID) per retry tap.
+
+### Backend Enforcement Flow
+
+1. **`_get_user_usage(user_id)`** (`backend/main.py`) counts `generation_debit` and `redesign_debit` rows for the user. If Supabase is not configured, it logs an `ERROR` and returns zeros (fail-open, but loudly flagged).
+2. **`POST /projects`** checks `generations_used >= FREE_GENERATION_LIMIT` → returns HTTP 402 with `{"code": "PAYWALL_REQUIRED"}`.
+3. **`POST /projects/{id}/retry_redesign`** checks `iterations_used >= FREE_ITERATION_LIMIT` → returns HTTP 402 with `{"code": "PAYWALL_REQUIRED"}`.
+4. **`GET /usage`** returns current counts, limits, and remaining credits (no `/api` prefix duplication — the router already mounts under `/api`).
+
+The `attempt_id` field on retry requests is validated to be non-empty on the backend. An empty string would produce a `retry:` description that breaks idempotency, so the server rejects it with HTTP 400.
+
+### Frontend Enforcement Flow
+
+The frontend enforces limits **before** hitting the server (optimistic check) and also handles the 402 response (server-side safety net).
+
+#### Optimistic (pre-request) checks
+
+- **`SubscriptionProvider.ensureCanGenerate(source:)`** — calls `GET /usage`, checks remaining generations > 0. If not, calls `showPaywall()` and returns `false`.
+- **`SubscriptionProvider.ensureCanIterate(source:)`** — same pattern for iterations.
+
+These are called before `createProject` (generation) and before navigating to the describe-changes screen (iteration).
+
+#### Server 402 handling
+
+- **`ProjectProvider.createProject(context)`** — catches 402 → throws `PaywallRequiredException`.
+- **`ApiService` retry methods** — catch 402 → throw `PaywallRequiredException`.
+- **`create_flow_screen.dart`** — catches `PaywallRequiredException` at each call site:
+  - In the restart callback → shows paywall via `showPaywall(source: 'server_402_restart')`.
+  - In the analyzing `asyncWork` callback → shows paywall, sets status to idle, preserves the existing generated image.
+
+#### `PaywallRequiredException`
+
+A custom exception defined in `api_service.dart`, thrown when the server returns HTTP 402. This lets call sites distinguish paywall blocks from generic errors.
+
+### `/usage` Endpoint
+
+`GET /usage` (mounted at `/api/usage` by the router prefix) returns:
+```json
+{
+  "generations_used": 3,
+  "iterations_used": 1,
+  "limits": { "free_generations": 5, "free_iterations": 2 },
+  "remaining": { "generations": 2, "iterations": 1 }
+}
+```
+The frontend fetches this on app launch and before each billable action to drive UI state (e.g. showing remaining credits).
+
+### Restart Creates New Project
+
+When the user taps "Restart" on the DreamSpace screen:
+1. `ensureCanGenerate` runs the optimistic check.
+2. `projectProvider.createProject(context)` creates a fresh project (debiting a generation credit).
+3. `Navigator.of(context).pushReplacement(...)` replaces the current screen with a new `CreateFlowScreen`, ensuring the old project's state is fully discarded.
+4. A `_isRestarting` guard flag prevents double-tap from firing two `createProject` calls.
+
+### 402 Handling in Analyzing AsyncWork
+
+When the retry/redesign call returns 402 during the analyzing phase:
+- The `PaywallRequiredException` is caught.
+- The project status is set back to `idle`.
+- The previously generated image (`_generatedImageUrl`) is preserved — the user sees their original design, not a blank screen.
+- The paywall sheet is shown.
+
+### Files Involved
+
+| File | Role |
+|---|---|
+| `backend/main.py` | Usage counting, 402 enforcement, debit insertion, `attempt_id` validation |
+| `backend/models.py` | `RetryRedesignRequest` Pydantic model with `attempt_id` field |
+| `ios-frontend/lib/providers/subscription_provider.dart` | `ensureCanGenerate`, `ensureCanIterate`, `showPaywall`, usage caching |
+| `ios-frontend/lib/providers/project_provider.dart` | `createProject` with 402 → `PaywallRequiredException` |
+| `ios-frontend/lib/services/api_service.dart` | HTTP calls, `PaywallRequiredException` class, 402 detection |
+| `ios-frontend/lib/screens/create_flow_screen.dart` | Restart guard, 402 catch in restart + analyzing, `attempt_id` generation |
+| `ios-frontend/lib/screens/dream_space_screen.dart` | Retry/restart UI triggers |
+| `ios-frontend/lib/screens/home_screen.dart` | Initial usage fetch on launch |
+| `ios-frontend/lib/screens/main_navigation_screen.dart` | Usage-aware navigation |

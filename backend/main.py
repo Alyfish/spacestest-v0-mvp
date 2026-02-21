@@ -29,7 +29,7 @@ from background_tasks import (
     execute_search_recommendations,
 )
 from job_reaper import job_reaper
-from supabase_client import is_supabase_configured
+from supabase_client import is_supabase_configured, get_supabase_client
 from push_notifications import register_job_ready_notification
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -133,6 +133,38 @@ logger = setup_logging()
 
 # Job TTL for cleanup (30 minutes)
 JOB_TTL_MINUTES = 30
+
+# Freemium usage limits
+FREE_GENERATION_LIMIT = 5
+FREE_ITERATION_LIMIT = 2
+
+
+def _get_user_usage(user_id: str) -> dict:
+    """Count generation and iteration debits from credit_transactions."""
+    if not is_supabase_configured():
+        logger.error("Supabase not configured — freemium enforcement disabled, returning zero usage")
+        return {"generations_used": 0, "iterations_used": 0}
+    sb = get_supabase_client()
+    gen_result = (
+        sb.table("credit_transactions")
+        .select("id", count="exact")
+        .eq("user_id", user_id)
+        .eq("transaction_type", "generation_debit")
+        .execute()
+    )
+    iter_result = (
+        sb.table("credit_transactions")
+        .select("id", count="exact")
+        .eq("user_id", user_id)
+        .eq("transaction_type", "redesign_debit")
+        .execute()
+    )
+    return {
+        "generations_used": gen_result.count or 0,
+        "iterations_used": iter_result.count or 0,
+    }
+
+
 _E2E_STUB_PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMBAAOb5QkAAAAASUVORK5CYII="
 )
@@ -232,6 +264,24 @@ def _e2e_stub_trending(project_id: str):
     }
 
 
+def _parse_env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_cors_origins(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    origins: List[str] = []
+    for origin in raw.split(","):
+        normalized = origin.strip().rstrip("/")
+        if normalized:
+            origins.append(normalized)
+    return origins
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan: Initialize shared resources at startup, cleanup at shutdown."""
@@ -316,6 +366,21 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete")
 
 
+_DEFAULT_CORS_ALLOW_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+_CORS_ALLOW_ORIGINS = _parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS")) or _DEFAULT_CORS_ALLOW_ORIGINS
+_CORS_ALLOW_CREDENTIALS = _parse_env_bool("CORS_ALLOW_CREDENTIALS", True)
+if "*" in _CORS_ALLOW_ORIGINS and _CORS_ALLOW_CREDENTIALS:
+    logger.warning(
+        "CORS_ALLOW_ORIGINS contains '*' with credentials enabled; forcing allow_credentials=False",
+    )
+    _CORS_ALLOW_CREDENTIALS = False
+
+
 app = FastAPI(
     title="AI Interior Design Agent",
     version="1.0.0",
@@ -326,8 +391,8 @@ app = FastAPI(
 # Add CORS middleware for frontend communication
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_CORS_ALLOW_ORIGINS,
+    allow_credentials=_CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -495,12 +560,23 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     """
     Handle FastAPI HTTPException with consistent JSON format.
     """
+    message = exc.detail
+    if exc.status_code >= 500:
+        logger.error(
+            "HTTPException %s at %s %s: %s",
+            exc.status_code,
+            request.method,
+            request.url.path,
+            exc.detail,
+        )
+        message = "An internal error occurred. Please try again later."
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": {
                 "code": "HTTP_ERROR",
-                "message": exc.detail,
+                "message": message,
                 "category": "http",
             }
         },
@@ -553,11 +629,68 @@ async def root():
     return {"message": "Welcome to AI Interior Design Agent API"}
 
 
+@app.get("/usage")
+async def get_usage(user: AuthenticatedUser = Depends(get_current_user)):
+    """Return freemium usage counts and remaining limits for the authenticated user."""
+    usage = _get_user_usage(user.id)
+    return {
+        **usage,
+        "limits": {
+            "free_generations": FREE_GENERATION_LIMIT,
+            "free_iterations": FREE_ITERATION_LIMIT,
+        },
+        "remaining": {
+            "generations": max(0, FREE_GENERATION_LIMIT - usage["generations_used"]),
+            "iterations": max(0, FREE_ITERATION_LIMIT - usage["iterations_used"]),
+        },
+    }
+
+
 @app.post("/projects", response_model=ProjectCreateResponse)
 async def create_project(user: AuthenticatedUser = Depends(get_current_user)):
     """Create a new project"""
     logger.info("Received request to create new project", extra={"user_id": user.id})
+
+    # Server-side enforcement (safety net for free-tier limits)
+    try:
+        usage = _get_user_usage(user.id)
+        if usage["generations_used"] >= FREE_GENERATION_LIMIT:
+            raise HTTPException(
+                status_code=402,
+                detail={"code": "PAYWALL_REQUIRED", "message": "Free generation limit reached"},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Usage check failed, allowing through", exc_info=True)
+
     project_id = data_manager.create_project(user_id=user.id)
+
+    # Debit generation (idempotent: one debit per project)
+    try:
+        sb = get_supabase_client()
+        existing = (
+            sb.table("credit_transactions")
+            .select("id")
+            .eq("user_id", user.id)
+            .eq("project_id", project_id)
+            .eq("transaction_type", "generation_debit")
+            .execute()
+        )
+        if not existing.data:
+            sb.table("credit_transactions").insert(
+                {
+                    "user_id": user.id,
+                    "amount": -1,
+                    "balance_after": 0,
+                    "transaction_type": "generation_debit",
+                    "project_id": project_id,
+                    "description": f"Generation flow started: {project_id}",
+                }
+            ).execute()
+    except Exception:
+        logger.warning("Failed to record generation debit", exc_info=True)
+
     project = data_manager.get_project(project_id, user_id=user.id)
 
     return ProjectCreateResponse(project_id=project_id, status=project["status"])
@@ -1088,6 +1221,20 @@ async def retry_redesign(project_id: str, request: RetryRedesignRequest, user: A
         "API request: retry redesign",
         extra={"project_id": project_id, "feedback": request.feedback[:100], "user_id": user.id},
     )
+
+    # Server-side enforcement (safety net for free-tier limits)
+    try:
+        usage = _get_user_usage(user.id)
+        if usage["iterations_used"] >= FREE_ITERATION_LIMIT:
+            raise HTTPException(
+                status_code=402,
+                detail={"code": "PAYWALL_REQUIRED", "message": "Free iteration limit reached"},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Usage check failed in retry_redesign, allowing through", exc_info=True)
+
     project = data_manager.get_project(project_id, user_id=user.id)
 
     if not project:
@@ -1110,6 +1257,38 @@ async def retry_redesign(project_id: str, request: RetryRedesignRequest, user: A
             },
         )
         result = data_manager.retry_inspiration_redesign(project_id, request.feedback)
+
+        # Debit iteration (idempotent via attempt_id)
+        try:
+            sb = get_supabase_client()
+            attempt_key = request.attempt_id
+            if not attempt_key or not attempt_key.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "BAD_REQUEST", "message": "attempt_id is required and cannot be empty"},
+                )
+            existing = (
+                sb.table("credit_transactions")
+                .select("id")
+                .eq("user_id", user.id)
+                .eq("project_id", project_id)
+                .eq("transaction_type", "redesign_debit")
+                .eq("description", f"retry:{attempt_key}")
+                .execute()
+            )
+            if not existing.data:
+                sb.table("credit_transactions").insert(
+                    {
+                        "user_id": user.id,
+                        "amount": -1,
+                        "balance_after": 0,
+                        "transaction_type": "redesign_debit",
+                        "project_id": project_id,
+                        "description": f"retry:{attempt_key}",
+                    }
+                ).execute()
+        except Exception:
+            logger.warning("Failed to record retry debit", exc_info=True)
 
         logger.info(
             "Retry redesign completed successfully",
@@ -2184,13 +2363,10 @@ async def select_product_for_generation(
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        print(f"❌ PRODUCT SELECTION ERROR: {str(e)}")
-        print(f"❌ FULL TRACEBACK:\n{error_details}")
-        logger.error(f"Product selection failed for project {project_id}: {str(e)}")
-        logger.error(f"Full traceback: {error_details}")
+        logger.error(
+            f"Product selection failed for project {project_id}: {str(e)}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to select product: {str(e)}"
         )

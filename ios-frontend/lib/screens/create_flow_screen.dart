@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import '../providers/project_provider.dart';
+import '../providers/subscription_provider.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
@@ -99,6 +100,7 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
   bool _pendingNeedsColorSave = false;
   bool _pendingNeedsStyleSave = false;
   final Set<String> _notifyPromptShownJobIds = <String>{};
+  bool _isRestarting = false;
 
   // PERF timing
   int? _flowStartMs;
@@ -845,28 +847,38 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                 _pendingRetryFeedback != null &&
                 _pendingRetryFeedback!.trim().isNotEmpty;
 
-            final success =
-                await (isRetry
-                        ? provider.retryDesignImage(
-                            _pendingRetryFeedback!,
-                            onRetrying: () =>
-                                _analyzingSubtitleNotifier?.value =
-                                    'Reconnecting...',
-                          )
-                        : provider.generateDesignImage(
-                            onRetrying: () =>
-                                _analyzingSubtitleNotifier?.value =
-                                    'Reconnecting...',
-                          ))
-                    .timeout(
-                      const Duration(seconds: 120),
-                      onTimeout: () {
-                        AppLogger.warning(
-                          'PERF_IOS design_generation_timeout after 120s — proceeding to DreamSpace',
-                        );
-                        return false; // NOT a failure — just a timeout
-                      },
-                    );
+            late final bool success;
+            try {
+              success =
+                  await (isRetry
+                          ? provider.retryDesignImage(
+                              _pendingRetryFeedback!,
+                              onRetrying: () =>
+                                  _analyzingSubtitleNotifier?.value =
+                                      'Reconnecting...',
+                            )
+                          : provider.generateDesignImage(
+                              onRetrying: () =>
+                                  _analyzingSubtitleNotifier?.value =
+                                      'Reconnecting...',
+                            ))
+                      .timeout(
+                        const Duration(seconds: 120),
+                        onTimeout: () {
+                          AppLogger.warning(
+                            'PERF_IOS design_generation_timeout after 120s — proceeding to DreamSpace',
+                          );
+                          return false; // NOT a failure — just a timeout
+                        },
+                      );
+            } on PaywallRequiredException {
+              if (mounted) {
+                final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
+                await subProvider.showPaywall(source: 'server_402_retry');
+                _goToStep(CreateFlowStep.dreamSpace);
+              }
+              return;
+            }
 
             final prewarmReused = provider.lastPrewarmReused;
             AppLogger.info(
@@ -888,6 +900,14 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               throw Exception(
                 provider.errorMessage ?? 'Failed to generate design image',
               );
+            }
+
+            // Optimistic usage counter bump
+            if (success && mounted) {
+              final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
+              if (isRetry) {
+                subProvider.recordIterationUsed();
+              }
             }
             _pendingRetryFeedback = null;
 
@@ -957,8 +977,48 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
 
       case CreateFlowStep.dreamSpace:
         return DreamSpaceScreen(
-          onRetry: () => _goToStep(CreateFlowStep.describeChanges),
-          onRestart: () => _goToStep(CreateFlowStep.uploadPhoto),
+          onRetry: () async {
+            final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
+            final allowed = await subProvider.ensureCanIterate(source: 'dream_space_retry');
+            if (!allowed || !mounted) return;
+            _goToStep(CreateFlowStep.describeChanges);
+          },
+          onRestart: () async {
+            if (_isRestarting || !mounted) return;
+            setState(() => _isRestarting = true);
+            try {
+              final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
+              final allowed = await subProvider.ensureCanGenerate(source: 'dream_space_restart');
+              if (!allowed || !mounted) return;
+
+              final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+              try {
+                final ok = await projectProvider.createProject(context);
+                if (!ok || !mounted) return;
+                subProvider.recordGenerationUsed();
+
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => CreateFlowScreen(isCamera: widget.isCamera),
+                    fullscreenDialog: true,
+                  ),
+                );
+              } on PaywallRequiredException {
+                if (mounted) await subProvider.showPaywall(source: 'server_402_restart');
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to restart: ${e.toString()}'),
+                      backgroundColor: AppTheme.errorColor,
+                    ),
+                  );
+                }
+              }
+            } finally {
+              if (mounted) setState(() => _isRestarting = false);
+            }
+          },
           onHotspotTap: _goToProducts,
         );
 
