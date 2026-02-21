@@ -246,6 +246,18 @@ websockets==15.0.1
     #   uvicorn
 
 # ============================================================
+# Runtime dependencies required by backend imports
+# ============================================================
+supabase>=2.0.0
+    # used by supabase_client.py
+pyjwt>=2.8.0
+    # used by auth.py (JWT verification)
+cryptography>=42.0.0
+    # required for ES256 JWT verification
+sse-starlette>=1.6.0
+    # used by /jobs/{job_id}/events SSE endpoint
+
+# ============================================================
 # URL Normalizer dependencies (manually added)
 # ============================================================
 tldextract>=5.0.0
