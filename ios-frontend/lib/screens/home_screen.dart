@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
 import '../providers/project_provider.dart';
+import '../providers/subscription_provider.dart';
+import '../services/api_service.dart';
 import '../utils/logger.dart';
 import '../widgets/animated_border_card.dart';
 import 'create_flow_screen.dart';
@@ -18,8 +20,24 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isCreatingProject = false;
   int _selectedActionCard = -1; // -1 = no pre-selection
 
+  @override
+  void initState() {
+    super.initState();
+    // Preload usage counts for the remaining-uses label
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final sub = Provider.of<SubscriptionProvider>(context, listen: false);
+      sub.refreshUsageIfStale();
+    });
+  }
+
   Future<void> _startRedesignFlow({bool isCamera = false}) async {
     if (_isCreatingProject) return;
+
+    // Freemium gate: check generation limit before creating project
+    final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
+    final allowed = await subProvider.ensureCanGenerate(source: isCamera ? 'home_camera' : 'home_gallery');
+    if (!allowed || !mounted) return;
 
     setState(() => _isCreatingProject = true);
 
@@ -36,14 +54,19 @@ class _HomeScreenState extends State<HomeScreen> {
         final message =
             projectProvider.errorMessage ??
             'Failed to create project. Please try again.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message),
+              backgroundColor: AppTheme.errorColor,
+            ),
+          );
+        }
         return;
       }
+
+      // Optimistic usage counter bump (backend already debited)
+      subProvider.recordGenerationUsed();
 
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -51,6 +74,11 @@ class _HomeScreenState extends State<HomeScreen> {
           fullscreenDialog: true,
         ),
       );
+    } on PaywallRequiredException {
+      // Server-side enforcement: show paywall
+      if (mounted) {
+        await subProvider.showPaywall(source: 'server_402_create');
+      }
     } catch (e) {
       AppLogger.error('Failed to create project', e);
       if (mounted) {
@@ -85,13 +113,47 @@ class _HomeScreenState extends State<HomeScreen> {
               // Redesign section
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'Redesign.',
-                  style: AppTheme.dmSans(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.textPrimary,
-                  ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'Redesign.',
+                      style: AppTheme.dmSans(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const Spacer(),
+                    Consumer<SubscriptionProvider>(
+                      builder: (context, sub, _) {
+                        if (sub.isPremium) return const SizedBox.shrink();
+                        final remaining = sub.remainingGenerations;
+                        return GestureDetector(
+                          onTap: () => sub.showPaywall(source: 'home_remaining_chip'),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: remaining > 0
+                                  ? AppTheme.primaryColor.withValues(alpha: 0.08)
+                                  : AppTheme.errorColor.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              remaining > 0
+                                  ? '$remaining free design${remaining == 1 ? '' : 's'} left'
+                                  : 'Upgrade to continue',
+                              style: AppTheme.dmSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: remaining > 0 ? AppTheme.primaryColor : AppTheme.errorColor,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ),
 

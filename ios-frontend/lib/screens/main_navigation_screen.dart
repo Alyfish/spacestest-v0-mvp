@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
 import '../providers/project_provider.dart';
+import '../providers/subscription_provider.dart';
+import '../services/api_service.dart';
 import '../utils/logger.dart';
 import '../widgets/app_bottom_nav_bar.dart';
 import 'home_screen.dart';
@@ -63,6 +65,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   Future<void> _startRedesignFlow({required bool isCamera}) async {
     if (_isCreatingProject) return;
+
+    // Freemium gate: check generation limit before creating project
+    final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
+    final allowed = await subProvider.ensureCanGenerate(source: isCamera ? 'nav_camera' : 'nav_gallery');
+    if (!allowed || !mounted) return;
+
     setState(() => _isCreatingProject = true);
 
     try {
@@ -86,6 +94,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         return;
       }
 
+      // Optimistic usage counter bump (backend already debited)
+      subProvider.recordGenerationUsed();
+
       if (mounted) {
         AppLogger.info(
           'Project created from center CTA: ${projectProvider.currentProject!.id}',
@@ -96,6 +107,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             fullscreenDialog: true,
           ),
         );
+      }
+    } on PaywallRequiredException {
+      // Server-side enforcement: show paywall
+      if (mounted) {
+        await subProvider.showPaywall(source: 'server_402_create');
       }
     } catch (e) {
       AppLogger.error('Failed to create project from center CTA', e);

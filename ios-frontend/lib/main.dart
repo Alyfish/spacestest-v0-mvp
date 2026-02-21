@@ -9,6 +9,8 @@ import 'theme.dart';
 import 'providers/user_provider.dart';
 import 'providers/image_provider.dart';
 import 'providers/project_provider.dart';
+import 'providers/subscription_provider.dart';
+import 'services/revenuecat_service.dart';
 import 'services/supabase_service.dart';
 import 'utils/logger.dart';
 import 'firebase_options.dart';
@@ -28,6 +30,12 @@ Future<void> main() async {
   } catch (e) {
     AppLogger.error('Supabase initialization failed', e);
   }
+  try {
+    final session = SupabaseService.currentSession;
+    await RevenueCatService.initialize(appUserID: session?.user.id);
+  } catch (e) {
+    AppLogger.error('RevenueCat initialization failed', e);
+  }
   runApp(const MyApp());
 }
 
@@ -41,6 +49,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (context) => UserProvider()),
         ChangeNotifierProvider(create: (context) => CapturedImageProvider()),
         ChangeNotifierProvider(create: (context) => ProjectProvider()),
+        ChangeNotifierProvider(create: (context) => SubscriptionProvider()),
       ],
       child: MaterialApp(
         title: 'Spaces',

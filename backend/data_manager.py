@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import hashlib
 import json
 import logging
@@ -2451,7 +2452,7 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
         """
         Search for real products for each selected recommendation.
         Uses SERP API / Exa to find products from the web in parallel.
-        Auto-selects top 2 recommendations if more are provided.
+        Uses first 2 recommendations if more are provided.
 
         Args:
             project_id: The project ID
@@ -2480,10 +2481,10 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
                     "No product search client available - configure SERP_API_KEY or EXA_API_KEY"
                 )
 
-            # Limit to 2 categories, auto-select best if more provided
+            # Limit to first 2 categories in request order when more are provided
             if len(recommendations) > 2:
-                recommendations = self._select_best_recommendations(context, max_count=2)
-                self.logger.info(f"Auto-selected top 2 recommendations: {recommendations}")
+                recommendations = recommendations[:2]
+                self.logger.info(f"Using first 2 recommendations from request: {recommendations}")
 
             # Search for products for each recommendation in parallel
             categories = []
@@ -2831,6 +2832,20 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
                 exc_info=True,
             )
             raise
+
+    async def search_products_for_recommendations_async(
+        self,
+        project_id: str,
+        recommendations: List[str],
+        app_state: Any,
+    ) -> Dict[str, Any]:
+        """Async compatibility wrapper to mirror SupabaseDataManager interface."""
+        _ = app_state
+        return await asyncio.to_thread(
+            self.search_products_for_recommendations,
+            project_id,
+            recommendations,
+        )
 
     def _generate_search_query_for_recommendation(
         self,

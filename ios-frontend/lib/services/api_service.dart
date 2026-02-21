@@ -10,6 +10,15 @@ import '../constants/api_constants.dart';
 import '../models/preferred_store.dart';
 import '../utils/logger.dart';
 
+/// Thrown when the backend returns HTTP 402 (paywall required).
+class PaywallRequiredException implements Exception {
+  final String code;
+  final String message;
+  const PaywallRequiredException({required this.code, required this.message});
+  @override
+  String toString() => 'PaywallRequiredException($code): $message';
+}
+
 enum PollingOutcome { done, jobFailed, networkFailed, timedOut }
 
 class PollingResult {
@@ -79,6 +88,13 @@ class ApiService {
         final data = jsonDecode(response.body);
         AppLogger.info('Project created successfully: ${data['project_id']}');
         return data;
+      } else if (response.statusCode == 402) {
+        final body = jsonDecode(response.body);
+        final detail = body is Map ? (body['detail'] ?? body) : body;
+        throw PaywallRequiredException(
+          code: detail is Map ? (detail['code'] ?? 'PAYWALL_REQUIRED') : 'PAYWALL_REQUIRED',
+          message: detail is Map ? (detail['message'] ?? 'Free limit reached') : 'Free limit reached',
+        );
       } else {
         AppLogger.error(
           'Failed to create project: ${response.statusCode} - ${response.body}',
@@ -1202,8 +1218,9 @@ class ApiService {
   static Future<Map<String, dynamic>> startRetryRedesign(
     String projectId,
     String authToken,
-    String feedback,
-  ) async {
+    String feedback, {
+    required String attemptId,
+  }) async {
     _requireProjectId(projectId);
     try {
       final url = Uri.parse(
@@ -1212,11 +1229,16 @@ class ApiService {
 
       AppLogger.info('Starting retry redesign for $projectId');
 
+      final body = <String, dynamic>{
+        'feedback': feedback,
+        'attempt_id': attemptId,
+      };
+
       final response = await http
           .post(
             url,
             headers: ApiConstants.authHeaders(authToken),
-            body: jsonEncode({'feedback': feedback}),
+            body: jsonEncode(body),
           )
           .timeout(const Duration(seconds: 60));
 
@@ -1224,6 +1246,13 @@ class ApiService {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         AppLogger.info('Retry redesign completed');
         return data;
+      } else if (response.statusCode == 402) {
+        final respBody = jsonDecode(response.body);
+        final detail = respBody is Map ? (respBody['detail'] ?? respBody) : respBody;
+        throw PaywallRequiredException(
+          code: detail is Map ? (detail['code'] ?? 'PAYWALL_REQUIRED') : 'PAYWALL_REQUIRED',
+          message: detail is Map ? (detail['message'] ?? 'Free limit reached') : 'Free limit reached',
+        );
       } else {
         AppLogger.error(
           'Failed to start retry redesign: ${response.statusCode} - ${response.body}',
@@ -1678,6 +1707,35 @@ class ApiService {
   // TODO: Post-MVP — reverseSearchBatch(projectId, authToken, selections)
   // TODO: Post-MVP — autoSelectProduct(projectId, authToken)
   // TODO: Post-MVP — selectProduct(projectId, authToken, {url, title, imageUrl})
+
+  // ==========================================================================
+  // Usage / Freemium
+  // ==========================================================================
+
+  /// Fetch freemium usage counts and limits for the authenticated user.
+  static Future<Map<String, dynamic>> getUsage(String authToken) async {
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.usage}',
+      );
+
+      final response = await http.get(
+        url,
+        headers: ApiConstants.authHeaders(authToken),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      } else {
+        throw Exception('Failed to get usage: ${response.statusCode}');
+      }
+    } catch (e) {
+      final enrichedError = _maybeEnrichLoopbackConnectionError(e);
+      AppLogger.error('Error getting usage', enrichedError);
+      if (identical(enrichedError, e)) rethrow;
+      throw enrichedError;
+    }
+  }
 
   // ==========================================================================
   // Private Helpers

@@ -6,6 +6,7 @@ import '../services/supabase_service.dart';
 class UserProvider extends ChangeNotifier {
   AuthState _authState = AuthState.unauthenticated;
   User _user = User.empty();
+  String? _errorMessage;
 
   UserProvider() {
     final session = SupabaseService.currentSession;
@@ -41,6 +42,7 @@ class UserProvider extends ChangeNotifier {
   // Getters
   AuthState get authState => _authState;
   User get user => _user;
+  String? get errorMessage => _errorMessage;
   bool get isAuthenticated => _authState == AuthState.authenticated;
   bool get isAuthenticating => _authState == AuthState.authenticating;
   bool get isSignedIn => _authState == AuthState.authenticated;
@@ -48,6 +50,7 @@ class UserProvider extends ChangeNotifier {
   // Sign in with Google via Supabase OAuth
   Future<void> signInWithGoogle() async {
     try {
+      _errorMessage = null;
       _authState = AuthState.authenticating;
       notifyListeners();
 
@@ -70,12 +73,59 @@ class UserProvider extends ChangeNotifier {
       );
 
       _authState = AuthState.authenticated;
+      _errorMessage = null;
       notifyListeners();
 
       if (kDebugMode) {
         AppLogger.info('✅ User signed in successfully: ${_user.name}');
       }
     } catch (e) {
+      _errorMessage = e.toString();
+      _authState = AuthState.unauthenticated;
+      _user = User.empty();
+      notifyListeners();
+
+      if (kDebugMode) {
+        AppLogger.error('❌ Sign in failed: $e');
+      }
+      rethrow;
+    }
+  }
+
+  // Sign in with Apple via Supabase OAuth
+  Future<void> signInWithApple() async {
+    try {
+      _errorMessage = null;
+      _authState = AuthState.authenticating;
+      notifyListeners();
+
+      final response = await SupabaseService.signInWithApple();
+      final signedInUser = response.user ?? SupabaseService.currentUser;
+      final session = response.session ?? SupabaseService.currentSession;
+
+      if (signedInUser == null || session == null) {
+        throw Exception('Apple sign-in succeeded but no session was returned');
+      }
+
+      _user = User(
+        id: signedInUser.id,
+        name:
+            _displayNameFromMetadata(signedInUser.userMetadata) ??
+            signedInUser.email,
+        email: signedInUser.email,
+        photoUrl: _photoUrlFromMetadata(signedInUser.userMetadata),
+        token: session.accessToken,
+      );
+
+      _authState = AuthState.authenticated;
+      _errorMessage = null;
+      notifyListeners();
+
+      if (kDebugMode) {
+        AppLogger.info('✅ User signed in successfully: ${_user.name}');
+      }
+    } catch (e) {
+      _errorMessage = e.toString();
       _authState = AuthState.unauthenticated;
       _user = User.empty();
       notifyListeners();
@@ -98,6 +148,7 @@ class UserProvider extends ChangeNotifier {
     } finally {
       _authState = AuthState.unauthenticated;
       _user = User.empty();
+      _errorMessage = null;
       notifyListeners();
     }
 
@@ -110,6 +161,7 @@ class UserProvider extends ChangeNotifier {
   void reset() {
     _authState = AuthState.unauthenticated;
     _user = User.empty();
+    _errorMessage = null;
     notifyListeners();
   }
 
@@ -135,6 +187,7 @@ class UserProvider extends ChangeNotifier {
       token: normalizedToken,
     );
     _authState = AuthState.authenticated;
+    _errorMessage = null;
     notifyListeners();
   }
 }

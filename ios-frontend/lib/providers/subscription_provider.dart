@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:math' show max;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
+import '../services/api_service.dart';
 import '../services/revenuecat_service.dart';
 import '../services/analytics_service.dart';
+import '../services/supabase_service.dart';
 import '../utils/logger.dart';
 
 /// Provider for subscription/premium state using RevenueCat.
@@ -13,11 +16,27 @@ import '../utils/logger.dart';
 class SubscriptionProvider extends ChangeNotifier {
   bool _isPremium = false;
 
+  // Freemium usage tracking
+  int _generationsUsed = 0;
+  int _iterationsUsed = 0;
+  int _freeGenerationLimit = 5;
+  int _freeIterationLimit = 2;
+  DateTime? _usageLoadedAt;
+  static const _usageTtl = Duration(seconds: 60);
+
   // ============================================
   // GETTERS
   // ============================================
 
   bool get isPremium => _isPremium;
+  int get generationsUsed => _generationsUsed;
+  int get iterationsUsed => _iterationsUsed;
+  int get remainingGenerations => max(0, _freeGenerationLimit - _generationsUsed);
+  int get remainingIterations => max(0, _freeIterationLimit - _iterationsUsed);
+  bool get canGenerate => _isPremium || _generationsUsed < _freeGenerationLimit;
+  bool get canIterate => _isPremium || _iterationsUsed < _freeIterationLimit;
+  int get freeGenerationLimit => _freeGenerationLimit;
+  int get freeIterationLimit => _freeIterationLimit;
 
   // ============================================
   // INITIALIZATION
@@ -29,7 +48,13 @@ class SubscriptionProvider extends ChangeNotifier {
 
   Future<void> _init() async {
     // Listen for real-time customer info updates (purchases, renewals, expirations)
-    Purchases.addCustomerInfoUpdateListener(_onCustomerInfoUpdated);
+    try {
+      Purchases.addCustomerInfoUpdateListener(_onCustomerInfoUpdated);
+    } catch (e) {
+      if (kDebugMode) {
+        AppLogger.error('Failed to add RevenueCat listener: $e');
+      }
+    }
     // Fetch initial state
     await refreshStatus();
   }
@@ -46,18 +71,114 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   // ============================================
-  // PREMIUM GATE
+  // USAGE TRACKING
+  // ============================================
+
+  /// Refresh usage from the server if TTL has expired (or forced).
+  Future<void> refreshUsageIfStale({bool force = false}) async {
+    if (!force &&
+        _usageLoadedAt != null &&
+        DateTime.now().difference(_usageLoadedAt!) < _usageTtl) {
+      return; // Still fresh
+    }
+
+    try {
+      final authToken = SupabaseService.accessToken;
+      if (authToken == null) return;
+
+      final data = await ApiService.getUsage(authToken);
+      _generationsUsed = data['generations_used'] as int? ?? 0;
+      _iterationsUsed = data['iterations_used'] as int? ?? 0;
+
+      final limits = data['limits'] as Map<String, dynamic>?;
+      if (limits != null) {
+        _freeGenerationLimit = limits['free_generations'] as int? ?? 5;
+        _freeIterationLimit = limits['free_iterations'] as int? ?? 2;
+      }
+
+      _usageLoadedAt = DateTime.now();
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) {
+        AppLogger.error('Usage refresh failed: $e');
+      }
+      // Fail-open: don't block the user, server enforcement is the backstop
+    }
+  }
+
+  /// Optimistic bump after a generation starts. Reconciles with server.
+  void recordGenerationUsed() {
+    _generationsUsed++;
+    notifyListeners();
+    refreshUsageIfStale(force: true);
+  }
+
+  /// Optimistic bump after a retry succeeds. Reconciles with server.
+  void recordIterationUsed() {
+    _iterationsUsed++;
+    notifyListeners();
+    refreshUsageIfStale(force: true);
+  }
+
+  // ============================================
+  // FREEMIUM GATES
+  // ============================================
+
+  /// Gate: returns true if the user can start a new generation.
+  /// If not premium and over limit, shows paywall. Returns true if premium after paywall.
+  Future<bool> ensureCanGenerate({required String source}) async {
+    try {
+      if (_isPremium) return true;
+
+      // Re-check premium in case of stale state
+      await refreshStatus();
+      if (_isPremium) return true;
+
+      // Check usage
+      await refreshUsageIfStale();
+      if (canGenerate) return true;
+
+      // Over limit — show paywall
+      await showPaywall(source: source);
+      return _isPremium;
+    } catch (e) {
+      if (kDebugMode) {
+        AppLogger.error('ensureCanGenerate error: $e');
+      }
+      // Fail-open: allow through, server enforcement is the backstop
+      return true;
+    }
+  }
+
+  /// Gate: returns true if the user can retry/iterate.
+  /// If not premium and over limit, shows paywall. Returns true if premium after paywall.
+  Future<bool> ensureCanIterate({required String source}) async {
+    try {
+      if (_isPremium) return true;
+
+      await refreshStatus();
+      if (_isPremium) return true;
+
+      await refreshUsageIfStale();
+      if (canIterate) return true;
+
+      // Over limit — show paywall
+      await showPaywall(source: source);
+      return _isPremium;
+    } catch (e) {
+      if (kDebugMode) {
+        AppLogger.error('ensureCanIterate error: $e');
+      }
+      return true;
+    }
+  }
+
+  // ============================================
+  // LEGACY GATE (kept for compatibility)
   // ============================================
 
   /// Gate method: returns true if the user is premium, else shows the paywall.
-  /// Use before any generation step:
-  /// ```dart
-  /// if (!await subscriptionProvider.ensurePremium(source: 'improvements_generate')) return;
-  /// ```
   Future<bool> ensurePremium({required String source}) async {
-    // TODO: Remove this bypass to enable paywall gates
-    return true;
-
     if (_isPremium) return true;
 
     // Refresh in case of stale state
@@ -129,12 +250,16 @@ class SubscriptionProvider extends ChangeNotifier {
   Future<void> onUserLoggedIn(String userId) async {
     await RevenueCatService.logIn(userId);
     await refreshStatus();
+    await refreshUsageIfStale(force: true);
   }
 
   /// Call when user signs out.
   Future<void> onUserLoggedOut() async {
     await RevenueCatService.logOut();
     _isPremium = false;
+    _generationsUsed = 0;
+    _iterationsUsed = 0;
+    _usageLoadedAt = null;
     notifyListeners();
   }
 

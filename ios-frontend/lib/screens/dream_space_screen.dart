@@ -15,8 +15,8 @@ import 'main_navigation_screen.dart';
 
 /// Dream Space Screen - Shows the generated room with tappable product hotspots
 class DreamSpaceScreen extends StatefulWidget {
-  final VoidCallback? onRetry;
-  final VoidCallback? onRestart;
+  final Future<void> Function()? onRetry;
+  final Future<void> Function()? onRestart;
   final Function(ProductHotspot)? onHotspotTap;
 
   const DreamSpaceScreen({
@@ -569,7 +569,7 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
           // Retry button
           Expanded(
             child: OutlinedButton(
-              onPressed: widget.onRetry,
+              onPressed: widget.onRetry != null ? () => widget.onRetry!() : null,
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 side: const BorderSide(color: AppTheme.dividerColor),
@@ -591,7 +591,7 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
           // Restart button
           Expanded(
             child: ElevatedButton(
-              onPressed: widget.onRestart,
+              onPressed: widget.onRestart != null ? () => widget.onRestart!() : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primaryColor,
                 padding: const EdgeInsets.symmetric(vertical: 16),

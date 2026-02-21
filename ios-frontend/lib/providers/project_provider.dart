@@ -967,6 +967,11 @@ class ProjectProvider extends ChangeNotifier {
       }
       AppLogger.info('createProject: parsed project id=${_currentProject!.id}');
       return true;
+    } on PaywallRequiredException catch (e) {
+      AppLogger.info('Create project blocked by paywall: ${e.code}');
+      _setError(e.message);
+      _setStatus(ProjectStatus.idle);
+      rethrow;
     } catch (e) {
       AppLogger.error('Failed to create project', e);
       _setError('Failed to create project: ${e.toString()}');
@@ -3564,10 +3569,12 @@ class ProjectProvider extends ChangeNotifier {
       }
 
       AppLogger.info('Starting retry redesign with feedback...');
+      final attemptId = _uuid.v4();
       await ApiService.startRetryRedesign(
         _currentProject!.id,
         authToken,
         feedback,
+        attemptId: attemptId,
       );
 
       // Try URL-first, then fall back to bytes download.
@@ -3617,6 +3624,11 @@ class ProjectProvider extends ChangeNotifier {
         'Retry redesign complete: url=${_generatedImageUrl != null} bytes=${_generatedImageBytes?.length ?? 0}',
       );
       return true;
+    } on PaywallRequiredException {
+      AppLogger.info('Retry blocked by paywall');
+      _setError('Free retry limit reached');
+      _setStatus(ProjectStatus.idle);
+      rethrow;
     } catch (e) {
       AppLogger.error('Failed to retry design image', e);
       _setError(

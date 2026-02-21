@@ -26,9 +26,12 @@ class ClaudeResponse(BaseModel):
 
 class ClaudeClient:
     def __init__(self):
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        # Backward-compatible fallback for legacy env naming.
+        api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+            raise ValueError(
+                "ANTHROPIC_API_KEY (or legacy CLAUDE_API_KEY) environment variable is required"
+            )
 
         self.client = Anthropic(api_key=api_key)
 
@@ -288,4 +291,3 @@ try:
 except ValueError as e:
     print(f"Warning: Claude client not initialized: {e}")
     claude_client = None
-

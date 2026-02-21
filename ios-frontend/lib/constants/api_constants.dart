@@ -98,6 +98,9 @@ class ApiConstants {
   static const String inspirationRecommendations =
       '/projects/{project_id}/inspiration-recommendations';
 
+  // Usage / Freemium
+  static const String usage = '/usage';
+
   // Job Management
   static const String jobStatus = '/projects/{project_id}/job-status/{job_id}';
   static const String cancelJob = '/projects/{project_id}/jobs/{job_id}/cancel';

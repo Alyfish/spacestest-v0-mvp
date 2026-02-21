@@ -75,6 +75,8 @@ class _PrefetchSuccessProvider extends ProjectProvider {
     String authToken,
     List<Map<String, dynamic>> selections, {
     required String imageType,
+    Duration timeout = const Duration(seconds: 45),
+    int maxAttempts = 2,
   }) async {
     lastAnalyzeImageType = imageType;
     final rows = selections
@@ -125,6 +127,8 @@ class _PrefetchCapProvider extends _PrefetchSuccessProvider {
     String authToken,
     List<Map<String, dynamic>> selections, {
     required String imageType,
+    Duration timeout = const Duration(seconds: 45),
+    int maxAttempts = 2,
   }) async {
     lastSelectionCount = selections.length;
     return super.analyzeFurnitureBatchForPrefetch(
@@ -132,6 +136,8 @@ class _PrefetchCapProvider extends _PrefetchSuccessProvider {
       authToken,
       selections,
       imageType: imageType,
+      timeout: timeout,
+      maxAttempts: maxAttempts,
     );
   }
 }
@@ -146,6 +152,7 @@ class _RobustHotspotProvider extends ProjectProvider {
     Map<String, dynamic> selection, {
     required String imageType,
     Duration? timeout,
+    int maxAttempts = 2,
   }) async {
     robustCalls += 1;
     await Future<void>.delayed(const Duration(milliseconds: 40));
@@ -678,6 +685,7 @@ class _TrackingRescueProvider extends ProjectProvider {
     Map<String, dynamic> selection, {
     required String imageType,
     Duration? timeout,
+    int maxAttempts = 2,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 10));
     return {

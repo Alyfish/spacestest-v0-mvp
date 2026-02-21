@@ -998,6 +998,7 @@ class RetryRedesignRequest(BaseModel):
     by providing specific modification instructions.
     """
     feedback: str = Field(..., description="User's modification request (e.g., 'remove the lamp', 'add a plant')")
+    attempt_id: str = Field(..., description="Client-generated UUID for idempotent retry debit tracking")
 
 
 class ClipRect(BaseModel):
