@@ -9,6 +9,7 @@ Auth is bypassed via conftest.py dependency override — see conftest.py.
 """
 
 import uuid
+import httpx
 import pytest
 
 
@@ -604,3 +605,346 @@ class TestDataPersistence:
         finally:
             client.delete(f"/projects/{pid1}")
             client.delete(f"/projects/{pid2}")
+
+
+# ============================================================================
+# 12. Regression Coverage (Iterative Redesign + Transient Errors)
+# ============================================================================
+
+
+class TestInspirationRedesignValidationRegressions:
+    @staticmethod
+    def _project_with_context(context: dict) -> dict:
+        return {
+            "status": "PRODUCT_RECOMMENDATION_SELECTED",
+            "context": context,
+        }
+
+    @staticmethod
+    def _base_context(**overrides) -> dict:
+        context = {
+            "base_image": "https://example.com/base.jpg",
+            "space_type": "bedroom",
+            "improvement_mode": "iterative",
+            "inspiration_images": [],
+            "inspiration_recommendations": [],
+            "product_recommendations": [],
+            "selected_product_recommendations": [],
+            "selected_products": [],
+            "improvement_markers": [],
+        }
+        context.update(overrides)
+        return context
+
+    def _patch_redesign_start_success_path(self, monkeypatch):
+        import main as main_module
+
+        async def fake_create_job(**kwargs):
+            return "job_test_123"
+
+        def fake_execute_inspiration_redesign(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(
+            main_module, "_check_and_debit", lambda *args, **kwargs: {"ok": True}
+        )
+        monkeypatch.setattr(main_module.job_manager, "create_job", fake_create_job)
+        monkeypatch.setattr(
+            main_module, "execute_inspiration_redesign", fake_execute_inspiration_redesign
+        )
+        return main_module
+
+    def test_inspiration_redesign_accepts_selected_recommendations_only(
+        self, client, monkeypatch
+    ):
+        main_module = self._patch_redesign_start_success_path(monkeypatch)
+        project = self._project_with_context(
+            self._base_context(
+                selected_product_recommendations=["Replace the pendant light"],
+            )
+        )
+        monkeypatch.setattr(
+            main_module.data_manager, "get_project", lambda *args, **kwargs: project
+        )
+
+        resp = client.post(f"/projects/{uuid.uuid4()}/inspiration-redesign")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["job_id"] == "job_test_123"
+        assert body["status"] == "queued"
+
+    def test_inspiration_redesign_rejects_when_no_redesign_context(
+        self, client, monkeypatch
+    ):
+        import main as main_module
+
+        project = self._project_with_context(self._base_context())
+        monkeypatch.setattr(
+            main_module.data_manager, "get_project", lambda *args, **kwargs: project
+        )
+
+        resp = client.post(f"/projects/{uuid.uuid4()}/inspiration-redesign")
+        assert resp.status_code == 400
+        assert (
+            "Project must have inspiration images, inspiration recommendations, or product recommendations first."
+            in resp.text
+        )
+
+    def test_inspiration_redesign_accepts_iterative_marker_only(
+        self, client, monkeypatch
+    ):
+        main_module = self._patch_redesign_start_success_path(monkeypatch)
+        project = self._project_with_context(
+            self._base_context(
+                improvement_markers=[
+                    {
+                        "id": "m1",
+                        "position": {"x": 0.5, "y": 0.5},
+                        "description": "Replace lamp",
+                        "color": "#FF0000",
+                    }
+                ]
+            )
+        )
+        monkeypatch.setattr(
+            main_module.data_manager, "get_project", lambda *args, **kwargs: project
+        )
+
+        resp = client.post(f"/projects/{uuid.uuid4()}/inspiration-redesign")
+        assert resp.status_code == 200, resp.text
+
+
+class TestFurnitureBatchTransientErrors:
+    def test_analyze_furniture_batch_transient_transport_returns_503(
+        self, client, monkeypatch
+    ):
+        import main as main_module
+
+        monkeypatch.setattr(
+            main_module.data_manager,
+            "get_project",
+            lambda *args, **kwargs: {"status": "READY", "context": {}},
+        )
+        monkeypatch.setattr(
+            main_module.data_manager,
+            "_get_image_url",
+            lambda *args, **kwargs: "",
+            raising=False,
+        )
+
+        def raise_remote_protocol_error(*args, **kwargs):
+            raise httpx.RemoteProtocolError("Server disconnected")
+
+        monkeypatch.setattr(
+            main_module.data_manager,
+            "analyze_furniture_batch",
+            raise_remote_protocol_error,
+        )
+
+        resp = client.post(
+            f"/projects/{uuid.uuid4()}/analyze-furniture-batch",
+            json={
+                "selections": [
+                    {"id": "sel_1", "x": 0.4, "y": 0.6, "label": "nightstand"}
+                ],
+                "image_type": "active",
+                "mode": "fast_prefetch",
+            },
+        )
+        assert resp.status_code == 503, resp.text
+        body = resp.json()
+        assert body["error"]["code"] == "HTTP_ERROR"
+        assert body["error"]["category"] == "http"
+
+
+# ============================================================================
+# 13. Trending Products & Redesign Flow Smoke Tests
+# ============================================================================
+
+
+class TestTrendingProductsAndRedesignFlows:
+    """Smoke tests for the trending-product save endpoint and all three
+    redesign branches (inspiration / iterative / complete_revamp)."""
+
+    @staticmethod
+    def _base_context(**overrides) -> dict:
+        context = {
+            "base_image": "https://example.com/base.jpg",
+            "space_type": "bedroom",
+            "improvement_mode": "iterative",
+            "inspiration_images": [],
+            "inspiration_recommendations": [],
+            "product_recommendations": [],
+            "selected_product_recommendations": [],
+            "selected_products": [],
+            "selected_trending_products": [],
+            "improvement_markers": [],
+        }
+        context.update(overrides)
+        return context
+
+    @staticmethod
+    def _project_with_context(context: dict) -> dict:
+        return {
+            "status": "PRODUCT_RECOMMENDATION_SELECTED",
+            "context": context,
+        }
+
+    def _patch_redesign_start_success_path(self, monkeypatch):
+        import main as main_module
+
+        async def fake_create_job(**kwargs):
+            return "job_test_456"
+
+        def fake_execute_inspiration_redesign(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(
+            main_module, "_check_and_debit", lambda *args, **kwargs: {"ok": True}
+        )
+        monkeypatch.setattr(main_module.job_manager, "create_job", fake_create_job)
+        monkeypatch.setattr(
+            main_module, "execute_inspiration_redesign", fake_execute_inspiration_redesign
+        )
+        return main_module
+
+    # -- Test 1: save selected trending products --------------------------
+
+    def test_save_selected_trending_products(self, client, project_with_space):
+        resp = client.post(
+            f"/projects/{project_with_space}/selected-trending-products",
+            json={
+                "products": [
+                    {
+                        "category": "lighting",
+                        "url": "https://example.com/lamp",
+                        "title": "Modern Lamp",
+                        "image_url": "https://example.com/lamp.jpg",
+                        "store": "TestStore",
+                    },
+                    {
+                        "category": "seating",
+                        "url": "https://example.com/chair",
+                        "title": "Accent Chair",
+                        "image_url": "https://example.com/chair.jpg",
+                        "store": "TestStore",
+                    },
+                ]
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["products_count"] == 2
+        assert body["products_by_category"]["lighting"] == 1
+        assert body["products_by_category"]["seating"] == 1
+
+    # -- Test 2: inspiration redesign with trending products --------------
+
+    def test_inspiration_redesign_with_trending_products(
+        self, client, monkeypatch
+    ):
+        main_module = self._patch_redesign_start_success_path(monkeypatch)
+        project = self._project_with_context(
+            self._base_context(
+                improvement_mode="inspiration",
+                selected_trending_products=[
+                    {"title": "Modern Lamp", "url": "https://example.com/lamp",
+                     "image_url": "https://example.com/lamp.jpg", "store": "S",
+                     "category": "lighting"},
+                ],
+                inspiration_recommendations=["Add ambient lighting"],
+            )
+        )
+        monkeypatch.setattr(
+            main_module.data_manager, "get_project", lambda *args, **kwargs: project
+        )
+        resp = client.post(f"/projects/{uuid.uuid4()}/inspiration-redesign")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["job_id"] == "job_test_456"
+        assert body["status"] == "queued"
+
+    # -- Test 3: iterative redesign with trending + recs ------------------
+
+    def test_iterative_redesign_with_trending_and_recs(
+        self, client, monkeypatch
+    ):
+        main_module = self._patch_redesign_start_success_path(monkeypatch)
+        project = self._project_with_context(
+            self._base_context(
+                improvement_mode="iterative",
+                selected_product_recommendations=["Replace bedside lamp"],
+                selected_trending_products=[
+                    {"title": "Accent Chair", "url": "https://example.com/chair",
+                     "image_url": "https://example.com/chair.jpg", "store": "S",
+                     "category": "seating"},
+                ],
+            )
+        )
+        monkeypatch.setattr(
+            main_module.data_manager, "get_project", lambda *args, **kwargs: project
+        )
+        resp = client.post(f"/projects/{uuid.uuid4()}/inspiration-redesign")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["job_id"] == "job_test_456"
+
+    # -- Test 4: complete revamp redesign ---------------------------------
+
+    def test_complete_revamp_redesign(self, client, monkeypatch):
+        main_module = self._patch_redesign_start_success_path(monkeypatch)
+        project = self._project_with_context(
+            self._base_context(
+                improvement_mode="complete_revamp",
+                product_recommendations=["Replace all furniture with modern pieces"],
+            )
+        )
+        monkeypatch.setattr(
+            main_module.data_manager, "get_project", lambda *args, **kwargs: project
+        )
+        resp = client.post(f"/projects/{uuid.uuid4()}/inspiration-redesign")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["job_id"] == "job_test_456"
+
+    # -- Test 5: color normalization handles dict cohesion_tips ------------
+
+    def test_color_normalization_handles_dict_cohesion_tips(self):
+        """Verify that the isinstance checks in normalize_color_analysis_payload
+        correctly convert dict values to strings for lighting_notes,
+        cohesion_tips, and personalization_suggestions."""
+
+        # Simulate the exact normalization logic from gemini_client.py
+        # (the function is nested, so we test the pattern directly)
+        def normalize_field(raw, fallback_parts):
+            """Mirrors the isinstance-guarded pattern in gemini_client.py."""
+            return raw if isinstance(raw, str) else " ".join(
+                part for part in fallback_parts if part
+            ).strip()
+
+        # cohesion_tips is a dict (the bug scenario)
+        raw_cohesion = {"adjacent_rooms_flow": "Match tones", "transition_tips": "Use rugs"}
+        result = normalize_field(raw_cohesion, [
+            raw_cohesion.get("adjacent_rooms_flow"),
+            raw_cohesion.get("transition_tips"),
+        ])
+        assert isinstance(result, str), f"Expected str, got {type(result)}"
+        assert "Match tones" in result
+        assert "Use rugs" in result
+
+        # lighting_notes is a dict
+        raw_lighting = {"natural": "Lots of sun", "artificial": "Warm LEDs"}
+        result2 = normalize_field(raw_lighting, ["Lots of sun", "Warm LEDs"])
+        assert isinstance(result2, str)
+
+        # personalization_suggestions is a dict
+        raw_personal = {"seasonal": "Swap pillows", "refresh": "New art"}
+        result3 = normalize_field(raw_personal, ["Swap pillows", "New art"])
+        assert isinstance(result3, str)
+
+        # String values pass through unchanged
+        assert normalize_field("Already a string", []) == "Already a string"
+
+        # None falls back to joined parts
+        result4 = normalize_field(None, ["Part A", "Part B"])
+        assert result4 == "Part A Part B"

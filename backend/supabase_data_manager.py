@@ -275,6 +275,7 @@ class SupabaseDataManager:
             "context": context.model_dump(),
         }
 
+    @retry_sync(max_retries=2, base_delay=0.5, exponential_base=2.0)
     def _get_project_context(self, project_id: str) -> ProjectContext:
         """Shorthand: fetch row and return ProjectContext."""
         row = self._get_project_row(project_id)
@@ -964,8 +965,8 @@ class SupabaseDataManager:
 
         return {
             "project_id": project_id,
-            "trending_count": len(validated),
-            "by_category": by_category,
+            "products_count": len(validated),
+            "products_by_category": by_category,
             "status": "success",
             "message": f"Saved {len(validated)} trending products",
         }
@@ -3044,6 +3045,7 @@ Do NOT assume or infer structural features — only what is VISIBLE in the photo
 
         selected_recommendations = context.selected_product_recommendations or []
         all_recommendations = context.product_recommendations or []
+        trending = context.selected_trending_products or []
         prompt_branch = "integration"
         prompt_items_count = 0
 
@@ -3207,6 +3209,7 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
             prompt = self.gemini_client._create_iterative_prompt(
                 selected_products=selected_products_formatted,
                 marker_locations=markers,
+                trending_products=context.selected_trending_products or [],
                 color_scheme=context.color_scheme,
                 style_analysis=context.style_analysis,
                 color_analysis=context.color_analysis,
@@ -3214,13 +3217,16 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
         else:
             print("🎨 Using INTEGRATION prompt (full redesign with color/style enforcement)")
 
-            # Prepare product titles for integration prompt
-            product_titles = []
-            for p in selected_products:
-                if p.get('title'):
-                    product_titles.append(p.get('title'))
+            # Prepare product titles — trending products are highest priority
+            product_titles = [p.get('title') for p in trending if p.get('title')]
 
-            # Add selected recommendations if no product titles
+            # Fallback to selected products
+            if not product_titles:
+                for p in selected_products:
+                    if p.get('title'):
+                        product_titles.append(p.get('title'))
+
+            # Fallback to recommendations
             if not product_titles:
                 product_titles = selected_recommendations or all_recommendations
 
@@ -3232,6 +3238,7 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                 custom_prompt=None,
                 color_scheme=context.color_scheme,
                 design_style=context.style_analysis,
+                color_analysis=context.color_analysis,
             )
             prompt_items_count = len(product_titles)
             prompt_branch = "integration"
@@ -3268,6 +3275,9 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
         )
         # Pass product dicts directly — gemini_client downloads images itself
         product_images = [p for p in selected_products[:2] if p.get("image_url")]
+        # Include trending products as visual reference
+        if not product_images and trending:
+            product_images = [p for p in trending[:2] if p.get("image_url")]
         # Include user's favorite products from "Like These?" selections
         favorites = context.favorite_products or []
         if favorites:
@@ -3799,9 +3809,6 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
     ) -> Dict[str, Any]:
         """Analyze multiple furniture selections with bounded latency by mode."""
         batch_started = time.monotonic()
-        row = self._get_project_row(project_id)
-        if not row:
-            raise ValueError(f"Project {project_id} not found")
         context = self._get_project_context(project_id)
         normalized_mode = self._normalize_analysis_mode(mode)
         profile = self._analysis_mode_profile(normalized_mode)

@@ -481,7 +481,8 @@ Follow the required JSON schema exactly."""
 
                 light_conditions = payload.get("light_conditions") or {}
                 light_texture = payload.get("light_texture_interaction") or {}
-                lighting_notes = payload.get("lighting_notes") or " ".join(
+                raw_lighting = payload.get("lighting_notes")
+                lighting_notes = raw_lighting if isinstance(raw_lighting, str) else " ".join(
                     part
                     for part in [
                         light_conditions.get("natural_lighting"),
@@ -494,7 +495,8 @@ Follow the required JSON schema exactly."""
                 ).strip()
 
                 maintain_cohesion = payload.get("maintain_cohesion") or {}
-                cohesion_tips = payload.get("cohesion_tips") or " ".join(
+                raw_cohesion = payload.get("cohesion_tips")
+                cohesion_tips = raw_cohesion if isinstance(raw_cohesion, str) else " ".join(
                     part
                     for part in [
                         maintain_cohesion.get("adjacent_rooms_flow"),
@@ -504,7 +506,8 @@ Follow the required JSON schema exactly."""
                 ).strip()
 
                 personalization = payload.get("personalization_tips") or {}
-                personalization_suggestions = payload.get("personalization_suggestions") or " ".join(
+                raw_personalization = payload.get("personalization_suggestions")
+                personalization_suggestions = raw_personalization if isinstance(raw_personalization, str) else " ".join(
                     part
                     for part in [
                         personalization.get("seasonal_accent_swaps"),
@@ -1379,38 +1382,21 @@ Technical Requirement: Preserve the exact input image aspect ratio."""
         custom_prompt: Optional[str] = None,
         color_scheme: Dict[str, Any] = None,
         design_style: Dict[str, Any] = None,
+        color_analysis: Dict[str, Any] = None,
     ) -> str:
         """Create an improved prompt for Elite Interior Design Visualization"""
 
         # Build dynamic context from inputs
         titles_str = ", ".join(product_titles) if product_titles else "new furniture items"
 
-        # Extract style information
+        # Build rich style and color directions using the same helpers as iterative prompt
+        style_direction = self._build_style_direction(design_style)
+        color_direction = self._build_color_direction(color_analysis, color_scheme)
+
+        # Extract style_name for inline references in the prompt template
         style_name = "professionally-designed, harmonious"
-        style_overview = ""
-        materials_list = ""
         if design_style:
             style_name = design_style.get("style_name", "Modern")
-            style_overview = design_style.get("style_overview", "")
-            materials = design_style.get("materials", [])
-            if materials:
-                materials_list = ", ".join(materials[:7])
-
-        # Extract color palette
-        color_list = ""
-        if color_scheme:
-            # Handle both old format (colors list) and new format (primary/secondary/accent)
-            if "colors" in color_scheme:
-                color_list = ", ".join(color_scheme.get("colors", []))
-            else:
-                colors = []
-                for key in ["primary_colors", "secondary_colors", "accent_colors"]:
-                    for c in color_scheme.get(key, []):
-                        if isinstance(c, dict):
-                            colors.append(f"{c.get('hex', '')} ({c.get('description', '')})")
-                        else:
-                            colors.append(str(c))
-                color_list = ", ".join(colors[:6])
 
         # Build marker descriptions
         marker_descriptions = ""
@@ -1426,6 +1412,14 @@ Technical Requirement: Preserve the exact input image aspect ratio."""
 
         # User custom request
         user_request = custom_prompt if custom_prompt else ""
+
+        # Build the design direction block (same pattern as iterative prompt)
+        design_direction_parts = []
+        if color_direction:
+            design_direction_parts.append(f"**COLOR PALETTE (60-30-10 Rule)**\n{color_direction}")
+        if style_direction:
+            design_direction_parts.append(f"**DESIGN STYLE**\n{style_direction}")
+        design_direction_block = "\n\n".join(design_direction_parts) if design_direction_parts else f"Style: {style_name}"
 
         # THE COMPLETE REVAMP / INTEGRATION PROMPT
         prompt = f"""### ROLE & OBJECTIVE
@@ -1503,11 +1497,12 @@ Keep it uncluttered.
 - Cast shadows: match original direction and hardness.
 - Sensor match: match grain/noise and focus blur so new items do not look pasted.
 
+### COLOR & STYLE DESIGN DIRECTION
+Weave these colors and style cues into EVERY change you make. Every item you add or replace must be consistent with this direction.
+{design_direction_block}
+
 ### 4) INPUT DATA CONTEXT
 - Space Type: {space_type}
-- Design Style: {style_name} - {style_overview}
-- Key Materials: {materials_list}
-- Target Palette (HEX): {color_list}
 - Specific Changes (Markers):
 {marker_descriptions}
 - Product References: {titles_str}
