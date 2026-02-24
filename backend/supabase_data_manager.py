@@ -848,8 +848,6 @@ class SupabaseDataManager:
             raise ValueError(f"Project {project_id} not found")
 
         self._save_project_fields(project_id, {
-            "color_analysis": None,
-            "color_scheme": None,
             "color_analysis_skipped": True,
         })
         self._try_generate_marker_recommendations(project_id)
@@ -861,8 +859,6 @@ class SupabaseDataManager:
             raise ValueError(f"Project {project_id} not found")
 
         self._save_project_fields(project_id, {
-            "style_analysis": None,
-            "design_style": None,
             "style_analysis_skipped": True,
         })
         self._try_generate_marker_recommendations(project_id)

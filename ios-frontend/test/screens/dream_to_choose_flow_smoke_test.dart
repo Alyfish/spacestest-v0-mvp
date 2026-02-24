@@ -72,7 +72,7 @@ Widget _buildFlowApp() {
 }
 
 void main() {
-  testWidgets('dream space generated image always uses contain fit (no crop)', (
+  testWidgets('dream space generated image always uses cover fit (edge-to-edge)', (
     tester,
   ) async {
     final provider = ProjectProvider();
@@ -96,7 +96,7 @@ void main() {
         .toList();
     expect(imageWidgets, isNotEmpty);
     for (final imageWidget in imageWidgets) {
-      expect(imageWidget.fit, BoxFit.contain);
+      expect(imageWidget.fit, BoxFit.cover);
     }
   });
 

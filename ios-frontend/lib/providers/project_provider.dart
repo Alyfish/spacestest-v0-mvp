@@ -950,6 +950,7 @@ class ProjectProvider extends ChangeNotifier {
       AppLogger.info(
         'createProject: response keys=${response.keys.toList()}, project_id=${response["project_id"]}',
       );
+      clearProject(); // Wipe all cached flow state from prior project
       _currentProject = Project.fromJson(response);
       _hasUploadedProjectImage = _responseHasBaseImage(response);
       _projectImageUploadFuture = null;
@@ -1717,12 +1718,18 @@ class ProjectProvider extends ChangeNotifier {
     _searchFailureReason = SearchFailureReason.none;
     _prewarmFingerprint = null;
     _lastPrewarmReused = false;
+    _generateDesignFuture = null;
+    _generationRetrying = false;
     _furnitureAnalysis = null;
     _processedFurniture = null;
     _detectedHotspots = [];
     _prefetchedFurnitureByHotspotId.clear();
     _furniturePrefetchCompleter = null;
     _robustHotspotAnalysisCompleters.clear();
+    _rescueHotspotCompleters.clear();
+    _userTappedHotspots.clear();
+    _lastCompletedJobId = null;
+    _dreamSpaceImageVersion = 0;
     _setStatus(ProjectStatus.idle);
     AppLogger.info('Project cleared');
   }
@@ -1731,6 +1738,12 @@ class ProjectProvider extends ChangeNotifier {
   ImageProvider? getProjectImageProvider() {
     if (_currentProject?.localProjectImage != null) {
       return FileImage(_currentProject!.localProjectImage!);
+    }
+    // Fallback: load from backend base_image URL
+    final ctx = _currentProject?.metadata['context'] as Map<String, dynamic>?;
+    final baseUrl = ctx?['base_image']?.toString();
+    if (baseUrl != null && baseUrl.isNotEmpty && baseUrl.startsWith('http')) {
+      return NetworkImage(baseUrl);
     }
     return null;
   }
@@ -2100,6 +2113,34 @@ class ProjectProvider extends ChangeNotifier {
       );
       _selectedRecommendations = List<String>.from(recommendations);
       notifyListeners();
+      return false;
+    }
+  }
+
+  /// Save selected trending products to backend for image generation.
+  Future<bool> saveSelectedTrendingProducts(
+    BuildContext context,
+    List<Map<String, dynamic>> items,
+  ) async {
+    if (_currentProject == null) {
+      _setError('No active project');
+      return false;
+    }
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final authToken = userProvider.user.token;
+      if (authToken == null) {
+        _setError('Authentication token not available');
+        return false;
+      }
+      await ApiService.setSelectedTrendingProducts(
+        _currentProject!.id,
+        authToken,
+        items,
+      );
+      return true;
+    } catch (e) {
+      AppLogger.warning('Failed to save selected trending products: $e');
       return false;
     }
   }

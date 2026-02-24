@@ -1767,7 +1767,10 @@ Before finalizing, verify against the original photo:
         if no color data is available.
         """
         if not color_analysis and not color_scheme:
-            return ""
+            return ("Use your professional judgment to select a harmonious color palette "
+                    "that complements the existing architectural elements, natural lighting, "
+                    "and room function. Apply the 60-30-10 rule (60% dominant neutral, "
+                    "30% secondary tone, 10% accent color) for a cohesive, magazine-quality result.")
 
         lines = []
 
@@ -1844,7 +1847,9 @@ Before finalizing, verify against the original photo:
         if no style data is available.
         """
         if not style_analysis or not isinstance(style_analysis, dict):
-            return ""
+            return ("Use your professional judgment to select a cohesive interior design style "
+                    "that complements the room's architecture, proportions, and existing finishes. "
+                    "Ensure furniture materials, textures, and proportions form a unified aesthetic.")
 
         lines = []
 
