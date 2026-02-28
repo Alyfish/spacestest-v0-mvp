@@ -67,6 +67,8 @@ class ApiConstants {
       '/projects/{project_id}/favorite-products';
   static const String trendingProducts =
       '/projects/{project_id}/trending-products';
+  static const String selectedTrendingProducts =
+      '/projects/{project_id}/selected-trending-products';
 
   // Image Generation & Redesign (background jobs)
   static const String inspirationRedesign =

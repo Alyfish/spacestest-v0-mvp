@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
 import '../providers/project_provider.dart';
 import '../providers/subscription_provider.dart';
-import '../services/api_service.dart';
 import '../utils/logger.dart';
 import '../widgets/animated_border_card.dart';
 import 'create_flow_screen.dart';
@@ -16,6 +16,11 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+const bool _devBypassAuth = bool.fromEnvironment(
+  'DEV_BYPASS_AUTH',
+  defaultValue: false,
+);
+
 class _HomeScreenState extends State<HomeScreen> {
   bool _isCreatingProject = false;
   int _selectedActionCard = -1; // -1 = no pre-selection
@@ -23,10 +28,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Preload usage counts for the remaining-uses label
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final sub = Provider.of<SubscriptionProvider>(context, listen: false);
+      sub.setContext(context);
       sub.refreshUsageIfStale();
     });
   }
@@ -34,9 +39,37 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startRedesignFlow({bool isCamera = false}) async {
     if (_isCreatingProject) return;
 
-    // Freemium gate: check generation limit before creating project
-    final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
-    final allowed = await subProvider.ensureCanGenerate(source: isCamera ? 'home_camera' : 'home_gallery');
+    final subProvider = Provider.of<SubscriptionProvider>(
+      context,
+      listen: false,
+    );
+
+    // Check cooldown first
+    if (subProvider.cooldownSecondsLeft > 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Please wait ${subProvider.cooldownSecondsLeft}s before starting another redesign',
+            ),
+            backgroundColor: Colors.orange.shade700,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            margin: const EdgeInsets.all(16),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Credit gate
+    final allowed = await subProvider.ensureCanGenerate(
+      source: isCamera ? 'home_camera' : 'home_gallery',
+      context: context,
+    );
     if (!allowed || !mounted) return;
 
     setState(() => _isCreatingProject = true);
@@ -65,8 +98,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      // Optimistic usage counter bump (backend already debited)
-      subProvider.recordGenerationUsed();
+      // No credit debit here — credits are charged at job start
+      // (inspiration-redesign), not at project creation.
 
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -74,11 +107,6 @@ class _HomeScreenState extends State<HomeScreen> {
           fullscreenDialog: true,
         ),
       );
-    } on PaywallRequiredException {
-      // Server-side enforcement: show paywall
-      if (mounted) {
-        await subProvider.showPaywall(source: 'server_402_create');
-      }
     } catch (e) {
       AppLogger.error('Failed to create project', e);
       if (mounted) {
@@ -125,33 +153,72 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const Spacer(),
-                    Consumer<SubscriptionProvider>(
-                      builder: (context, sub, _) {
-                        if (sub.isPremium) return const SizedBox.shrink();
-                        final remaining = sub.remainingGenerations;
-                        return GestureDetector(
-                          onTap: () => sub.showPaywall(source: 'home_remaining_chip'),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: remaining > 0
-                                  ? AppTheme.primaryColor.withValues(alpha: 0.08)
-                                  : AppTheme.errorColor.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(12),
+                    if (kDebugMode && _devBypassAuth)
+                      TextButton(
+                        onPressed: () {
+                          final sub = Provider.of<SubscriptionProvider>(
+                            context,
+                            listen: false,
+                          );
+                          sub.showPaywall(
+                            source: 'dev_test_paywall_button',
+                            context: context,
+                          );
+                        },
+                        child: Text(
+                          'Test Paywall',
+                          style: AppTheme.dmSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.primaryColor,
+                          ),
+                        ),
+                      ),
+                    Flexible(
+                      child: Consumer<SubscriptionProvider>(
+                        builder: (context, sub, _) {
+                          final credits = sub.creditsBalance;
+                          final isPro = sub.isPremium;
+                          if (isPro && credits > 10) {
+                            return const SizedBox.shrink();
+                          }
+                          return GestureDetector(
+                            onTap: () => sub.showPaywall(
+                              source: 'home_remaining_chip',
+                              context: context,
                             ),
-                            child: Text(
-                              remaining > 0
-                                  ? '$remaining free design${remaining == 1 ? '' : 's'} left'
-                                  : 'Upgrade to continue',
-                              style: AppTheme.dmSans(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: remaining > 0 ? AppTheme.primaryColor : AppTheme.errorColor,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: credits > 0
+                                    ? AppTheme.primaryColor.withValues(
+                                        alpha: 0.08,
+                                      )
+                                    : AppTheme.errorColor.withValues(
+                                        alpha: 0.08,
+                                      ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                credits > 0
+                                    ? '$credits credit${credits == 1 ? '' : 's'} left'
+                                    : 'Get credits',
+                                style: AppTheme.dmSans(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: credits > 0
+                                      ? AppTheme.primaryColor
+                                      : AppTheme.errorColor,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),

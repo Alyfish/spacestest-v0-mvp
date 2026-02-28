@@ -66,13 +66,18 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
 
   String? _asyncError;
   String? _dynamicSubtitle;
+  int _completionRunToken = 0;
+  bool _completionInFlight = false;
 
   @override
   void initState() {
     super.initState();
     _initAnimations();
     _startStaggeredAnimation();
-    _scheduleCompletion();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scheduleCompletion();
+    });
     widget.subtitleNotifier?.addListener(_onSubtitleChanged);
   }
 
@@ -152,41 +157,55 @@ class _AnalyzingScreenState extends State<AnalyzingScreen>
   }
 
   void _scheduleCompletion() async {
+    if (_completionInFlight) return;
+    _completionInFlight = true;
+    final runToken = ++_completionRunToken;
+    _asyncError = null;
+
+    String? asyncError;
     final minDuration = Future.delayed(_totalDuration);
     final asyncWorkFuture = widget.asyncWork != null
         ? widget.asyncWork!().catchError((e) {
-            _asyncError = e.toString();
+            asyncError = e.toString();
           })
         : Future.value();
 
-    await Future.wait([minDuration, asyncWorkFuture]);
+    try {
+      await Future.wait([minDuration, asyncWorkFuture]);
 
-    if (!mounted) return;
+      if (!mounted || runToken != _completionRunToken) return;
 
-    if (_asyncError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Something went wrong. Please try again.'),
-          backgroundColor: AppTheme.errorColor,
-          action: SnackBarAction(
-            label: 'Retry',
-            textColor: Colors.white,
-            onPressed: () {
-              _asyncError = null;
-              _scheduleCompletion();
-            },
+      _asyncError = asyncError;
+
+      if (_asyncError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Something went wrong. Please try again.'),
+            backgroundColor: AppTheme.errorColor,
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () {
+                _asyncError = null;
+                _scheduleCompletion();
+              },
+            ),
+            duration: const Duration(seconds: 10),
           ),
-          duration: const Duration(seconds: 10),
-        ),
-      );
-      return;
-    }
+        );
+        return;
+      }
 
-    // Avoid triggering parent setState during the current build/finalize phase.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      widget.onComplete?.call();
-    });
+      // Avoid triggering parent setState during the current build/finalize phase.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || runToken != _completionRunToken) return;
+        widget.onComplete?.call();
+      });
+    } finally {
+      if (runToken == _completionRunToken) {
+        _completionInFlight = false;
+      }
+    }
   }
 
   @override

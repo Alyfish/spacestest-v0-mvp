@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../theme.dart';
 import '../../providers/user_provider.dart';
+import '../../providers/subscription_provider.dart';
+import '../../utils/logger.dart';
 import '../main_navigation_screen.dart';
 
 /// Clean sign-in screen with Google and Apple OAuth only.
@@ -39,15 +41,13 @@ class _LoginScreenState extends State<LoginScreen>
       ),
     );
 
-    _slideUp = Tween<Offset>(
-      begin: const Offset(0, 0.15),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _entranceController,
-        curve: const Interval(0.0, 0.5, curve: Curves.easeOutCubic),
-      ),
-    );
+    _slideUp = Tween<Offset>(begin: const Offset(0, 0.15), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _entranceController,
+            curve: const Interval(0.0, 0.5, curve: Curves.easeOutCubic),
+          ),
+        );
 
     // Image fades in slightly after
     _imageFade = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -65,15 +65,13 @@ class _LoginScreenState extends State<LoginScreen>
       ),
     );
 
-    _buttonsSlide = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _entranceController,
-        curve: const Interval(0.4, 0.9, curve: Curves.easeOutCubic),
-      ),
-    );
+    _buttonsSlide = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _entranceController,
+            curve: const Interval(0.4, 0.9, curve: Curves.easeOutCubic),
+          ),
+        );
 
     _entranceController.forward();
   }
@@ -92,12 +90,14 @@ class _LoginScreenState extends State<LoginScreen>
       await userProvider.signInWithGoogle();
 
       if (mounted && userProvider.isAuthenticated) {
+        await _syncSubscriptionIdentity(userProvider);
         _navigateToMain();
       }
     } catch (e) {
       if (mounted) {
         _showError(
-          userProvider.errorMessage ?? 'Google sign in failed. Please try again.',
+          userProvider.errorMessage ??
+              'Google sign in failed. Please try again.',
         );
       }
     }
@@ -111,14 +111,26 @@ class _LoginScreenState extends State<LoginScreen>
       await userProvider.signInWithApple();
 
       if (mounted && userProvider.isAuthenticated) {
+        await _syncSubscriptionIdentity(userProvider);
         _navigateToMain();
       }
     } catch (e) {
       if (mounted) {
         _showError(
-          userProvider.errorMessage ?? 'Apple sign in failed. Please try again.',
+          userProvider.errorMessage ??
+              'Apple sign in failed. Please try again.',
         );
       }
+    }
+  }
+
+  Future<void> _syncSubscriptionIdentity(UserProvider userProvider) async {
+    final userId = userProvider.user.id;
+    if (userId == null || userId.isEmpty) return;
+    try {
+      await context.read<SubscriptionProvider>().onUserLoggedIn(userId);
+    } catch (e) {
+      AppLogger.error('Subscription identity sync failed: $e');
     }
   }
 
@@ -235,7 +247,9 @@ class _LoginScreenState extends State<LoginScreen>
                                 width: double.infinity,
                                 height: 56,
                                 child: OutlinedButton(
-                                  onPressed: isLoading ? null : _handleGoogleLogin,
+                                  onPressed: isLoading
+                                      ? null
+                                      : _handleGoogleLogin,
                                   style: OutlinedButton.styleFrom(
                                     backgroundColor: Colors.white,
                                     foregroundColor: AppTheme.textPrimary,
@@ -254,9 +268,10 @@ class _LoginScreenState extends State<LoginScreen>
                                           width: 22,
                                           child: CircularProgressIndicator(
                                             strokeWidth: 2.5,
-                                            valueColor: AlwaysStoppedAnimation<Color>(
-                                              AppTheme.primaryColor,
-                                            ),
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  AppTheme.primaryColor,
+                                                ),
                                           ),
                                         )
                                       : Row(
@@ -289,15 +304,15 @@ class _LoginScreenState extends State<LoginScreen>
                                   width: double.infinity,
                                   height: 56,
                                   child: ElevatedButton(
-                                    onPressed:
-                                        isLoading ? null : _handleAppleLogin,
+                                    onPressed: isLoading
+                                        ? null
+                                        : _handleAppleLogin,
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: AppTheme.textPrimary,
                                       foregroundColor: Colors.white,
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(16),
+                                        borderRadius: BorderRadius.circular(16),
                                       ),
                                     ),
                                     child: Row(

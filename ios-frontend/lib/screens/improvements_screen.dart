@@ -50,8 +50,9 @@ class ImprovementsScreen extends StatefulWidget {
   final VoidCallback? onBack;
   final void Function(
     List<String> recsToSelect,
-    bool needsColorSave,
-    bool needsStyleSave,
+    Map<String, dynamic>? pendingColorPalette,
+    Map<String, dynamic>? pendingStyleData,
+    List<Map<String, dynamic>> selectedTrendingItems,
   )?
   onImprove;
 
@@ -68,6 +69,9 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
   Timer? _productPollTimer;
   final Set<String> _selectedActionIds = <String>{};
   final Map<String, _SelectionDetails> _selectionDetails = {};
+  final Map<String, List<Map<String, dynamic>>> _selectedProductItems = {};
+  Map<String, dynamic>? _pendingColorPalette;
+  Map<String, dynamic>? _pendingStyleData;
   final List<_ImprovementCardData> _staticActions = const [
     _ImprovementCardData(
       id: 'color_palette',
@@ -208,8 +212,10 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
       final provider = Provider.of<ProjectProvider>(context, listen: false);
       if (data.id == 'color_palette') {
         provider.clearColorPalette();
+        _pendingColorPalette = null;
       } else if (data.id == 'design_style') {
         provider.clearDesignStyle();
+        _pendingStyleData = null;
       }
       return;
     }
@@ -253,17 +259,28 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
         '${selectedItemsRaw.length} item${selectedItemsRaw.length > 1 ? 's' : ''} selected from '
         '${firstItem['store'] ?? firstItem['retailer'] ?? 'Store'}';
 
+    // Store the raw product data for trending products save
+    final productItems = <Map<String, dynamic>>[];
+    for (final item in selectedItemsRaw) {
+      if (item is Map) {
+        productItems.add(Map<String, dynamic>.from(item));
+      }
+    }
+
     setState(() {
       _selectedActionIds.add(actionId);
       _selectionDetails[actionId] = _SelectionDetails(
         title: selectedOptionTitle ?? title,
         description: selectionSummary ?? fallbackDescription,
       );
+      if (productItems.isNotEmpty) {
+        _selectedProductItems[actionId] = productItems;
+      }
     });
   }
 
   Future<void> _openColorPalette() async {
-    final result = await Navigator.push<Map<String, String>?>(
+    final result = await Navigator.push<Map<String, dynamic>?>(
       context,
       MaterialPageRoute(builder: (_) => const ColorPaletteSelectionScreen()),
     );
@@ -271,15 +288,16 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
       setState(() {
         _selectedActionIds.add('color_palette');
         _selectionDetails['color_palette'] = _SelectionDetails(
-          title: result['name'] ?? 'Selected Palette',
+          title: (result['name'] as String?) ?? 'Selected Palette',
           description: 'Unselected items remain unchanged in your design',
         );
+        _pendingColorPalette = result;
       });
     }
   }
 
   Future<void> _openDesignStyle() async {
-    final result = await Navigator.push<Map<String, String>?>(
+    final result = await Navigator.push<Map<String, dynamic>?>(
       context,
       MaterialPageRoute(builder: (_) => const ChooseStyleScreen()),
     );
@@ -287,10 +305,11 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
       setState(() {
         _selectedActionIds.add('design_style');
         _selectionDetails['design_style'] = _SelectionDetails(
-          title: result['name'] ?? 'Selected Style',
+          title: (result['name'] as String?) ?? 'Selected Style',
           description:
               'Inviting shades of beige, terracotta, and for a cozy atmos.',
         );
+        _pendingStyleData = result;
       });
     }
   }
@@ -320,16 +339,51 @@ class _ImprovementsScreenState extends State<ImprovementsScreen> {
       recsToSelect = List<String>.from(provider.productRecommendations);
     }
 
-    final needsColorSave =
+    // Build pending color palette data for deferred save
+    Map<String, dynamic>? colorPalette = _pendingColorPalette;
+    if (colorPalette == null &&
         !_selectedActionIds.contains('color_palette') &&
-        provider.colorPalette == null;
-    final needsStyleSave =
+        provider.colorPalette == null) {
+      // No selection made and no previous palette — default to ai_decide
+      colorPalette = {
+        'id': 'ai_decide',
+        'name': 'Let AI Decide',
+        'hexColors': <String>[],
+        'letAiDecide': true,
+      };
+    }
+
+    // Build pending style data for deferred save
+    Map<String, dynamic>? styleData = _pendingStyleData;
+    if (styleData == null &&
         !_selectedActionIds.contains('design_style') &&
-        provider.designStyle == null;
+        provider.designStyle == null) {
+      // No selection made and no previous style — default to ai_decide
+      styleData = {
+        'id': 'ai_decide',
+        'name': 'Let AI Decide',
+        'letAiDecide': true,
+      };
+    }
+
+    // Collect all selected product items for trending products save
+    final allTrendingItems = <Map<String, dynamic>>[];
+    for (final entry in _selectedProductItems.entries) {
+      for (final item in entry.value) {
+        allTrendingItems.add({
+          'category': entry.key,
+          'url': item['url'] ?? '',
+          'title': item['title'] ?? '',
+          'image_url': item['image_url'] ?? '',
+          'store': item['store'] ?? item['retailer'] ?? '',
+          'price_str': item['price_str'] ?? item['price'],
+        });
+      }
+    }
 
     // Navigate immediately — saves run behind the AnalyzingScreen.
     // _isSubmitting resets naturally when the widget tree rebuilds on navigation.
-    widget.onImprove?.call(recsToSelect, needsColorSave, needsStyleSave);
+    widget.onImprove?.call(recsToSelect, colorPalette, styleData, allTrendingItems);
   }
 
   void _handleNavTap(int index) {
@@ -605,7 +659,6 @@ class ColorPaletteSelectionScreen extends StatefulWidget {
 class _ColorPaletteSelectionScreenState
     extends State<ColorPaletteSelectionScreen> {
   String? _selectedPalette;
-  bool _isSaving = false;
 
   // 2026 curated palettes + Let AI Decide
   final List<_PaletteOption> _palettes = const [
@@ -677,27 +730,21 @@ class _ColorPaletteSelectionScreenState
     setState(() => _selectedPalette = _selectedPalette == id ? null : id);
   }
 
-  Future<void> _handleContinue() async {
+  void _handleContinue() {
     if (_selectedPalette == null) {
       Navigator.pop(context);
       return;
     }
 
-    final provider = Provider.of<ProjectProvider>(context, listen: false);
     final palette = _palettes.firstWhere((p) => p.id == _selectedPalette);
 
-    setState(() => _isSaving = true);
-
-    final bool success;
     if (palette.isAiOption) {
-      // Let AI Decide — send empty colors with letAiDecide flag
-      success = await provider.saveColorPalette(
-        context,
-        'ai_decide',
-        'Let AI Decide',
-        [],
-        letAiDecide: true,
-      );
+      Navigator.pop<Map<String, dynamic>>(context, {
+        'id': 'ai_decide',
+        'name': 'Let AI Decide',
+        'hexColors': <String>[],
+        'letAiDecide': true,
+      });
     } else {
       final hexColors = palette.colors
           .map(
@@ -706,31 +753,13 @@ class _ColorPaletteSelectionScreenState
           )
           .toList();
 
-      success = await provider.saveColorPalette(
-        context,
-        _selectedPalette!,
-        palette.name,
-        hexColors,
-      );
+      Navigator.pop<Map<String, dynamic>>(context, {
+        'id': _selectedPalette!,
+        'name': palette.name,
+        'hexColors': hexColors,
+        'letAiDecide': false,
+      });
     }
-
-    if (!mounted) return;
-    setState(() => _isSaving = false);
-
-    if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            provider.errorMessage ??
-                'Failed to save color palette. Please try again.',
-          ),
-          backgroundColor: AppTheme.errorColor,
-        ),
-      );
-      return;
-    }
-
-    Navigator.pop(context, {'id': _selectedPalette!, 'name': palette.name});
   }
 
   void _handleNavTap(int index) {
@@ -861,7 +890,6 @@ class _ColorPaletteSelectionScreenState
               onSecondaryPressed: () => Navigator.pop(context),
               primaryText: 'Continue',
               onPrimaryPressed: _handleContinue,
-              isLoading: _isSaving,
             ),
           ],
         ),

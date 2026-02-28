@@ -131,38 +131,114 @@ load_dotenv()
 # Initialize logging
 logger = setup_logging()
 
+
+def _parse_env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Job TTL for cleanup (30 minutes)
 JOB_TTL_MINUTES = 30
 
-# Freemium usage limits
-FREE_GENERATION_LIMIT = 5
-FREE_ITERATION_LIMIT = 2
+# Credit system constants
+FREE_GENERATION_LIMIT = 3       # Free credits on signup
+FREE_DAILY_CAP = 3              # Max redesigns/day for free users
+PRO_DAILY_CAP = 5               # Max redesigns/day for pro users
+COOLDOWN_SECONDS = 30           # Minimum gap between generations
+PREWARM_GRACE_SECONDS = 300     # 5 min: don't double-debit same (user, project)
+ANNUAL_CREDIT_GRANT = 45        # Credits SET (not add) on annual purchase
+CREDIT_PACK_AMOUNT = 2          # Credits added per credit pack purchase
+
+# Dev IAP toggle — only enable on staging / local
+DEV_IAP_ENABLED = _parse_env_bool("DEV_IAP_ENABLED", False)
+REVENUECAT_WEBHOOK_AUTH = os.getenv("REVENUECAT_WEBHOOK_AUTH") or os.getenv("REVENUECAT_WEBHOOK_SECRET", "")
+
+# Production safety guards — refuse to start on Railway with unsafe config
+if os.getenv("RAILWAY_ENVIRONMENT"):
+    if not REVENUECAT_WEBHOOK_AUTH:
+        raise RuntimeError("REVENUECAT_WEBHOOK_AUTH must be set in production")
+    if DEV_IAP_ENABLED:
+        raise RuntimeError("DEV_IAP_ENABLED must not be enabled in production")
 
 
-def _get_user_usage(user_id: str) -> dict:
-    """Count generation and iteration debits from credit_transactions."""
+def _ensure_user_credits(user_id: str) -> dict:
+    """Ensure user_credits row exists (creates with 3 free credits if new).
+    Returns the row as a dict."""
     if not is_supabase_configured():
-        logger.error("Supabase not configured — freemium enforcement disabled, returning zero usage")
-        return {"generations_used": 0, "iterations_used": 0}
+        return {"balance": FREE_GENERATION_LIMIT, "plan_tier": "free",
+                "redesigns_used_today": 0, "last_generation_started_at": None}
     sb = get_supabase_client()
-    gen_result = (
-        sb.table("credit_transactions")
-        .select("id", count="exact")
+    sb.rpc("ensure_user_credits", {"p_user_id": user_id}).execute()
+    result = (
+        sb.table("user_credits")
+        .select("*")
         .eq("user_id", user_id)
-        .eq("transaction_type", "generation_debit")
+        .single()
         .execute()
     )
-    iter_result = (
-        sb.table("credit_transactions")
-        .select("id", count="exact")
-        .eq("user_id", user_id)
-        .eq("transaction_type", "redesign_debit")
-        .execute()
-    )
+    return result.data
+
+
+def _get_usage_v2(user_id: str) -> dict:
+    """Return credit-based usage info for the authenticated user."""
+    row = _ensure_user_credits(user_id)
+    plan_tier = row.get("plan_tier", "free")
+    balance = row.get("balance", 0)
+    daily_cap = PRO_DAILY_CAP if plan_tier == "pro_yearly" else FREE_DAILY_CAP
+    redesigns_today = row.get("redesigns_used_today", 0)
+
+    # Check if daily window rolled over (client-side display)
+    from datetime import date
+    window_start = row.get("daily_window_start")
+    if window_start and str(window_start) < str(date.today()):
+        redesigns_today = 0
+
+    daily_remaining = max(0, daily_cap - redesigns_today)
+
+    # Cooldown
+    cooldown_left = 0
+    last_gen = row.get("last_generation_started_at")
+    if last_gen:
+        try:
+            from datetime import datetime as dt
+            if isinstance(last_gen, str):
+                # Parse ISO timestamp
+                last_gen_dt = dt.fromisoformat(last_gen.replace("Z", "+00:00"))
+            else:
+                last_gen_dt = last_gen
+            from datetime import timezone
+            now = dt.now(timezone.utc)
+            elapsed = (now - last_gen_dt).total_seconds()
+            if elapsed < COOLDOWN_SECONDS:
+                cooldown_left = int(COOLDOWN_SECONDS - elapsed)
+        except Exception:
+            pass
+
     return {
-        "generations_used": gen_result.count or 0,
-        "iterations_used": iter_result.count or 0,
+        "plan_tier": plan_tier,
+        "credits_balance": balance,
+        "daily_remaining": daily_remaining,
+        "daily_cap": daily_cap,
+        "cooldown_seconds_left": cooldown_left,
+        "redesigns_used_today": redesigns_today,
     }
+
+
+def _check_and_debit(user_id: str, idempotency_key: str, project_id: str = None, description: str = "redesign") -> dict:
+    """Call the atomic check_and_debit_redesign() stored procedure."""
+    if not is_supabase_configured():
+        return {"ok": True, "balance": FREE_GENERATION_LIMIT, "plan_tier": "free"}
+    sb = get_supabase_client()
+    result = sb.rpc("check_and_debit_redesign", {
+        "p_user_id": user_id,
+        "p_idempotency_key": idempotency_key,
+        "p_project_id": project_id,
+        "p_description": description,
+    }).execute()
+    # result.data is the JSONB return value
+    return result.data if isinstance(result.data, dict) else json.loads(result.data)
 
 
 _E2E_STUB_PNG_BASE64 = (
@@ -264,13 +340,6 @@ def _e2e_stub_trending(project_id: str):
     }
 
 
-def _parse_env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _parse_cors_origins(raw: Optional[str]) -> List[str]:
     if not raw:
         return []
@@ -344,6 +413,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Supabase not configured - using in-memory job fallback")
 
+    # Security: warn loudly if RevenueCat webhook auth is missing in production
+    if os.getenv("RAILWAY_ENVIRONMENT") and not REVENUECAT_WEBHOOK_AUTH:
+        logger.warning(
+            "REVENUECAT_WEBHOOK_AUTH is empty — webhook endpoint is UNAUTHENTICATED. "
+            "Set this env var to secure /webhooks/revenuecat in production."
+        )
+
     logger.info("Startup complete: Shared resources initialized")
 
     yield
@@ -393,9 +469,17 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ALLOW_ORIGINS,
     allow_credentials=_CORS_ALLOW_CREDENTIALS,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 # Add request ID middleware for correlation
 add_request_id_middleware(app)
@@ -631,66 +715,17 @@ async def root():
 
 @app.get("/usage")
 async def get_usage(user: AuthenticatedUser = Depends(get_current_user)):
-    """Return freemium usage counts and remaining limits for the authenticated user."""
-    usage = _get_user_usage(user.id)
-    return {
-        **usage,
-        "limits": {
-            "free_generations": FREE_GENERATION_LIMIT,
-            "free_iterations": FREE_ITERATION_LIMIT,
-        },
-        "remaining": {
-            "generations": max(0, FREE_GENERATION_LIMIT - usage["generations_used"]),
-            "iterations": max(0, FREE_ITERATION_LIMIT - usage["iterations_used"]),
-        },
-    }
+    """Return credit-based usage info for the authenticated user."""
+    return _get_usage_v2(user.id)
 
 
 @app.post("/projects", response_model=ProjectCreateResponse)
 async def create_project(user: AuthenticatedUser = Depends(get_current_user)):
-    """Create a new project"""
+    """Create a new project. No credit debit here — credits are charged at job start
+    (inspiration-redesign / retry-redesign), not at project creation."""
     logger.info("Received request to create new project", extra={"user_id": user.id})
 
-    # Server-side enforcement (safety net for free-tier limits)
-    try:
-        usage = _get_user_usage(user.id)
-        if usage["generations_used"] >= FREE_GENERATION_LIMIT:
-            raise HTTPException(
-                status_code=402,
-                detail={"code": "PAYWALL_REQUIRED", "message": "Free generation limit reached"},
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.warning("Usage check failed, allowing through", exc_info=True)
-
     project_id = data_manager.create_project(user_id=user.id)
-
-    # Debit generation (idempotent: one debit per project)
-    try:
-        sb = get_supabase_client()
-        existing = (
-            sb.table("credit_transactions")
-            .select("id")
-            .eq("user_id", user.id)
-            .eq("project_id", project_id)
-            .eq("transaction_type", "generation_debit")
-            .execute()
-        )
-        if not existing.data:
-            sb.table("credit_transactions").insert(
-                {
-                    "user_id": user.id,
-                    "amount": -1,
-                    "balance_after": 0,
-                    "transaction_type": "generation_debit",
-                    "project_id": project_id,
-                    "description": f"Generation flow started: {project_id}",
-                }
-            ).execute()
-    except Exception:
-        logger.warning("Failed to record generation debit", exc_info=True)
-
     project = data_manager.get_project(project_id, user_id=user.id)
 
     return ProjectCreateResponse(project_id=project_id, status=project["status"])
@@ -795,6 +830,10 @@ async def get_project_base_image(project_id: str, user: AuthenticatedUser = Depe
     if not Path(image_path).exists():
         raise HTTPException(status_code=404, detail="Image file not found")
 
+    resolved = Path(image_path).resolve()
+    if not resolved.is_relative_to(Path("data").resolve()):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     return FileResponse(image_path)
 
 
@@ -821,6 +860,10 @@ async def get_project_labelled_image(project_id: str, user: AuthenticatedUser = 
 
     if not Path(image_path).exists():
         raise HTTPException(status_code=404, detail="Labelled image file not found")
+
+    resolved = Path(image_path).resolve()
+    if not resolved.is_relative_to(Path("data").resolve()):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     return FileResponse(image_path)
 
@@ -1052,6 +1095,10 @@ async def get_inspiration_image(project_id: str, image_index: int, user: Authent
     if not Path(image_path).exists():
         raise HTTPException(status_code=404, detail="Inspiration image file not found")
 
+    resolved = Path(image_path).resolve()
+    if not resolved.is_relative_to(Path("data").resolve()):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     return FileResponse(image_path)
 
 
@@ -1123,40 +1170,53 @@ async def generate_inspiration_redesign(
 
     use_stub = _is_e2e_stub_enabled(x_e2e_test_secret, request=request)
 
-    # Check if project has inspiration images, inspiration recs, OR product recs
+    # Check if project has enough redesign context (selected recs count too).
     context = ProjectContext.model_validate(project["context"])
-    has_inspiration_recs = (
-        context.inspiration_recommendations
-        and len(context.inspiration_recommendations) > 0
-    )
-    has_product_recs = (
-        context.product_recommendations
-        and len(context.product_recommendations) > 0
-    )
-    has_inspiration_images = (
-        context.inspiration_images
-        and len(context.inspiration_images) > 0
-    )
+    has_inspiration_recs = len(context.inspiration_recommendations or []) > 0
+    has_product_recs = len(context.product_recommendations or []) > 0
+    has_selected_product_recs = len(context.selected_product_recommendations or []) > 0
+    has_selected_products = len(context.selected_products or []) > 0
+    has_inspiration_images = len(context.inspiration_images or []) > 0
 
-    has_improvement_markers = bool(context.improvement_markers) and len(context.improvement_markers) > 0
+    has_improvement_markers = len(context.improvement_markers or []) > 0
     is_iterative = context.improvement_mode == "iterative"
     allow_marker_only = is_iterative and has_improvement_markers
+    ready_for_redesign = context.is_ready_for_inspiration_redesign()
 
-    if (
-        not use_stub
-        and not has_inspiration_recs
-        and not has_product_recs
-        and not has_inspiration_images
-        and not allow_marker_only
-    ):
+    if has_selected_products:
+        validation_source = "selected_products"
+    elif has_selected_product_recs:
+        validation_source = "selected_product_recommendations"
+    elif has_product_recs:
+        validation_source = "product_recommendations"
+    elif has_inspiration_recs:
+        validation_source = "inspiration_recommendations"
+    elif has_inspiration_images:
+        validation_source = "inspiration_images"
+    elif allow_marker_only:
+        validation_source = "marker_only_iterative"
+    else:
+        validation_source = "none"
+
+    if not use_stub and not ready_for_redesign:
         logger.warning(
-            "Project has no inspiration images, inspiration recs, or product recs",
+            "Project lacks redesign context for inspiration-redesign start",
             extra={
                 "project_id": project_id,
                 "current_status": project["status"],
-                "has_inspiration_recs": False,
-                "has_product_recs": False,
-                "has_inspiration_images": False,
+                "improvement_mode": context.improvement_mode,
+                "has_inspiration_recs": has_inspiration_recs,
+                "has_product_recs": has_product_recs,
+                "has_selected_product_recs": has_selected_product_recs,
+                "has_selected_products": has_selected_products,
+                "has_inspiration_images": has_inspiration_images,
+                "has_improvement_markers": has_improvement_markers,
+                "marker_count": len(context.improvement_markers or []),
+                "selected_recommendations_count": len(
+                    context.selected_product_recommendations or []
+                ),
+                "selected_products_count": len(context.selected_products or []),
+                "validation_source": validation_source,
             },
         )
         raise HTTPException(
@@ -1167,11 +1227,50 @@ async def generate_inspiration_redesign(
     logger.info("Inspiration redesign validation passed", extra={
         "project_id": project_id,
         "improvement_mode": context.improvement_mode,
+        "ready_for_redesign": ready_for_redesign,
+        "validation_source": validation_source,
+        "has_inspiration_recs": has_inspiration_recs,
         "has_product_recs": has_product_recs,
+        "has_selected_product_recs": has_selected_product_recs,
+        "has_selected_products": has_selected_products,
+        "has_inspiration_images": has_inspiration_images,
         "has_improvement_markers": has_improvement_markers,
         "marker_count": len(context.improvement_markers) if context.improvement_markers else 0,
         "allow_marker_only": allow_marker_only,
     })
+
+    # Atomic credit debit at job start (1 credit per redesign)
+    idem_key = x_idempotency_key or f"redesign:{user.id}:{project_id}:{int(time.time()) // 60}"
+    try:
+        debit_result = _check_and_debit(
+            user.id, idem_key, project_id=project_id,
+            description=f"Inspiration redesign: {project_id}",
+        )
+        if not debit_result.get("ok"):
+            reason = debit_result.get("reason", "unknown")
+            if reason == "cooldown":
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "code": "COOLDOWN",
+                        "message": f"Please wait {debit_result.get('cooldown_remaining', COOLDOWN_SECONDS)}s",
+                        "cooldown_remaining": debit_result.get("cooldown_remaining", COOLDOWN_SECONDS),
+                    },
+                )
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "code": "PAYWALL_REQUIRED",
+                    "message": "Insufficient credits" if reason == "insufficient_credits" else "Daily cap reached",
+                    "reason": reason,
+                    "plan_tier": debit_result.get("plan_tier", "free"),
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("Credit debit failed in inspiration_redesign", exc_info=True)
+        raise HTTPException(status_code=503, detail="Credit system unavailable, please retry")
 
     # Create job in Supabase (idempotent)
     job_id = await job_manager.create_job(
@@ -1222,18 +1321,38 @@ async def retry_redesign(project_id: str, request: RetryRedesignRequest, user: A
         extra={"project_id": project_id, "feedback": request.feedback[:100], "user_id": user.id},
     )
 
-    # Server-side enforcement (safety net for free-tier limits)
+    # Atomic credit debit for iteration (unified pool: 1 credit per action)
+    idem_key = f"retry:{user.id}:{project_id}:{request.attempt_id}"
     try:
-        usage = _get_user_usage(user.id)
-        if usage["iterations_used"] >= FREE_ITERATION_LIMIT:
+        debit_result = _check_and_debit(
+            user.id, idem_key, project_id=project_id,
+            description=f"retry:{request.attempt_id}",
+        )
+        if not debit_result.get("ok"):
+            reason = debit_result.get("reason", "unknown")
+            if reason == "cooldown":
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "code": "COOLDOWN",
+                        "message": f"Please wait {debit_result.get('cooldown_remaining', COOLDOWN_SECONDS)}s",
+                        "cooldown_remaining": debit_result.get("cooldown_remaining", COOLDOWN_SECONDS),
+                    },
+                )
             raise HTTPException(
                 status_code=402,
-                detail={"code": "PAYWALL_REQUIRED", "message": "Free iteration limit reached"},
+                detail={
+                    "code": "PAYWALL_REQUIRED",
+                    "message": "Insufficient credits" if reason == "insufficient_credits" else "Daily cap reached",
+                    "reason": reason,
+                    "plan_tier": debit_result.get("plan_tier", "free"),
+                },
             )
     except HTTPException:
         raise
     except Exception:
-        logger.warning("Usage check failed in retry_redesign, allowing through", exc_info=True)
+        logger.error("Credit debit failed in retry_redesign", exc_info=True)
+        raise HTTPException(status_code=503, detail="Credit system unavailable, please retry")
 
     project = data_manager.get_project(project_id, user_id=user.id)
 
@@ -1257,38 +1376,6 @@ async def retry_redesign(project_id: str, request: RetryRedesignRequest, user: A
             },
         )
         result = data_manager.retry_inspiration_redesign(project_id, request.feedback)
-
-        # Debit iteration (idempotent via attempt_id)
-        try:
-            sb = get_supabase_client()
-            attempt_key = request.attempt_id
-            if not attempt_key or not attempt_key.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail={"code": "BAD_REQUEST", "message": "attempt_id is required and cannot be empty"},
-                )
-            existing = (
-                sb.table("credit_transactions")
-                .select("id")
-                .eq("user_id", user.id)
-                .eq("project_id", project_id)
-                .eq("transaction_type", "redesign_debit")
-                .eq("description", f"retry:{attempt_key}")
-                .execute()
-            )
-            if not existing.data:
-                sb.table("credit_transactions").insert(
-                    {
-                        "user_id": user.id,
-                        "amount": -1,
-                        "balance_after": 0,
-                        "transaction_type": "redesign_debit",
-                        "project_id": project_id,
-                        "description": f"retry:{attempt_key}",
-                    }
-                ).execute()
-        except Exception:
-            logger.warning("Failed to record retry debit", exc_info=True)
 
         logger.info(
             "Retry redesign completed successfully",
@@ -2494,6 +2581,9 @@ async def get_generated_image(
     # Local file path
     image_path = Path(image_data)
     if image_path.exists():
+        resolved = image_path.resolve()
+        if not resolved.is_relative_to(Path("data").resolve()):
+            raise HTTPException(status_code=403, detail="Access denied")
         return FileResponse(
             path=str(image_path),
             media_type="image/png",
@@ -2659,6 +2749,12 @@ async def analyze_furniture_batch(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except httpx.TransportError as e:
+        logger.warning(f"Transient upstream error in analyze_furniture_batch: {str(e)}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to analyze furniture: Server disconnected (transient upstream error). Please retry.",
+        )
     except Exception as e:
         logger.error(f"Failed to analyze furniture batch: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze furniture: {str(e)}")
@@ -3556,7 +3652,167 @@ async def subscribe_job_ready_notification(
     )
 
 
+# ============================================================
+# Dev IAP Endpoints (guarded by DEV_IAP_ENABLED)
+# ============================================================
+
+@app.post("/dev/grant-annual")
+async def dev_grant_annual(user: AuthenticatedUser = Depends(get_current_user)):
+    """Mock IAP: grant annual subscription (SET credits to 45, upgrade to pro_yearly)."""
+    if not DEV_IAP_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not is_supabase_configured():
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    sb = get_supabase_client()
+    # Ensure row exists
+    sb.rpc("ensure_user_credits", {"p_user_id": user.id}).execute()
+    # SET balance to 45 (not add), upgrade plan
+    from datetime import datetime as dt, timezone, timedelta
+    renew_at = dt.now(timezone.utc) + timedelta(days=365)
+    sb.table("user_credits").update({
+        "balance": ANNUAL_CREDIT_GRANT,
+        "plan_tier": "pro_yearly",
+        "credits_renew_at": renew_at.isoformat(),
+    }).eq("user_id", user.id).execute()
+
+    # Record transaction
+    sb.table("credit_transactions").insert({
+        "user_id": user.id,
+        "amount": ANNUAL_CREDIT_GRANT,
+        "balance_after": ANNUAL_CREDIT_GRANT,
+        "transaction_type": "annual_grant",
+        "description": "Dev mock: annual subscription granted",
+        "idempotency_key": f"dev_annual:{user.id}:{dt.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+    }).execute()
+
+    logger.info("Dev grant-annual", extra={"user_id": user.id, "balance": ANNUAL_CREDIT_GRANT})
+    return {"ok": True, "plan_tier": "pro_yearly", "credits_balance": ANNUAL_CREDIT_GRANT}
+
+
+@app.post("/dev/grant-credits")
+async def dev_grant_credits(user: AuthenticatedUser = Depends(get_current_user)):
+    """Mock IAP: purchase credit pack (+2 credits)."""
+    if not DEV_IAP_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not is_supabase_configured():
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    sb = get_supabase_client()
+    sb.rpc("ensure_user_credits", {"p_user_id": user.id}).execute()
+
+    from datetime import datetime as dt, timezone
+    idem_key = f"dev_credits:{user.id}:{dt.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+
+    # Add credits
+    result = sb.rpc("add_credits", {
+        "p_user_id": user.id,
+        "p_amount": CREDIT_PACK_AMOUNT,
+        "p_description": "Dev mock: credit pack purchased",
+        "p_transaction_type": "credit_purchase",
+        "p_idempotency_key": idem_key,
+    }).execute()
+    new_balance = result.data if isinstance(result.data, int) else CREDIT_PACK_AMOUNT
+
+    logger.info("Dev grant-credits", extra={"user_id": user.id, "added": CREDIT_PACK_AMOUNT, "balance": new_balance})
+    return {"ok": True, "credits_added": CREDIT_PACK_AMOUNT, "credits_balance": new_balance}
+
+
+# ============================================================
+# RevenueCat Webhook
+# ============================================================
+
+@app.post("/webhooks/revenuecat")
+async def revenuecat_webhook(request: Request):
+    """Handle RevenueCat server-to-server webhook events."""
+    # Auth check — accept "Bearer <secret>" or bare "<secret>"
+    auth_header = request.headers.get("Authorization", "").strip()
+    token = auth_header.removeprefix("Bearer ").strip() if auth_header else ""
+    if not REVENUECAT_WEBHOOK_AUTH or token != REVENUECAT_WEBHOOK_AUTH:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    body = await request.json()
+    event = body.get("event", {})
+    event_type = event.get("type", "")
+    event_id = event.get("id", "")
+    app_user_id = event.get("app_user_id", "")
+
+    if not app_user_id:
+        logger.warning("RC webhook: missing app_user_id", extra={"event_type": event_type})
+        return {"ok": True}  # ACK to prevent retries
+
+    logger.info("RC webhook", extra={"event_type": event_type, "event_id": event_id, "user_id": app_user_id})
+
+    if not is_supabase_configured():
+        logger.warning("RC webhook: Supabase not configured, skipping")
+        return {"ok": True}
+
+    sb = get_supabase_client()
+
+    # Idempotency: skip if event_id already processed
+    if event_id:
+        existing = (
+            sb.table("credit_transactions")
+            .select("id")
+            .eq("idempotency_key", f"rc:{event_id}")
+            .execute()
+        )
+        if existing.data:
+            logger.info("RC webhook: duplicate event, skipping", extra={"event_id": event_id})
+            return {"ok": True}
+
+    sb.rpc("ensure_user_credits", {"p_user_id": app_user_id}).execute()
+
+    if event_type in ("INITIAL_PURCHASE", "RENEWAL") and "spacesproyearly1" in event.get("product_id", ""):
+        # Annual subscription: SET balance to 45, upgrade plan
+        from datetime import datetime as dt, timezone, timedelta
+        renew_at = dt.now(timezone.utc) + timedelta(days=365)
+        sb.table("user_credits").update({
+            "balance": ANNUAL_CREDIT_GRANT,
+            "plan_tier": "pro_yearly",
+            "credits_renew_at": renew_at.isoformat(),
+        }).eq("user_id", app_user_id).execute()
+
+        sb.table("credit_transactions").insert({
+            "user_id": app_user_id,
+            "amount": ANNUAL_CREDIT_GRANT,
+            "balance_after": ANNUAL_CREDIT_GRANT,
+            "transaction_type": "annual_grant",
+            "description": f"RC {event_type}: {event.get('product_id', '')}",
+            "idempotency_key": f"rc:{event_id}" if event_id else None,
+        }).execute()
+        logger.info("RC: annual grant applied", extra={"user_id": app_user_id})
+
+    elif event_type == "NON_RENEWING_PURCHASE" and "spacesprocredits" in event.get("product_id", ""):
+        # Credit pack: add +2 credits with idempotency_key tied to rc:{event_id}
+        new_balance = sb.rpc("add_credits", {
+            "p_user_id": app_user_id,
+            "p_amount": CREDIT_PACK_AMOUNT,
+            "p_description": f"RC credit purchase: {event.get('product_id', '')}",
+            "p_transaction_type": "credit_purchase",
+            "p_idempotency_key": f"rc:{event_id}" if event_id else None,
+        }).execute().data  # returns new balance (int)
+        logger.info("RC: credit pack applied", extra={"user_id": app_user_id, "added": CREDIT_PACK_AMOUNT})
+
+    elif event_type == "EXPIRATION":
+        # Subscription expired: downgrade to free (keep remaining credits)
+        sb.table("user_credits").update({
+            "plan_tier": "free",
+            "credits_renew_at": None,
+        }).eq("user_id", app_user_id).execute()
+        logger.info("RC: subscription expired, downgraded to free", extra={"user_id": app_user_id})
+
+    elif event_type == "CANCELLATION":
+        sb.table("user_credits").update({
+            "plan_tier": "free",
+            "credits_renew_at": None,
+        }).eq("user_id", app_user_id).execute()
+        logger.info("RC: subscription cancelled, downgraded to free", extra={"user_id": app_user_id})
+
+    return {"ok": True}
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=os.getenv("RAILWAY_ENVIRONMENT") is None)

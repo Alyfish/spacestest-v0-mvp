@@ -2018,7 +2018,7 @@ Return exactly 6 recommendations that are distinct and complementary to each oth
                 is_valid = resp.status_code == 200
                 product["link_validated"] = is_valid
                 return product, is_valid
-            except:
+            except Exception:
                 product["link_validated"] = False
                 return product, False
 
@@ -2031,9 +2031,9 @@ Return exactly 6 recommendations that are distinct and complementary to each oth
                         product, is_valid = future.result()
                         if is_valid:
                             validated.append(product)
-                    except:
+                    except Exception:
                         pass
-        except:
+        except Exception:
             # If validation fails entirely, return original products
             return products
 

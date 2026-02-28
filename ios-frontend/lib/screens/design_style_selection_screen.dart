@@ -19,7 +19,6 @@ class ChooseStyleScreen extends StatefulWidget {
 
 class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
   String? _selectedStyle;
-  bool _isSaving = false;
 
   final List<_DesignStyleOption> _styles = const [
     _DesignStyleOption(
@@ -84,51 +83,27 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
     setState(() => _selectedStyle = _selectedStyle == id ? null : id);
   }
 
-  Future<void> _handleContinue() async {
+  void _handleContinue() {
     if (_selectedStyle == null) {
       Navigator.pop(context);
       return;
     }
 
-    final provider = Provider.of<ProjectProvider>(context, listen: false);
-    if (!provider.hasProject) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Create a project first'),
-          backgroundColor: AppTheme.errorColor,
-        ),
-      );
-      return;
-    }
-
     final style = _styles.firstWhere((s) => s.id == _selectedStyle);
-    setState(() => _isSaving = true);
 
-    final success = style.isAiOption
-        ? await provider.saveDesignStyle(
-            context,
-            'ai_decide',
-            'Let AI Decide',
-            letAiDecide: true,
-          )
-        : await provider.saveDesignStyle(context, _selectedStyle!, style.name);
-
-    if (!mounted) return;
-    setState(() => _isSaving = false);
-
-    if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            provider.errorMessage ?? 'Failed to save style. Please try again.',
-          ),
-          backgroundColor: AppTheme.errorColor,
-        ),
-      );
-      return;
+    if (style.isAiOption) {
+      Navigator.pop<Map<String, dynamic>>(context, {
+        'id': 'ai_decide',
+        'name': 'Let AI Decide',
+        'letAiDecide': true,
+      });
+    } else {
+      Navigator.pop<Map<String, dynamic>>(context, {
+        'id': _selectedStyle!,
+        'name': style.name,
+        'letAiDecide': false,
+      });
     }
-
-    Navigator.pop(context, {'id': _selectedStyle!, 'name': style.name});
   }
 
   void _handleNavTap(int index) {
@@ -259,7 +234,6 @@ class _ChooseStyleScreenState extends State<ChooseStyleScreen> {
               onSecondaryPressed: () => Navigator.pop(context),
               primaryText: 'Continue',
               onPrimaryPressed: _handleContinue,
-              isLoading: _isSaving,
             ),
           ],
         ),

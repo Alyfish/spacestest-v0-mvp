@@ -264,12 +264,12 @@ class ApiService {
     await Future.delayed(const Duration(milliseconds: 500));
 
     const mockResponse = [
-      {'id': 'walmart', 'name': 'Walmart', 'logoUrl': ''},
+      {'id': 'walmart', 'name': 'Walmart', 'logoUrl': 'assets/logo/walmart.jpg'},
       {'id': 'amazon', 'name': 'Amazon', 'logoUrl': 'assets/logo/amazon.png'},
       {'id': 'ikea', 'name': 'IKEA', 'logoUrl': 'assets/logo/ikea.png'},
-      {'id': 'ashley', 'name': 'Ashley', 'logoUrl': ''},
+      {'id': 'ashley', 'name': 'Ashley', 'logoUrl': 'assets/logo/Ashley_Furniture_Logo.png'},
       {'id': 'target', 'name': 'Target', 'logoUrl': 'assets/logo/target.png'},
-      {'id': 'wayfair', 'name': 'Wayfair', 'logoUrl': ''},
+      {'id': 'wayfair', 'name': 'Wayfair', 'logoUrl': 'assets/logo/wayfair.png'},
       {'id': 'etsy', 'name': 'Etsy', 'logoUrl': 'assets/logo/etsy.png'},
       {'id': 'other', 'name': 'Other', 'logoUrl': ''},
     ];
@@ -911,6 +911,47 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> setSelectedTrendingProducts(
+    String projectId,
+    String authToken,
+    List<Map<String, dynamic>> products,
+  ) async {
+    _requireProjectId(projectId);
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.withProjectId(ApiConstants.selectedTrendingProducts, projectId)}',
+      );
+
+      AppLogger.info(
+        'Setting selected trending products for $projectId: ${products.length} items',
+      );
+
+      final response = await http
+          .post(
+            url,
+            headers: ApiConstants.authHeaders(authToken),
+            body: jsonEncode({'products': products}),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        AppLogger.info('Selected trending products set successfully');
+        return data;
+      } else {
+        AppLogger.error(
+          'Failed to set selected trending products: ${response.statusCode} - ${response.body}',
+        );
+        throw Exception(
+          'Failed to set selected trending products: ${response.statusCode}',
+        );
+      }
+    } catch (e) {
+      AppLogger.error('Error setting selected trending products', e);
+      rethrow;
+    }
+  }
+
   // ==========================================================================
   // Product Search & Selection
   // ==========================================================================
@@ -1159,6 +1200,13 @@ class ApiService {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         AppLogger.info('Image generation job started: ${data['job_id']}');
         return data;
+      } else if (response.statusCode == 402) {
+        final respBody = jsonDecode(response.body);
+        final detail = respBody is Map ? (respBody['detail'] ?? respBody) : respBody;
+        throw PaywallRequiredException(
+          code: detail is Map ? (detail['code'] ?? 'PAYWALL_REQUIRED') : 'PAYWALL_REQUIRED',
+          message: detail is Map ? (detail['message'] ?? 'Free limit reached') : 'Free limit reached',
+        );
       } else {
         AppLogger.error(
           'Failed to start image generation: ${response.statusCode} - ${response.body}',
@@ -1200,6 +1248,13 @@ class ApiService {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         AppLogger.info('Inspiration redesign job started: ${data['job_id']}');
         return data;
+      } else if (response.statusCode == 402) {
+        final respBody = jsonDecode(response.body);
+        final detail = respBody is Map ? (respBody['detail'] ?? respBody) : respBody;
+        throw PaywallRequiredException(
+          code: detail is Map ? (detail['code'] ?? 'PAYWALL_REQUIRED') : 'PAYWALL_REQUIRED',
+          message: detail is Map ? (detail['message'] ?? 'Free limit reached') : 'Free limit reached',
+        );
       } else {
         AppLogger.error(
           'Failed to start inspiration redesign: ${response.statusCode} - ${response.body}',

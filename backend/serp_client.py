@@ -37,7 +37,6 @@ class SerpClient:
         if not self.api_key:
             raise ValueError("SERP_API_KEY not found in environment variables")
 
-        print(f"🔧 SERP Client initialized with API key: {self.api_key[:10]}...")
 
     @retry_sync(max_retries=3, base_delay=1.0, exponential_base=2.0)
     def search_products(self, query: str, num_results: int = 10) -> Dict[str, Any]:

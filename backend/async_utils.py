@@ -234,6 +234,11 @@ async def get_or_compute(
     # Create future for this computation
     loop = asyncio.get_running_loop()
     future = loop.create_future()
+    # Prevent "Future exception was never retrieved" noise when the creator
+    # sets an exception but no concurrent waiter actually awaits this future.
+    future.add_done_callback(
+        lambda f: f.exception() if not f.cancelled() else None
+    )
     in_flight[key] = future
 
     try:

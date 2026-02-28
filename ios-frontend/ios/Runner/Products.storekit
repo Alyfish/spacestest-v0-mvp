@@ -1,0 +1,70 @@
+{
+  "identifier" : "com.spacesprod.app.products",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "spacesprocredits",
+      "localizations" : [
+        {
+          "description" : "Get 2 additional redesign credits",
+          "displayName" : "2 Credits Pack",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "spacesprocredits",
+      "referenceName" : "Credits Pack",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6759776626",
+    "_developerTeamID" : "K9276M9LMX"
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "spaces_pro",
+      "localizations" : [
+
+      ],
+      "name" : "Spaces Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "39.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "spacesproyearly1",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "45 redesign credits per year, 5 per day",
+              "displayName" : "Spaces Pro Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "spacesproyearly1",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Spaces Pro Yearly",
+          "subscriptionGroupID" : "spaces_pro",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

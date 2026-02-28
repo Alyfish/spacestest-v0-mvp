@@ -17,11 +17,18 @@ import '../utils/logger.dart';
 class SupabaseService {
   // Supabase project configuration
   static const String _supabaseUrl = 'https://ocjxdxkugztdthpehkhm.supabase.co';
-  static const String _supabaseAnonKey = 'sb_publishable_vTPYfC80qr9rAoQNPYioOQ_fssreR4P';
+  static const String _supabaseAnonKey =
+      'sb_publishable_vTPYfC80qr9rAoQNPYioOQ_fssreR4P';
 
   // Google OAuth client IDs
-  static const String _googleWebClientId = '331774678727-f5u1tf88duhp9hpgcebs0fe1s7psncvd.apps.googleusercontent.com';
-  static const String _googleIosClientId = '331774678727-6r50kaulqi0pcnqqtupsdt2ugp1b9bc9.apps.googleusercontent.com';
+  static const String _googleWebClientId =
+      '331774678727-f5u1tf88duhp9hpgcebs0fe1s7psncvd.apps.googleusercontent.com';
+  // Optional escape hatch for iOS if plist config is not picked up yet.
+  // Preferred source of truth is the Firebase iOS config + Info.plist values.
+  static const String _googleIosClientIdOverride = String.fromEnvironment(
+    'GOOGLE_IOS_CLIENT_ID',
+    defaultValue: '',
+  );
 
   // Secure storage for session persistence
   static final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
@@ -77,7 +84,8 @@ class SupabaseService {
 
   /// Stream of authentication state changes.
   /// Listen to this to react to sign in/out events.
-  static Stream<AuthState> get authStateChanges => client.auth.onAuthStateChange;
+  static Stream<AuthState> get authStateChanges =>
+      client.auth.onAuthStateChange;
 
   // ============================================
   // GOOGLE OAUTH
@@ -87,8 +95,9 @@ class SupabaseService {
   /// Requires Google Sign In to be configured in the Supabase dashboard
   /// with "Skip nonce check" enabled for iOS.
   static Future<AuthResponse> signInWithGoogle() async {
+    final iosClientIdOverride = _googleIosClientIdOverride.trim();
     final GoogleSignIn googleSignIn = GoogleSignIn(
-      clientId: _googleIosClientId,
+      clientId: iosClientIdOverride.isEmpty ? null : iosClientIdOverride,
       serverClientId: _googleWebClientId,
     );
 
@@ -184,9 +193,13 @@ class SupabaseService {
 
   /// Generate a cryptographically secure nonce for Apple Sign In.
   static String _generateNonce([int length = 32]) {
-    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
     final random = Random.secure();
-    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
+    return List.generate(
+      length,
+      (_) => charset[random.nextInt(charset.length)],
+    ).join();
   }
 }
 

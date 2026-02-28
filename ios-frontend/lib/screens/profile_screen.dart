@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
+import '../providers/subscription_provider.dart';
 import '../providers/user_provider.dart';
 import 'splash_screen.dart';
 
@@ -13,9 +14,7 @@ class ProfileScreen extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
           'Provide Feedback',
           style: AppTheme.dmSans(
@@ -38,7 +37,9 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 12),
             GestureDetector(
               onTap: () {
-                Clipboard.setData(const ClipboardData(text: 'feedback@spaces.app'));
+                Clipboard.setData(
+                  const ClipboardData(text: 'spaces.ai.biz@gmail.com'),
+                );
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Email copied to clipboard'),
@@ -69,7 +70,7 @@ class ProfileScreen extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'feedback@spaces.app',
+                        'spaces.ai.biz@gmail.com',
                         style: AppTheme.dmSans(
                           fontSize: 15,
                           fontWeight: FontWeight.w500,
@@ -115,14 +116,16 @@ class ProfileScreen extends StatelessWidget {
 
   Future<void> _handleLogout(BuildContext context) async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final subscriptionProvider = Provider.of<SubscriptionProvider>(
+      context,
+      listen: false,
+    );
 
     // Show confirmation dialog
     final shouldLogout = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
           'Log Out',
           style: AppTheme.dmSans(
@@ -133,10 +136,7 @@ class ProfileScreen extends StatelessWidget {
         ),
         content: Text(
           'Are you sure you want to log out?',
-          style: AppTheme.dmSans(
-            fontSize: 15,
-            color: AppTheme.textSecondary,
-          ),
+          style: AppTheme.dmSans(fontSize: 15, color: AppTheme.textSecondary),
         ),
         actions: [
           TextButton(
@@ -166,6 +166,7 @@ class ProfileScreen extends StatelessWidget {
     );
 
     if (shouldLogout == true && context.mounted) {
+      await subscriptionProvider.onUserLoggedOut();
       await userProvider.signOut();
       // Navigate to splash screen
       Navigator.of(context).pushAndRemoveUntil(
@@ -173,6 +174,39 @@ class ProfileScreen extends StatelessWidget {
         (route) => false,
       );
     }
+  }
+
+  Future<void> _handleManageSubscription(BuildContext context) async {
+    final subscriptionProvider = Provider.of<SubscriptionProvider>(
+      context,
+      listen: false,
+    );
+    await subscriptionProvider.manageSubscription();
+  }
+
+  Future<void> _handleRestorePurchases(BuildContext context) async {
+    final subscriptionProvider = Provider.of<SubscriptionProvider>(
+      context,
+      listen: false,
+    );
+    final restored = await subscriptionProvider.restorePurchases();
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          restored
+              ? 'Premium subscription restored.'
+              : 'No active purchases found to restore.',
+        ),
+        backgroundColor: restored
+            ? AppTheme.primaryColor
+            : AppTheme.textSecondary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
   }
 
   @override
@@ -208,6 +242,10 @@ class ProfileScreen extends StatelessWidget {
                   ],
 
                   // Menu Options
+                  _buildBillingSection(context),
+
+                  const SizedBox(height: 16),
+
                   _buildMenuSection(context),
 
                   const SizedBox(height: 100), // Bottom padding for nav bar
@@ -226,10 +264,7 @@ class ProfileScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.dividerColor,
-          width: 1,
-        ),
+        border: Border.all(color: AppTheme.dividerColor, width: 1),
       ),
       child: Row(
         children: [
@@ -288,10 +323,7 @@ class ProfileScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.dividerColor,
-          width: 1,
-        ),
+        border: Border.all(color: AppTheme.dividerColor, width: 1),
       ),
       child: Column(
         children: [
@@ -303,11 +335,7 @@ class ProfileScreen extends StatelessWidget {
           ),
 
           // Divider
-          Divider(
-            height: 1,
-            color: AppTheme.dividerColor,
-            indent: 56,
-          ),
+          Divider(height: 1, color: AppTheme.dividerColor, indent: 56),
 
           // Logout
           _buildMenuItem(
@@ -315,6 +343,31 @@ class ProfileScreen extends StatelessWidget {
             title: 'Log Out',
             isDestructive: true,
             onTap: () => _handleLogout(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillingSection(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.dividerColor, width: 1),
+      ),
+      child: Column(
+        children: [
+          _buildMenuItem(
+            icon: Icons.credit_card_outlined,
+            title: 'Manage Subscription',
+            onTap: () => _handleManageSubscription(context),
+          ),
+          Divider(height: 1, color: AppTheme.dividerColor, indent: 56),
+          _buildMenuItem(
+            icon: Icons.restore_rounded,
+            title: 'Restore Purchases',
+            onTap: () => _handleRestorePurchases(context),
           ),
         ],
       ),

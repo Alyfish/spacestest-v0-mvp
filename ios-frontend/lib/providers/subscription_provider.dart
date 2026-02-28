@@ -4,52 +4,71 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 import '../services/api_service.dart';
+import '../services/billing_service.dart';
 import '../services/revenuecat_service.dart';
 import '../services/analytics_service.dart';
 import '../services/supabase_service.dart';
 import '../utils/logger.dart';
 
-/// Provider for subscription/premium state using RevenueCat.
+/// Provider for subscription/credit state.
 ///
-/// Matches the UserProvider pattern — ChangeNotifier with reactive getters.
-/// Register in MultiProvider in main.dart.
+/// Reads plan_tier, credits_balance, daily_remaining, cooldown from /usage.
+/// Uses BillingService abstraction for purchases (Mock IAP or RevenueCat).
 class SubscriptionProvider extends ChangeNotifier {
+  // Credit system state (from /usage v2)
+  String _planTier = 'free';
+  int _creditsBalance = 3;
+  int _dailyRemaining = 3;
+  int _dailyCap = 3;
+  int _cooldownSecondsLeft = 0;
+  int _redesignsUsedToday = 0;
   bool _isPremium = false;
 
-  // Freemium usage tracking
-  int _generationsUsed = 0;
-  int _iterationsUsed = 0;
-  int _freeGenerationLimit = 5;
-  int _freeIterationLimit = 2;
   DateTime? _usageLoadedAt;
   static const _usageTtl = Duration(seconds: 60);
+
+  // Billing service (injectable)
+  late final BillingService _billingService;
+
+  // Keep a BuildContext reference for paywall dialog (set via showPaywall)
+  BuildContext? _lastContext;
 
   // ============================================
   // GETTERS
   // ============================================
 
+  String get planTier => _planTier;
+  int get creditsBalance => _creditsBalance;
+  int get dailyRemaining => _dailyRemaining;
+  int get dailyCap => _dailyCap;
+  int get cooldownSecondsLeft => _cooldownSecondsLeft;
+  int get redesignsUsedToday => _redesignsUsedToday;
   bool get isPremium => _isPremium;
-  int get generationsUsed => _generationsUsed;
-  int get iterationsUsed => _iterationsUsed;
-  int get remainingGenerations => max(0, _freeGenerationLimit - _generationsUsed);
-  int get remainingIterations => max(0, _freeIterationLimit - _iterationsUsed);
-  bool get canGenerate => _isPremium || _generationsUsed < _freeGenerationLimit;
-  bool get canIterate => _isPremium || _iterationsUsed < _freeIterationLimit;
-  int get freeGenerationLimit => _freeGenerationLimit;
-  int get freeIterationLimit => _freeIterationLimit;
+
+  // Unified credit check (replaces old canGenerate / canIterate)
+  bool get canGenerate => _creditsBalance > 0 && _dailyRemaining > 0;
+  bool get canIterate => canGenerate; // Unified pool
+  int get remainingGenerations => _creditsBalance; // Alias for backward compat
 
   // ============================================
   // INITIALIZATION
   // ============================================
 
   SubscriptionProvider() {
+    _billingService = createBillingService();
     _init();
   }
 
   Future<void> _init() async {
     // Listen for real-time customer info updates (purchases, renewals, expirations)
     try {
-      Purchases.addCustomerInfoUpdateListener(_onCustomerInfoUpdated);
+      RevenueCatService.addCustomerInfoListener(_onCustomerInfoUpdated);
+      if (kDebugMode) {
+        AppLogger.info(
+          'SubscriptionProvider init: billing listener setup '
+          '(rcHasKey=${RevenueCatService.hasApiKey}, rcConfigured=${RevenueCatService.isConfigured})',
+        );
+      }
     } catch (e) {
       if (kDebugMode) {
         AppLogger.error('Failed to add RevenueCat listener: $e');
@@ -60,10 +79,13 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   void _onCustomerInfoUpdated(CustomerInfo customerInfo) {
-    final wasPremium = _isPremium;
-    _isPremium = customerInfo.entitlements.active.containsKey('premium');
-    if (wasPremium != _isPremium) {
-      notifyListeners();
+    final hadPro = _isPremium;
+    _isPremium = customerInfo.entitlements.active.containsKey(
+      RevenueCatService.entitlementId,
+    );
+    if (hadPro != _isPremium) {
+      // Entitlement changed — refresh credits from server
+      refreshUsageIfStale(force: true);
       if (kDebugMode) {
         AppLogger.info('Subscription status changed: isPremium=$_isPremium');
       }
@@ -71,7 +93,7 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   // ============================================
-  // USAGE TRACKING
+  // USAGE TRACKING (v2 — credit-based)
   // ============================================
 
   /// Refresh usage from the server if TTL has expired (or forced).
@@ -79,7 +101,7 @@ class SubscriptionProvider extends ChangeNotifier {
     if (!force &&
         _usageLoadedAt != null &&
         DateTime.now().difference(_usageLoadedAt!) < _usageTtl) {
-      return; // Still fresh
+      return;
     }
 
     try {
@@ -87,14 +109,13 @@ class SubscriptionProvider extends ChangeNotifier {
       if (authToken == null) return;
 
       final data = await ApiService.getUsage(authToken);
-      _generationsUsed = data['generations_used'] as int? ?? 0;
-      _iterationsUsed = data['iterations_used'] as int? ?? 0;
-
-      final limits = data['limits'] as Map<String, dynamic>?;
-      if (limits != null) {
-        _freeGenerationLimit = limits['free_generations'] as int? ?? 5;
-        _freeIterationLimit = limits['free_iterations'] as int? ?? 2;
-      }
+      _planTier = data['plan_tier'] as String? ?? 'free';
+      _creditsBalance = data['credits_balance'] as int? ?? 0;
+      _dailyRemaining = data['daily_remaining'] as int? ?? 0;
+      _dailyCap = data['daily_cap'] as int? ?? 3;
+      _cooldownSecondsLeft = data['cooldown_seconds_left'] as int? ?? 0;
+      _redesignsUsedToday = data['redesigns_used_today'] as int? ?? 0;
+      _isPremium = _planTier == 'pro_yearly';
 
       _usageLoadedAt = DateTime.now();
       notifyListeners();
@@ -102,105 +123,77 @@ class SubscriptionProvider extends ChangeNotifier {
       if (kDebugMode) {
         AppLogger.error('Usage refresh failed: $e');
       }
-      // Fail-open: don't block the user, server enforcement is the backstop
     }
   }
 
-  /// Optimistic bump after a generation starts. Reconciles with server.
+  /// Optimistic bump after a generation/iteration starts.
   void recordGenerationUsed() {
-    _generationsUsed++;
+    _creditsBalance = max(0, _creditsBalance - 1);
+    _dailyRemaining = max(0, _dailyRemaining - 1);
+    _redesignsUsedToday++;
+    _cooldownSecondsLeft = 30;
     notifyListeners();
     refreshUsageIfStale(force: true);
   }
 
-  /// Optimistic bump after a retry succeeds. Reconciles with server.
-  void recordIterationUsed() {
-    _iterationsUsed++;
-    notifyListeners();
-    refreshUsageIfStale(force: true);
-  }
+  /// Alias for backward compatibility.
+  void recordIterationUsed() => recordGenerationUsed();
 
   // ============================================
-  // FREEMIUM GATES
+  // FREEMIUM GATES (unified credit pool)
   // ============================================
 
   /// Gate: returns true if the user can start a new generation.
-  /// If not premium and over limit, shows paywall. Returns true if premium after paywall.
-  Future<bool> ensureCanGenerate({required String source}) async {
+  /// If out of credits, shows paywall. Returns true if credits available after paywall.
+  Future<bool> ensureCanGenerate({required String source, BuildContext? context}) async {
     try {
-      if (_isPremium) return true;
-
-      // Re-check premium in case of stale state
-      await refreshStatus();
-      if (_isPremium) return true;
-
-      // Check usage
       await refreshUsageIfStale();
-      if (canGenerate) return true;
+      if (canGenerate && _cooldownSecondsLeft <= 0) return true;
 
-      // Over limit — show paywall
-      await showPaywall(source: source);
-      return _isPremium;
-    } catch (e) {
-      if (kDebugMode) {
-        AppLogger.error('ensureCanGenerate error: $e');
+      if (_cooldownSecondsLeft > 0) {
+        // Cooldown active — don't show paywall, just inform caller
+        return false;
       }
-      // Fail-open: allow through, server enforcement is the backstop
-      return true;
+
+      // Out of credits or daily cap — show paywall
+      final ctx = context ?? _lastContext;
+      if (ctx != null && ctx.mounted) {
+        await showPaywall(source: source, context: ctx);
+        await refreshUsageIfStale(force: true);
+      }
+      return canGenerate;
+    } catch (e) {
+      AppLogger.error('ensureCanGenerate error: $e');
+      return true; // Fail-open
     }
   }
 
   /// Gate: returns true if the user can retry/iterate.
-  /// If not premium and over limit, shows paywall. Returns true if premium after paywall.
-  Future<bool> ensureCanIterate({required String source}) async {
-    try {
-      if (_isPremium) return true;
-
-      await refreshStatus();
-      if (_isPremium) return true;
-
-      await refreshUsageIfStale();
-      if (canIterate) return true;
-
-      // Over limit — show paywall
-      await showPaywall(source: source);
-      return _isPremium;
-    } catch (e) {
-      if (kDebugMode) {
-        AppLogger.error('ensureCanIterate error: $e');
-      }
-      return true;
-    }
+  Future<bool> ensureCanIterate({required String source, BuildContext? context}) async {
+    return ensureCanGenerate(source: source, context: context);
   }
 
-  // ============================================
-  // LEGACY GATE (kept for compatibility)
-  // ============================================
-
-  /// Gate method: returns true if the user is premium, else shows the paywall.
+  /// Legacy gate — returns true if the user has credits.
   Future<bool> ensurePremium({required String source}) async {
-    if (_isPremium) return true;
-
-    // Refresh in case of stale state
-    await refreshStatus();
-    if (_isPremium) return true;
-
-    // Show paywall
-    await showPaywall(source: source);
-    return _isPremium;
+    await refreshUsageIfStale();
+    if (canGenerate) return true;
+    return false;
   }
 
   // ============================================
   // PAYWALL
   // ============================================
 
-  /// Present the RevenueCat paywall and log the analytics event.
-  Future<void> showPaywall({required String source}) async {
+  /// Present the paywall (uses BillingService abstraction).
+  Future<void> showPaywall({required String source, BuildContext? context}) async {
+    final ctx = context ?? _lastContext;
     await AnalyticsService.logPaywallShown(source: source);
     try {
-      await RevenueCatService.presentPaywallIfNeeded();
-      // Refresh after paywall closes to pick up any new purchase
-      await refreshStatus();
+      if (ctx != null && ctx.mounted) {
+        await _billingService.showPaywall(ctx, source: source);
+        // Refresh after paywall closes to pick up any new credits
+        await refreshUsageIfStale(force: true);
+      }
     } catch (e) {
       if (kDebugMode) {
         AppLogger.error('Paywall presentation failed: $e');
@@ -208,16 +201,20 @@ class SubscriptionProvider extends ChangeNotifier {
     }
   }
 
+  /// Store the latest context for paywall access.
+  void setContext(BuildContext context) {
+    _lastContext = context;
+  }
+
   // ============================================
   // RESTORE
   // ============================================
 
-  /// Restore previous purchases. Returns true if premium was restored.
+  /// Restore previous purchases.
   Future<bool> restorePurchases() async {
     try {
-      final customerInfo = await RevenueCatService.restorePurchases();
-      _isPremium = customerInfo.entitlements.active.containsKey('premium');
-      notifyListeners();
+      await _billingService.restorePurchases();
+      await refreshUsageIfStale(force: true);
       return _isPremium;
     } catch (e) {
       if (kDebugMode) {
@@ -231,7 +228,7 @@ class SubscriptionProvider extends ChangeNotifier {
   // SUBSCRIPTION MANAGEMENT
   // ============================================
 
-  /// Open RevenueCat Customer Center for subscription management.
+  /// Open subscription management UI.
   Future<void> manageSubscription() async {
     try {
       await RevenueCatService.presentCustomerCenter();
@@ -257,8 +254,11 @@ class SubscriptionProvider extends ChangeNotifier {
   Future<void> onUserLoggedOut() async {
     await RevenueCatService.logOut();
     _isPremium = false;
-    _generationsUsed = 0;
-    _iterationsUsed = 0;
+    _planTier = 'free';
+    _creditsBalance = 0;
+    _dailyRemaining = 0;
+    _cooldownSecondsLeft = 0;
+    _redesignsUsedToday = 0;
     _usageLoadedAt = null;
     notifyListeners();
   }
@@ -267,15 +267,15 @@ class SubscriptionProvider extends ChangeNotifier {
   // REFRESH
   // ============================================
 
-  /// Force-refresh premium status from RevenueCat.
+  /// Force-refresh premium status from RevenueCat + credits from server.
   Future<void> refreshStatus() async {
     try {
       _isPremium = await RevenueCatService.isPremium();
-      notifyListeners();
     } catch (e) {
       if (kDebugMode) {
-        AppLogger.error('Subscription refresh failed: $e');
+        AppLogger.error('RevenueCat refresh failed: $e');
       }
     }
+    await refreshUsageIfStale(force: true);
   }
 }

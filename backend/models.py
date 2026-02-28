@@ -691,10 +691,28 @@ class ProjectContext(BaseModel):
     
     def is_ready_for_inspiration_redesign(self) -> bool:
         """Check if ready for inspiration-based image redesign."""
+        if self.base_image is None or self.space_type is None:
+            return False
+
+        has_inspiration_images = len(self.inspiration_images) > 0
+        has_inspiration_recs = len(self.inspiration_recommendations) > 0
+        has_product_recs = len(self.product_recommendations) > 0
+        has_selected_product_recs = len(self.selected_product_recommendations) > 0
+        has_selected_products = len(self.selected_products) > 0
+        has_selected_trending = len(self.selected_trending_products) > 0
+        allow_marker_only_iterative = (
+            self.improvement_mode == "iterative"
+            and len(self.improvement_markers) > 0
+        )
+
         return (
-            self.base_image is not None
-            and self.space_type is not None
-            and len(self.inspiration_recommendations) > 0
+            has_inspiration_images
+            or has_inspiration_recs
+            or has_product_recs
+            or has_selected_product_recs
+            or has_selected_products
+            or has_selected_trending
+            or allow_marker_only_iterative
         )
 
 

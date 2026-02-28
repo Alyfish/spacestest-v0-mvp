@@ -97,8 +97,9 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
   String? _pendingRetryFeedback;
   ValueNotifier<String?>? _analyzingSubtitleNotifier;
   List<String>? _pendingRecsToSelect;
-  bool _pendingNeedsColorSave = false;
-  bool _pendingNeedsStyleSave = false;
+  Map<String, dynamic>? _pendingColorPalette;
+  Map<String, dynamic>? _pendingStyleData;
+  List<Map<String, dynamic>>? _pendingTrendingItems;
   final Set<String> _notifyPromptShownJobIds = <String>{};
   bool _isRestarting = false;
 
@@ -654,10 +655,11 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
 
         return ImprovementsScreen(
           onBack: _goBack,
-          onImprove: (recsToSelect, needsColorSave, needsStyleSave) {
+          onImprove: (recsToSelect, pendingColorPalette, pendingStyleData, trendingItems) {
             _pendingRecsToSelect = recsToSelect;
-            _pendingNeedsColorSave = needsColorSave;
-            _pendingNeedsStyleSave = needsStyleSave;
+            _pendingColorPalette = pendingColorPalette;
+            _pendingStyleData = pendingStyleData;
+            _pendingTrendingItems = trendingItems.isNotEmpty ? trendingItems : null;
             _goToStep(CreateFlowStep.improvementsAnalyzing);
           },
         );
@@ -693,8 +695,9 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
 
             // Phase 0a: Force-invalidate prewarm early if any saves are pending
             // (we know saves will change the fingerprint, no point letting prewarm run)
-            if (_pendingNeedsColorSave ||
-                _pendingNeedsStyleSave ||
+            if (_pendingColorPalette != null ||
+                _pendingStyleData != null ||
+                _pendingTrendingItems != null ||
                 (_pendingRecsToSelect != null &&
                     _pendingRecsToSelect!.isNotEmpty)) {
               provider.forceInvalidatePrewarm();
@@ -702,22 +705,24 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
 
             // Phase 0b: Run pending saves in parallel (deferred from ImprovementsScreen)
             final saveOperations = <String, Future<bool> Function()>{};
-            if (_pendingNeedsColorSave) {
+            if (_pendingColorPalette != null) {
+              final cp = _pendingColorPalette!;
               saveOperations['color'] = () => provider.saveColorPalette(
                 context,
-                'ai_decide',
-                'Let AI Decide',
-                [],
-                letAiDecide: true,
+                cp['id'] as String,
+                cp['name'] as String,
+                List<String>.from(cp['hexColors'] as List? ?? []),
+                letAiDecide: cp['letAiDecide'] == true,
                 background: false,
               );
             }
-            if (_pendingNeedsStyleSave) {
+            if (_pendingStyleData != null) {
+              final sd = _pendingStyleData!;
               saveOperations['style'] = () => provider.saveDesignStyle(
                 context,
-                'ai_decide',
-                'Let AI Decide',
-                letAiDecide: true,
+                sd['id'] as String,
+                sd['name'] as String,
+                letAiDecide: sd['letAiDecide'] == true,
                 background: false,
               );
             }
@@ -725,6 +730,11 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                 _pendingRecsToSelect!.isNotEmpty) {
               saveOperations['selected_recommendations'] = () => provider
                   .setSelectedRecommendations(context, _pendingRecsToSelect!);
+            }
+            if (_pendingTrendingItems != null &&
+                _pendingTrendingItems!.isNotEmpty) {
+              saveOperations['trending_products'] = () => provider
+                  .saveSelectedTrendingProducts(context, _pendingTrendingItems!);
             }
 
             Future<Map<String, bool>> runSavePass(
@@ -797,8 +807,9 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
             }
 
             _pendingRecsToSelect = null;
-            _pendingNeedsColorSave = false;
-            _pendingNeedsStyleSave = false;
+            _pendingColorPalette = null;
+            _pendingStyleData = null;
+            _pendingTrendingItems = null;
 
             // Invalidate pre-warm if saves changed the inputs
             provider.invalidatePrewarmIfStale();
