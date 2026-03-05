@@ -1004,6 +1004,10 @@ class ProjectProvider extends ChangeNotifier {
       _preferredStoresDirty = false;
       _pendingSearchJobId = null;
 
+      // Clear stale hotspot/product caches from previous project
+      _resetHotspotPrefetchStateForNewImage();
+      _processedFurniture = null;
+
       // Extract generated image URL from context so DreamSpace can render immediately
       final ctx = response['context'] as Map<String, dynamic>?;
       final inspRef = ctx?['inspiration_generated_image_base64'] as String?;

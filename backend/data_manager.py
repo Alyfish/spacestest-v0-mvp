@@ -1477,8 +1477,6 @@ class DataManager:
         context = ProjectContext.model_validate(projects[project_id]["context"])
         updated_context = context.model_copy(
             update={
-                "color_analysis": None,
-                "color_scheme": None,
                 "color_analysis_skipped": True,
             }
         )
@@ -1497,8 +1495,6 @@ class DataManager:
         context = ProjectContext.model_validate(projects[project_id]["context"])
         updated_context = context.model_copy(
             update={
-                "style_analysis": None,
-                "design_style": None,
                 "style_analysis_skipped": True,
             }
         )
@@ -4128,7 +4124,7 @@ Prefer: Clear photos, unique designs, trending aesthetics, professional product 
             # 1. Has inspiration images uploaded? -> Use inspiration prompt
             # 2. Otherwise, check improvement_mode: iterative vs complete_revamp
             improvement_mode = getattr(context, 'improvement_mode', None)
-            has_inspiration_images = len(context.inspiration_images or []) > 0
+            has_inspiration_images = bool(context.inspiration_images) and not getattr(context, 'inspiration_images_skipped', False)
 
             # ========================================
             # DETAILED LOGGING FOR PROMPT SELECTION
@@ -4350,6 +4346,7 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                 prompt = self.gemini_client._create_iterative_prompt(
                     selected_products=selected_products_formatted,
                     marker_locations=context.improvement_markers or [],
+                    trending_products=context.selected_trending_products or [],
                     color_scheme=context.color_scheme,
                     style_analysis=context.style_analysis,
                     color_analysis=context.color_analysis,
@@ -4362,13 +4359,16 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                 # ============================================
                 print("🎨 Using INTEGRATION prompt (full redesign with color/style enforcement)")
 
-                # Prepare product titles for integration prompt
-                product_titles = []
-                for p in selected_trending:
-                    if p.get('title'):
-                        product_titles.append(p.get('title'))
+                # Prepare product titles — trending products are highest priority
+                product_titles = [p.get('title') for p in selected_trending if p.get('title')]
 
-                # Add selected recommendations if no trending products
+                # Fallback to selected products
+                if not product_titles:
+                    for p in selected_products:
+                        if p.get('title'):
+                            product_titles.append(p.get('title'))
+
+                # Fallback to recommendations
                 if not product_titles:
                     product_titles = selected_recommendations or all_recommendations
 
@@ -4381,6 +4381,7 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
                     custom_prompt=None,
                     color_scheme=context.color_scheme,
                     design_style=context.style_analysis,
+                    color_analysis=context.color_analysis,
                 )
                 prompt_branch = "integration"
                 prompt_items_count = len(product_titles)
@@ -4453,16 +4454,22 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
 
             print("="*70 + "\n")
 
-            # Prepare product images for Gemini (selected_trending already declared above)
-            product_images_for_gemini = None
-            if selected_trending:
-                product_images_for_gemini = [
-                    {"image_url": p.get("image_url", ""), "title": p.get("title", "")}
-                    for p in selected_trending
-                    if p.get("image_url")
-                ]
+            # Prepare product images for Gemini
+            product_images_for_gemini = [p for p in selected_products[:2] if p.get("image_url")]
+            # Include trending products as visual reference
+            if not product_images_for_gemini and selected_trending:
+                product_images_for_gemini = [p for p in selected_trending[:2] if p.get("image_url")]
+            # Include user's favorite products
+            favorites = context.favorite_products or []
+            if favorites:
+                existing_urls = {p.get('url') for p in product_images_for_gemini}
+                for fav in favorites[:2]:
+                    if fav.get('image_url') and fav.get('url') not in existing_urls:
+                        product_images_for_gemini.append(fav)
+                        existing_urls.add(fav.get('url'))
+            if product_images_for_gemini:
                 self.logger.info(
-                    f"Passing {len(product_images_for_gemini)} trending product images to Gemini"
+                    f"Passing {len(product_images_for_gemini)} product images to Gemini"
                 )
 
             # Resolve inspiration image file paths for visual style transfer
@@ -4497,7 +4504,7 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
             generated_image_base64, model_used = self.gemini_client.generate_room_redesign(
                 original_room_image_path=original_room_image_path,
                 prompt=prompt,
-                product_images=product_images_for_gemini,
+                product_images=product_images_for_gemini if product_images_for_gemini else None,
                 inspiration_images=inspiration_image_paths if inspiration_image_paths else None,
             )
             t_gemini = time.time()

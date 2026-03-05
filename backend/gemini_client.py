@@ -1838,6 +1838,22 @@ Before finalizing, verify against the original photo:
                 elif isinstance(color_data, str) and color_data:
                     lines.append(f"{role.upper()}: {color_data}")
 
+            # Fallback: handle palette_name + colors array format
+            # (the actual schema stored by apply_color_scheme)
+            if not lines:
+                palette_name = color_scheme.get('palette_name', '')
+                colors_list = color_scheme.get('colors', [])
+                if palette_name:
+                    lines.append(f"PALETTE: {palette_name}")
+                if colors_list and isinstance(colors_list, list):
+                    hex_strs = [c for c in colors_list if isinstance(c, str)]
+                    if len(hex_strs) >= 1:
+                        lines.append(f"PRIMARY (60%): {hex_strs[0]}")
+                    if len(hex_strs) >= 2:
+                        lines.append(f"SECONDARY (30%): {hex_strs[1]}")
+                    if len(hex_strs) >= 3:
+                        lines.append(f"ACCENT (10%): {', '.join(hex_strs[2:])}")
+
         return "\n".join(lines)
 
     def _build_style_direction(self, style_analysis: dict = None) -> str:
