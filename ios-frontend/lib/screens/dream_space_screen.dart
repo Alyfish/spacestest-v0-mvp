@@ -208,10 +208,9 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
   }
 
   BoxFit _dreamSpaceFit() {
-    // Cover fills the display area — minor edge cropping is acceptable.
-    // Hotspot markers in cropped regions are clamped to the visible edge
-    // via mapHotspotToRenderedImageTopLeft's visibleSize parameter.
-    return BoxFit.cover;
+    // Contain shows the full image without cropping — important for
+    // iterative improvements which preserve the original camera geometry.
+    return BoxFit.contain;
   }
 
   Widget _buildGeneratedInteractiveImage(

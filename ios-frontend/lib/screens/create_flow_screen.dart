@@ -184,25 +184,92 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Tell me when to come back!'),
-          content: const Text(
-            'We can notify your phone as soon as your design is ready.',
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.cardRadius),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(
-                dialogContext,
-              ).pop(_NotifyWhenReadyAction.notNow),
-              child: const Text('Not now'),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Icon(
+                    Icons.notifications_active_rounded,
+                    color: AppTheme.primaryColor,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'We\'ll let you know!',
+                  style: AppTheme.dmSans(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Get a notification as soon as your design is ready so you can come right back.',
+                  style: AppTheme.dmSans(
+                    fontSize: 15,
+                    color: AppTheme.textSecondary,
+                    height: 1.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: AppTheme.buttonHeight,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(
+                      dialogContext,
+                    ).pop(_NotifyWhenReadyAction.notifyMe),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppTheme.buttonRadius),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      'Notify Me',
+                      style: AppTheme.dmSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop(_NotifyWhenReadyAction.notNow),
+                  child: Text(
+                    'Not now',
+                    style: AppTheme.dmSans(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.textTertiary,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(
-                dialogContext,
-              ).pop(_NotifyWhenReadyAction.notifyMe),
-              child: const Text('Notify me'),
-            ),
-          ],
+          ),
         );
       },
     );
@@ -861,8 +928,8 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
 
             _generationComplete = false;
 
-            // Show notification prompt after 15s if still generating
-            Future<void>.delayed(const Duration(seconds: 15), () {
+            // Show notification prompt after 3s if still generating
+            Future<void>.delayed(const Duration(seconds: 3), () {
               if (!_generationComplete && mounted) {
                 _maybePromptNotifyWhenReady(provider);
               }
