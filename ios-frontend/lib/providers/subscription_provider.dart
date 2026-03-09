@@ -105,10 +105,23 @@ class SubscriptionProvider extends ChangeNotifier {
     }
 
     try {
-      final authToken = SupabaseService.accessToken;
+      var authToken = SupabaseService.accessToken;
       if (authToken == null) return;
 
-      final data = await ApiService.getUsage(authToken);
+      Map<String, dynamic> data;
+      try {
+        data = await ApiService.getUsage(authToken);
+      } catch (e) {
+        // Token may be expired from a restored session — refresh and retry once
+        if (e.toString().contains('401')) {
+          await SupabaseService.refreshSession();
+          authToken = SupabaseService.accessToken;
+          if (authToken == null) return;
+          data = await ApiService.getUsage(authToken);
+        } else {
+          rethrow;
+        }
+      }
       _planTier = data['plan_tier'] as String? ?? 'free';
       _creditsBalance = data['credits_balance'] as int? ?? 0;
       _dailyRemaining = data['daily_remaining'] as int? ?? 0;

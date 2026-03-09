@@ -1,9 +1,14 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+import '../constants/api_constants.dart';
+import '../services/supabase_service.dart';
 import '../theme.dart';
 import '../providers/subscription_provider.dart';
 import '../providers/user_provider.dart';
+import '../utils/logger.dart';
 import 'splash_screen.dart';
 
 /// Profile screen with user info, feedback option, and logout
@@ -112,6 +117,57 @@ class ProfileScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _handleRefillCredits(BuildContext context) async {
+    final token = SupabaseService.accessToken;
+    if (token == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Not authenticated')),
+        );
+      }
+      return;
+    }
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConstants.baseUrl}/dev/grant-credits'),
+        headers: ApiConstants.authHeaders(token),
+      );
+      if (!context.mounted) return;
+      if (response.statusCode == 200) {
+        await Provider.of<SubscriptionProvider>(context, listen: false)
+            .refreshUsageIfStale(force: true);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Added 2 credits!'),
+              backgroundColor: AppTheme.primaryColor,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              margin: const EdgeInsets.all(16),
+            ),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed: ${response.statusCode}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } catch (e) {
+      AppLogger.error('Dev credit refill failed', e);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handleLogout(BuildContext context) async {
@@ -358,6 +414,14 @@ class ProfileScreen extends StatelessWidget {
       ),
       child: Column(
         children: [
+          if (kDebugMode) ...[
+            _buildMenuItem(
+              icon: Icons.add_card_rounded,
+              title: '[DEV] Add 2 Credits',
+              onTap: () => _handleRefillCredits(context),
+            ),
+            Divider(height: 1, color: AppTheme.dividerColor, indent: 56),
+          ],
           _buildMenuItem(
             icon: Icons.credit_card_outlined,
             title: 'Manage Subscription',
