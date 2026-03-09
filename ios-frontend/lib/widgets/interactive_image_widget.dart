@@ -187,11 +187,6 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> {
     final imageWidth = _image?.width.toDouble() ?? containerSize.width;
     final imageHeight = _image?.height.toDouble() ?? containerSize.height;
 
-    if (kDebugMode) {
-      debugPrint('InteractiveImage native: ${imageWidth.toInt()}x${imageHeight.toInt()}, '
-          'container: ${containerSize.width.toInt()}x${containerSize.height.toInt()}');
-    }
-
     final bounds = calculateImageDisplayBounds(
       imageSize: Size(imageWidth, imageHeight),
       containerSize: containerSize,
