@@ -324,7 +324,9 @@ class _SplashScreenState extends State<SplashScreen>
     if (userId != null && userId.isNotEmpty) {
       try {
         await context.read<SubscriptionProvider>().onUserLoggedIn(userId);
-      } catch (_) {}
+      } catch (e) {
+        AppLogger.error('Subscription sync failed', e);
+      }
       if (!mounted) return;
     }
 

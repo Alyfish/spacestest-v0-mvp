@@ -17,14 +17,15 @@ import 'create_flow_screen.dart';
 /// - Saved
 /// - Profile
 class MainNavigationScreen extends StatefulWidget {
-  const MainNavigationScreen({super.key});
+  final int initialTab;
+  const MainNavigationScreen({super.key, this.initialTab = 0});
 
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
-  int _selectedIndex = 0;
+  late int _selectedIndex = widget.initialTab;
   bool _isCreatingProject = false;
 
   void _onItemTapped(int index) {

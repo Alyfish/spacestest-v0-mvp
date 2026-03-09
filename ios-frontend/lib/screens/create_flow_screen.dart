@@ -101,6 +101,7 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
   Map<String, dynamic>? _pendingStyleData;
   List<Map<String, dynamic>>? _pendingTrendingItems;
   final Set<String> _notifyPromptShownJobIds = <String>{};
+  bool _generationComplete = false;
   bool _isRestarting = false;
 
   // PERF timing
@@ -858,6 +859,15 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                 _pendingRetryFeedback != null &&
                 _pendingRetryFeedback!.trim().isNotEmpty;
 
+            _generationComplete = false;
+
+            // Show notification prompt after 15s if still generating
+            Future<void>.delayed(const Duration(seconds: 15), () {
+              if (!_generationComplete && mounted) {
+                _maybePromptNotifyWhenReady(provider);
+              }
+            });
+
             late final bool success;
             try {
               success =
@@ -891,6 +901,8 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               return;
             }
 
+            _generationComplete = true;
+
             final prewarmReused = provider.lastPrewarmReused;
             AppLogger.info(
               'PERF_IOS design_image_done_ms='
@@ -905,7 +917,6 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               // TIMEOUT path: job still running on backend, proceed to DreamSpace.
               // Do NOT throw, do NOT clear job_id — DreamSpace will pick up polling.
               // (onComplete fires next → navigates to DreamSpace with loading overlay)
-              await _maybePromptNotifyWhenReady(provider);
             } else if (!success) {
               // REAL FAILURE: no job_id means the job never started or truly failed
               throw Exception(

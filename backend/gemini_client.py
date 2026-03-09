@@ -616,6 +616,11 @@ Follow the required JSON schema exactly."""
                     normalized = normalize_color_analysis_payload(payload)
                     print(f"📋 Normalized primary_colors: {normalized.get('primary_colors', [])}")
                     print(f"📋 Normalized color_assignments: {normalized.get('color_assignments', [])}")
+                    # If normalization extracted zero colors, use fallback instead
+                    if (not normalized.get('primary_colors')
+                            and not normalized.get('secondary_colors')
+                            and not normalized.get('accent_colors')):
+                        raise ValueError("Normalization produced empty color data, using fallback")
                     result = ColorAnalysis.model_validate(normalized)
                     print(f"✅ Color Agent analysis complete (after normalization)")
                 return result.model_dump()
@@ -1826,7 +1831,8 @@ Before finalizing, verify against the original photo:
                             assignment_line += f" [{finish}]"
                         lines.append(assignment_line)
 
-        elif color_scheme and isinstance(color_scheme, dict):
+        # Fall through to color_scheme if color_analysis produced nothing useful
+        if not lines and color_scheme and isinstance(color_scheme, dict):
             # Fallback: extract what we can from the simpler color_scheme
             for role in ['primary', 'secondary', 'accent']:
                 color_data = color_scheme.get(role, {})
@@ -1863,9 +1869,11 @@ Before finalizing, verify against the original photo:
         if no style data is available.
         """
         if not style_analysis or not isinstance(style_analysis, dict):
-            return ("Use your professional judgment to select a cohesive interior design style "
-                    "that complements the room's architecture, proportions, and existing finishes. "
-                    "Ensure furniture materials, textures, and proportions form a unified aesthetic.")
+            return ("Select a fresh, cohesive interior design style that TRANSFORMS this space. "
+                    "Choose a clear style direction (e.g., Modern, Scandinavian, Mid-Century, "
+                    "Industrial, or Coastal) and apply it consistently. Replace existing furniture "
+                    "with pieces that define the chosen style. Use materials, textures, and "
+                    "proportions that create a visibly different, magazine-quality result.")
 
         lines = []
 

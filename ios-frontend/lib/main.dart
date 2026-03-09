@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -24,6 +25,8 @@ const bool _debugBypassAuth = bool.fromEnvironment(
   defaultValue: false,
 );
 
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -39,6 +42,11 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     AppLogger.info('Firebase initialized');
+    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterError;
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      return true;
+    };
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   } catch (e) {
     AppLogger.error('Firebase initialization failed', e);
@@ -58,7 +66,25 @@ Future<void> main() async {
     }
   }
   try {
-    await NotificationService.initialize();
+    await NotificationService.initialize(
+      onNotificationTap: (projectId) {
+        AppLogger.info('Notification tap → navigating to saved tab (project=$projectId)');
+        final nav = navigatorKey.currentState;
+        if (nav == null) {
+          AppLogger.warning('Navigator not ready — notification tap ignored');
+          return;
+        }
+        nav.pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => const MainNavigationScreen(initialTab: 3),
+          ),
+          (_) => false,
+        );
+      },
+      onTokenRefresh: (newToken) {
+        AppLogger.info('FCM token refreshed, new token available for re-registration');
+      },
+    );
   } catch (e) {
     AppLogger.error('NotificationService initialization failed', e);
   }
@@ -78,6 +104,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (context) => SubscriptionProvider()),
       ],
       child: MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'Spaces',
         theme: AppTheme.lightTheme,
         home: const _AuthGate(),
@@ -104,8 +131,14 @@ class _AuthGate extends StatelessWidget {
     }
     final session = Supabase.instance.client.auth.currentSession;
     if (kDebugMode) debugPrint('[AUTH_GATE] session=${session != null}');
-    return session != null
-        ? const MainNavigationScreen()
-        : const SplashScreen();
+    if (session == null) return const SplashScreen();
+
+    // If the app was launched by tapping a notification, open the saved tab.
+    final pendingProject = NotificationService.pendingProjectId;
+    if (pendingProject != null) {
+      NotificationService.pendingProjectId = null;
+      return const MainNavigationScreen(initialTab: 3);
+    }
+    return const MainNavigationScreen();
   }
 }

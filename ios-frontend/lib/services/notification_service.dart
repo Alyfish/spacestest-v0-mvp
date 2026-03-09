@@ -20,7 +20,20 @@ class NotificationRegistration {
 class NotificationService {
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
 
-  static Future<void> initialize() async {
+  static void Function(String projectId)? _onNotificationTap;
+  static void Function(String newToken)? _onTokenRefresh;
+
+  /// Project ID from a notification that launched the app from terminated state.
+  /// Consumed once by the first screen that checks it.
+  static String? pendingProjectId;
+
+  static Future<void> initialize({
+    void Function(String projectId)? onNotificationTap,
+    void Function(String newToken)? onTokenRefresh,
+  }) async {
+    _onNotificationTap = onNotificationTap;
+    _onTokenRefresh = onTokenRefresh;
+
     await _messaging.setForegroundNotificationPresentationOptions(
       alert: true,
       badge: true,
@@ -37,6 +50,7 @@ class NotificationService {
       AppLogger.info(
         'Notification tap (background): ${message.notification?.title ?? message.messageId}',
       );
+      _handleNotificationTap(message);
     });
 
     final initialMessage = await _messaging.getInitialMessage();
@@ -44,11 +58,23 @@ class NotificationService {
       AppLogger.info(
         'Notification tap (terminated): ${initialMessage.notification?.title ?? initialMessage.messageId}',
       );
+      final projectId = initialMessage.data['project_id'] as String?;
+      if (projectId != null && projectId.isNotEmpty) {
+        pendingProjectId = projectId;
+      }
     }
 
     _messaging.onTokenRefresh.listen((String token) {
       AppLogger.info('FCM token refreshed');
+      _onTokenRefresh?.call(token);
     });
+  }
+
+  static void _handleNotificationTap(RemoteMessage message) {
+    final projectId = message.data['project_id'] as String?;
+    if (projectId != null && projectId.isNotEmpty) {
+      _onNotificationTap?.call(projectId);
+    }
   }
 
   static Future<NotificationRegistration?>

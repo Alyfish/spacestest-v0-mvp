@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import '../utils/logger.dart';
 import '../models/user.dart';
 import '../services/supabase_service.dart';
@@ -7,6 +10,7 @@ class UserProvider extends ChangeNotifier {
   AuthState _authState = AuthState.unauthenticated;
   User _user = User.empty();
   String? _errorMessage;
+  StreamSubscription<supa.AuthState>? _authSub;
 
   UserProvider() {
     final session = SupabaseService.currentSession;
@@ -23,6 +27,32 @@ class UserProvider extends ChangeNotifier {
       );
       _authState = AuthState.authenticated;
     }
+    _listenAuthState();
+  }
+
+  void _listenAuthState() {
+    _authSub = SupabaseService.authStateChanges.listen((data) {
+      final event = data.event;
+      if (event == supa.AuthChangeEvent.signedOut) {
+        if (_authState != AuthState.unauthenticated) {
+          AppLogger.info('Auth state change: $event — signing out');
+          _authState = AuthState.unauthenticated;
+          _user = User.empty();
+          _errorMessage = null;
+          notifyListeners();
+        }
+      } else if (event == supa.AuthChangeEvent.tokenRefreshed &&
+                 data.session != null) {
+        _user = User(
+          id: _user.id,
+          name: _user.name,
+          email: _user.email,
+          photoUrl: _user.photoUrl,
+          token: data.session!.accessToken,
+        );
+        notifyListeners();
+      }
+    });
   }
 
   static String? _displayNameFromMetadata(Map<String, dynamic>? metadata) {
@@ -189,5 +219,11 @@ class UserProvider extends ChangeNotifier {
     _authState = AuthState.authenticated;
     _errorMessage = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
   }
 }
