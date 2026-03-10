@@ -32,7 +32,7 @@ class DreamSpaceScreen extends StatefulWidget {
 
 class _DreamSpaceScreenState extends State<DreamSpaceScreen>
     with SingleTickerProviderStateMixin {
-  final PageController _pageController = PageController();
+  bool _showingOriginal = false;
 
   // Background generation polling state
   bool _pollingStarted = false;
@@ -66,7 +66,6 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
   void dispose() {
     _disposed = true;
     _shimmerController.dispose();
-    _pageController.dispose();
     super.dispose();
   }
 
@@ -119,6 +118,7 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
 
   void _retryBackgroundPolling() {
     _pollingStarted = false;
+    _showingOriginal = false;
     final provider = Provider.of<ProjectProvider>(context, listen: false);
     _startBackgroundPolling(provider);
   }
@@ -368,24 +368,32 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
     );
   }
 
+  void _toggleOriginal() {
+    setState(() => _showingOriginal = !_showingOriginal);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
+      backgroundColor: Colors.black,
+      body: Column(
           children: [
-            // Main content - swipeable before/after
+            // Main content - stack with toggle between generated/original
             Expanded(
-              child: PageView(
-                controller: _pageController,
+              child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  // Page 0: Generated dream space (interactive)
-                  Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Consumer<ProjectProvider>(
+                  // Bottom layer: original image (always mounted)
+                  _buildOriginalImage(),
+
+                  // Generated image layer with crossfade
+                  AnimatedOpacity(
+                    opacity: _showingOriginal ? 0.0 : 1.0,
+                    duration: const Duration(milliseconds: 350),
+                    curve: Curves.easeInOut,
+                    child: IgnorePointer(
+                      ignoring: _showingOriginal,
+                      child: Consumer<ProjectProvider>(
                         builder: (context, provider, _) {
                           return _buildGeneratedInteractiveImage(
                             provider,
@@ -393,43 +401,26 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
                           );
                         },
                       ),
-                      IgnorePointer(child: _buildGradientOverlay()),
-                      _buildWelcomeText(),
-                      const _RotatingHintPill(),
-                    ],
+                    ),
                   ),
 
-                  // Page 1: Original room image (view only)
-                  Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _buildOriginalImage(),
-                      IgnorePointer(child: _buildGradientOverlay()),
-                      // "Original" badge
-                      Positioned(
-                        bottom: 20,
-                        left: 20,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            'Original',
-                            style: AppTheme.dmSans(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                      _buildSwipeHint('Swipe back to interact'),
-                    ],
+                  // Gradient overlay
+                  IgnorePointer(child: _buildGradientOverlay()),
+
+                  // Welcome text / Original badge
+                  if (_showingOriginal)
+                    _buildOriginalBadge()
+                  else
+                    _buildWelcomeText(),
+
+                  // Toggle button (only when generated image exists)
+                  Consumer<ProjectProvider>(
+                    builder: (context, provider, _) {
+                      final hasGenerated = provider.generatedImageUrl != null ||
+                          provider.generatedImageBytes != null;
+                      if (!hasGenerated) return const SizedBox.shrink();
+                      return _buildToggleButton();
+                    },
                   ),
                 ],
               ),
@@ -439,7 +430,6 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
             _buildBottomButtons(),
           ],
         ),
-      ),
       bottomNavigationBar: AppBottomNavBar(
         selectedIndex: 0,
         onItemTapped: _handleNavTap,
@@ -488,8 +478,9 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
   }
 
   Widget _buildWelcomeText() {
+    final topPadding = MediaQuery.of(context).padding.top;
     return Positioned(
-      top: 20,
+      top: topPadding + 16,
       left: 20,
       right: 20,
       child: Column(
@@ -517,36 +508,79 @@ class _DreamSpaceScreenState extends State<DreamSpaceScreen>
     );
   }
 
-  Widget _buildSwipeHint(String text) {
+  Widget _buildOriginalBadge() {
+    final topPadding = MediaQuery.of(context).padding.top;
+    return Positioned(
+      top: topPadding + 16,
+      left: 20,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.photo_camera_outlined,
+              size: 14,
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Original Photo',
+              style: AppTheme.dmSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToggleButton() {
     return Positioned(
       bottom: 20,
-      left: 20,
-      right: 20,
+      left: 0,
+      right: 0,
       child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.swipe_outlined,
-                size: 16,
-                color: Colors.white.withValues(alpha: 0.9),
+        child: GestureDetector(
+          onTap: _toggleOriginal,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: Container(
+              key: ValueKey<bool>(_showingOriginal),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(24),
               ),
-              const SizedBox(width: 8),
-              Text(
-                text,
-                style: AppTheme.dmSans(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _showingOriginal
+                        ? Icons.auto_awesome
+                        : Icons.camera_alt_outlined,
+                    size: 16,
+                    color: Colors.white.withValues(alpha: 0.9),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _showingOriginal ? 'Back to Design' : 'See Original',
+                    style: AppTheme.dmSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -700,98 +734,3 @@ class _HotspotMarkerState extends State<_HotspotMarker>
   }
 }
 
-/// Simple data class for a hint's icon and text.
-class _HintConfig {
-  final IconData icon;
-  final String text;
-  const _HintConfig({required this.icon, required this.text});
-}
-
-/// A pill that rotates between two hint messages with a crossfade animation.
-class _RotatingHintPill extends StatefulWidget {
-  const _RotatingHintPill();
-
-  @override
-  State<_RotatingHintPill> createState() => _RotatingHintPillState();
-}
-
-class _RotatingHintPillState extends State<_RotatingHintPill> {
-  static const _hints = [
-    _HintConfig(icon: Icons.swipe_outlined, text: 'Swipe to see original'),
-    _HintConfig(
-      icon: Icons.touch_app_outlined,
-      text: 'Tap any item to find products',
-    ),
-  ];
-
-  int _index = 0;
-  late final Timer _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(milliseconds: 3500), (_) {
-      setState(() => _index = (_index + 1) % _hints.length);
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hint = _hints[_index];
-    return Positioned(
-      bottom: 20,
-      left: 20,
-      right: 20,
-      child: Center(
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 400),
-          transitionBuilder: (child, animation) {
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0.0, 0.15),
-                  end: Offset.zero,
-                ).animate(animation),
-                child: child,
-              ),
-            );
-          },
-          child: Container(
-            key: ValueKey<int>(_index),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  hint.icon,
-                  size: 16,
-                  color: Colors.white.withValues(alpha: 0.9),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  hint.text,
-                  style: AppTheme.dmSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

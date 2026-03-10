@@ -130,10 +130,14 @@ class ProjectProvider extends ChangeNotifier {
       _roomWidth != null && _roomHeight != null && _roomLength != null;
   List<String> get preferredStores => _currentProject?.preferredStores ?? [];
   String? get approach => _currentProject?.approach;
-  String? get colorPalette =>
-      _currentProject?.designPreferences['colorPalette'] as String?;
-  String? get designStyle =>
-      _currentProject?.designPreferences['designStyle'] as String?;
+  String? get colorPalette {
+    final v = _currentProject?.designPreferences['colorPalette'];
+    return v is String ? v : null;
+  }
+  String? get designStyle {
+    final v = _currentProject?.designPreferences['designStyle'];
+    return v is String ? v : null;
+  }
 
   // New getters for product/image flow
   List<String> get productRecommendations => _productRecommendations;
@@ -2030,7 +2034,10 @@ class ProjectProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       AppLogger.error('Failed to fetch product recommendations', e);
-      _setError('Failed to fetch recommendations: ${e.toString()}');
+      _errorMessage = 'Failed to fetch recommendations: ${e.toString()}';
+      _lastErrorTransient = false;
+      _status = ProjectStatus.error;
+      _safeNotifyListeners();
       return false;
     }
   }

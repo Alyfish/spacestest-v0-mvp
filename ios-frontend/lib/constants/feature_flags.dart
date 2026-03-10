@@ -4,7 +4,7 @@
 /// When true, renders the generated image with BoxFit.contain instead of
 /// BoxFit.cover, and clamps markers to the imageRect rather than the
 /// container bounds.
-const bool kDreamSpaceUseContainFit = true;
+const bool kDreamSpaceUseContainFit = false;
 
 /// When true and a bbox is present on the hotspot, use the bbox center
 /// (bboxX + bboxW/2, bboxY + bboxH/2) for marker placement.
