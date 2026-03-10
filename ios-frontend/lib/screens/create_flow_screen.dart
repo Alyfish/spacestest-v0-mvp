@@ -1007,14 +1007,18 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                   NetworkImage(provider.generatedImageUrl!),
                   context,
                 ).timeout(const Duration(seconds: 3), onTimeout: () {});
-              } catch (_) {}
+              } catch (e) {
+                AppLogger.warning('Precache network image failed: $e');
+              }
             } else if (provider.generatedImageBytes != null && mounted) {
               try {
                 await precacheImage(
                   MemoryImage(provider.generatedImageBytes!),
                   context,
                 ).timeout(const Duration(milliseconds: 500), onTimeout: () {});
-              } catch (_) {}
+              } catch (e) {
+                AppLogger.warning('Precache memory image failed: $e');
+              }
             }
           },
         );
@@ -1052,14 +1056,18 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
                   NetworkImage(provider.generatedImageUrl!),
                   context,
                 ).timeout(const Duration(seconds: 3), onTimeout: () {});
-              } catch (_) {}
+              } catch (e) {
+                AppLogger.warning('Precache inspiration network image failed: $e');
+              }
             } else if (provider.generatedImageBytes != null && mounted) {
               try {
                 await precacheImage(
                   MemoryImage(provider.generatedImageBytes!),
                   context,
                 ).timeout(const Duration(milliseconds: 500), onTimeout: () {});
-              } catch (_) {}
+              } catch (e) {
+                AppLogger.warning('Precache inspiration memory image failed: $e');
+              }
             }
           },
         );

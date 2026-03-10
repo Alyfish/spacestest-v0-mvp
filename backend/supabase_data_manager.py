@@ -3381,8 +3381,7 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
         # Call Gemini edit
         edited_b64, model_used, full_prompt = self.gemini_client.edit_room_with_feedback(
             generated_image_base64=current_b64,
-            feedback=feedback,
-            space_type=context.space_type or "room",
+            user_feedback=feedback.strip(),
         )
         # Upload edited image
         file_bytes = base64.b64decode(edited_b64)
@@ -3402,9 +3401,13 @@ Generate a high-resolution photograph. If the image looks like a "3D concept ren
         })
         log_user_action("retry_redesign", project_id=project_id, feedback=feedback[:50])
         return {
-            "project_id": project_id, "generated_image": edited_b64,
-            "generated_image_url": public_url, "prompt": full_prompt,
-            "model": model_used, "status": "success",
+            "project_id": project_id,
+            "generated_image_base64": edited_b64,
+            "inspiration_prompt": full_prompt,
+            "inspiration_recommendations": context.inspiration_recommendations or [],
+            "status": "success",
+            "message": "Image edited successfully based on your feedback",
+            "model_used": model_used,
         }
 
     # --- Phase 4: Advanced features ---

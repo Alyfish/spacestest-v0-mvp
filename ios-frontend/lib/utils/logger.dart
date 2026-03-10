@@ -8,7 +8,7 @@ class AppLogger {
       lineLength: 120,
       colors: true,
       printEmojis: true,
-      dateTimeFormat: DateTimeFormat.none,
+      dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart,
     ),
   );
 

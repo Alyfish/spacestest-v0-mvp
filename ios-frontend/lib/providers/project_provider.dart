@@ -243,8 +243,8 @@ class ProjectProvider extends ChangeNotifier {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final token = userProvider.user.token;
       if (token != null && token.isNotEmpty) return token;
-    } catch (_) {
-      // Ignore context lookup failures for detached widgets/background calls.
+    } catch (e) {
+      AppLogger.warning('Context lookup failed (detached widget/background): $e');
     }
     return null;
   }
@@ -740,8 +740,8 @@ class ProjectProvider extends ChangeNotifier {
         return true;
       }
       return false;
-    } catch (_) {
-      // Non-fatal best-effort read.
+    } catch (e) {
+      AppLogger.warning('Product suggestions hydration failed: $e');
       return false;
     }
   }

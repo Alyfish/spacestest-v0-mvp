@@ -1,5 +1,4 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
-import 'package:flutter/foundation.dart';
 import '../utils/logger.dart';
 
 /// Static service for Firebase Analytics event tracking.
@@ -15,9 +14,7 @@ class AnalyticsService {
     try {
       await _analytics.setUserId(id: userId.isEmpty ? null : userId);
     } catch (e) {
-      if (kDebugMode) {
-        AppLogger.error('Analytics setUserId failed: $e');
-      }
+      AppLogger.error('Analytics setUserId failed: $e');
     }
   }
 
@@ -82,9 +79,7 @@ class AnalyticsService {
     try {
       await _analytics.logEvent(name: name, parameters: parameters);
     } catch (e) {
-      if (kDebugMode) {
-        AppLogger.error('Analytics logEvent ($name) failed: $e');
-      }
+      AppLogger.error('Analytics logEvent ($name) failed: $e');
     }
   }
 }
