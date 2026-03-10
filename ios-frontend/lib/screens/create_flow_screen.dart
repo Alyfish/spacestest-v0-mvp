@@ -996,6 +996,8 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
               final subProvider = Provider.of<SubscriptionProvider>(context, listen: false);
               if (isRetry) {
                 subProvider.recordIterationUsed();
+              } else {
+                subProvider.recordGenerationUsed();
               }
             }
             _pendingRetryFeedback = null;
