@@ -747,7 +747,10 @@ async def delete_account(user: AuthenticatedUser = Depends(get_current_user)):
                 logger.warning(f"Failed to delete user_credits for {user_id}: {e}")
 
             # 3. Delete the auth user (requires service role key)
-            sb.auth.admin.delete_user(user_id)
+            try:
+                sb.auth.admin.delete_user(user_id)
+            except Exception as e:
+                logger.warning(f"Failed to delete auth user {user_id}: {e}")
 
         logger.info(f"Account deleted successfully for user {user_id}")
         return {"status": "success", "message": "Account deleted successfully"}

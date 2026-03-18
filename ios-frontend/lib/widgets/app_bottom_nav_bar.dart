@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
 
-/// Reusable bottom navigation with center quick-action CTA.
-/// - Home (index 0)
-/// - Plus CTA (center)
-/// - Saved (index 1)
-/// - Profile (index 2)
+/// Refined bottom navigation with center floating CTA.
+///
+/// Layout: [Home] [Saved]  (+)  [Profile]
+///
+/// The CTA button floats above the bar as the primary action.
+/// Nav items are distributed with the CTA as the visual anchor.
 class AppBottomNavBar extends StatelessWidget {
   final int selectedIndex;
   final Function(int) onItemTapped;
@@ -24,89 +25,112 @@ class AppBottomNavBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.surfaceColor,
         border: const Border(
-          top: BorderSide(
-            color: AppTheme.dividerColor,
-            width: 1,
-          ),
+          top: BorderSide(color: AppTheme.dividerColor, width: 0.5),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, -2),
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
           ),
         ],
       ),
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 74,
+          height: 70,
           child: Stack(
             clipBehavior: Clip.none,
-            alignment: Alignment.topCenter,
             children: [
+              // Nav items row — symmetric around center
               Row(
                 children: [
+                  // Left side: Home + Saved
                   Expanded(
-                    child: _buildNavItem(
-                      context: context,
-                      index: 0,
-                      icon: Icons.home_outlined,
-                      selectedIcon: Icons.home_rounded,
-                      label: 'Home',
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildNavItem(
+                          context: context,
+                          index: 0,
+                          icon: Icons.home_outlined,
+                          selectedIcon: Icons.home_rounded,
+                          label: 'Home',
+                        ),
+                        _buildNavItem(
+                          context: context,
+                          index: 1,
+                          icon: Icons.bookmark_outline,
+                          selectedIcon: Icons.bookmark_rounded,
+                          label: 'Saved',
+                        ),
+                      ],
                     ),
                   ),
-                  const Expanded(child: SizedBox()),
+                  // Center gap for FAB
+                  const SizedBox(width: 72),
+                  // Right side: Profile
                   Expanded(
-                    child: _buildNavItem(
-                      context: context,
-                      index: 1,
-                      icon: Icons.bookmark_outline,
-                      selectedIcon: Icons.bookmark,
-                      label: 'Saved',
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildNavItem(
-                      context: context,
-                      index: 2,
-                      icon: Icons.person_outline,
-                      selectedIcon: Icons.person,
-                      label: 'Profile',
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildNavItem(
+                          context: context,
+                          index: 2,
+                          icon: Icons.person_outline_rounded,
+                          selectedIcon: Icons.person_rounded,
+                          label: 'Profile',
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
+              // Center CTA — floating above the bar
               Positioned(
-                top: -24,
-                child: GestureDetector(
-                  onTap: () {
-                    if (onFabPressed != null) {
-                      onFabPressed!();
-                    } else {
-                      onItemTapped(2);
-                    }
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTheme.primaryColor.withValues(alpha: 0.30),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
+                top: -26,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: GestureDetector(
+                    onTap: onFabPressed ?? () => onItemTapped(0),
+                    child: Container(
+                      width: 60,
+                      height: 60,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Color(0xFFE03358),
+                            Color(0xFFC02040),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.add_rounded,
-                      color: Colors.white,
-                      size: 30,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 4,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primaryColor.withValues(alpha: 0.35),
+                            blurRadius: 16,
+                            spreadRadius: 0,
+                            offset: const Offset(0, 6),
+                          ),
+                          BoxShadow(
+                            color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                            blurRadius: 32,
+                            spreadRadius: 0,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.add_rounded,
+                        color: Colors.white,
+                        size: 28,
+                      ),
                     ),
                   ),
                 ),
@@ -127,40 +151,45 @@ class AppBottomNavBar extends StatelessWidget {
   }) {
     final isSelected = selectedIndex == index;
 
-    return InkWell(
+    return GestureDetector(
       onTap: () => onItemTapped(index),
-      splashColor: Colors.transparent,
-      highlightColor: Colors.transparent,
-      child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? AppTheme.primaryColor.withValues(alpha: 0.10)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: 64,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? AppTheme.primaryColor.withValues(alpha: 0.10)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
                 isSelected ? selectedIcon : icon,
-                color: isSelected ? AppTheme.primaryColor : AppTheme.textTertiary,
+                color: isSelected
+                    ? AppTheme.primaryColor
+                    : AppTheme.textTertiary,
                 size: 22,
               ),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: AppTheme.dmSans(
-                  fontSize: 10,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  color: isSelected ? AppTheme.primaryColor : AppTheme.textTertiary,
-                ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: AppTheme.dmSans(
+                fontSize: 10,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: isSelected
+                    ? AppTheme.primaryColor
+                    : AppTheme.textTertiary,
+                letterSpacing: isSelected ? 0.2 : 0,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

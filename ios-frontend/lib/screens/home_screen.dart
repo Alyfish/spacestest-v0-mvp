@@ -280,8 +280,24 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Row(
         children: [
-          // Spaces. logo
-          Image.asset('assets/logo/logo.png', height: 32),
+          Text(
+            'Spaces',
+            style: AppTheme.dmSans(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+              letterSpacing: -0.5,
+            ),
+          ),
+          Text(
+            '.',
+            style: AppTheme.dmSans(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.primaryColor,
+              letterSpacing: -0.5,
+            ),
+          ),
         ],
       ),
     );
