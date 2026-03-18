@@ -256,7 +256,12 @@ def send_design_ready_push(
     if normalized_platform == "android":
         message["android"] = {"priority": "high"}
     elif normalized_platform == "ios":
-        message["apns"] = {"headers": {"apns-priority": "10"}}
+        message["apns"] = {
+            "headers": {
+                "apns-priority": "10",
+                "apns-topic": "com.spacesprod.app",
+            }
+        }
 
     endpoint = (
         f"https://fcm.googleapis.com/v1/projects/{fcm_project_id}/messages:send"
