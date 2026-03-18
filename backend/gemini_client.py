@@ -1534,11 +1534,12 @@ If any instructions conflict, follow this order:
 ### 1) THE "IMMUTABLE WORLD" (Room Shell Only)
 You are a decorator, not a builder. You are EDITING the original photograph — NOT creating a new room.
 
-**CAMERA & FRAMING LOCK (ABSOLUTE)**
-- Do NOT change camera position, angle, focal length, field of view, crop, rotation, or perspective.
-- The output must align with the original photo's background edges (wall corners, baseboards, outlets) with no drift.
+**CAMERA & GEOMETRY LOCK (ABSOLUTE PRIORITY)**
+- Pixel alignment required: walls/windows/ceiling/background edges must match the original photo.
+- No zoom/crop/rotation/recompose.
+- Maintain the exact lens focal length, camera angle, horizon line, and field of view of the original photo.
 - The vanishing points and perspective lines must align precisely with the original.
-FAIL CONDITION: If framing/perspective changes, the output is INVALID.
+FAIL CONDITION: Any visible framing/perspective drift makes the result INVALID.
 
 **STRUCTURAL LOCKDOWN (Room shell is LOCKED)**
 These elements must appear IDENTICAL to the original photo:
@@ -1549,9 +1550,9 @@ These elements must appear IDENTICAL to the original photo:
 - Flooring material, pattern, and boundaries
 - Electrical outlets, switches, baseboards, moldings, and trim
 - Room dimensions and geometry
-
-**LIGHTING**
-- Preserve time of day, shadow direction/hardness, exposure, and white balance.
+CRITICAL: Do NOT invent, add, or hallucinate any structural element not visible in the original photo. If the original has 1 window, the output has 1 window. If a wall is blank, it stays blank unless explicitly instructed.
+- Do NOT paint walls, change flooring, or alter ceiling features.
+- Do NOT change time-of-day or lighting style; match original exposure + shadow hardness.
 
 **EVERYTHING ELSE IS FAIR GAME FOR REPLACEMENT**
 - ALL furniture, ALL decor, ALL textiles, ALL accessories — replace them.
@@ -1579,7 +1580,11 @@ Before finalizing, verify:
 - Would a viewer IMMEDIATELY see this is a different room design? If not, make more changes.
 - Are changes distributed across the room (not just one corner)?
 - Does the room shell (walls, floor, ceiling, windows) match the original exactly?
+- Does the room appear the same physical size as the original?
+- Are all walls in the same positions and at the same angles?
+- Is the window count and door count identical to the original?
 - Do vanishing points and perspective lines match the original?
+- Would a person of average height fit the same way in both images?
 
 ### OUTPUT REQUIREMENT
 - Preserve the exact input image aspect ratio.
@@ -1591,6 +1596,8 @@ Before finalizing, verify:
 - Do NOT produce studio lighting or showroom perfection.
 - Do NOT add walls, windows, doors, arches, columns, or any architectural element not in the original.
 - Do NOT change room dimensions or make the room appear larger or smaller.
+- Do NOT assume or infer structural features — only what is VISIBLE in the photo exists.
+- Do NOT paint walls, change wall colors, or alter flooring material.
 {extra_negative}"""
 
         return prompt
