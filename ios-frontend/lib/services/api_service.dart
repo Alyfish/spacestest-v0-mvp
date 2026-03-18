@@ -1793,6 +1793,32 @@ class ApiService {
   }
 
   // ==========================================================================
+  // Account Management
+  // ==========================================================================
+
+  static Future<void> deleteAccount(String authToken) async {
+    try {
+      final url = Uri.parse(
+        '${ApiConstants.baseUrl}/auth/delete-account',
+      );
+
+      final response = await http.delete(
+        url,
+        headers: ApiConstants.authHeaders(authToken),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Account deletion failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      final enrichedError = _maybeEnrichLoopbackConnectionError(e);
+      AppLogger.error('Error deleting account', enrichedError);
+      if (identical(enrichedError, e)) rethrow;
+      throw enrichedError;
+    }
+  }
+
+  // ==========================================================================
   // Private Helpers
   // ==========================================================================
 

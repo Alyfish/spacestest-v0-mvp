@@ -76,7 +76,7 @@ Future<void> main() async {
         }
         nav.pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => const MainNavigationScreen(initialTab: 3),
+            builder: (_) => const MainNavigationScreen(initialTab: 1),
           ),
           (_) => false,
         );
@@ -137,7 +137,7 @@ class _AuthGate extends StatelessWidget {
     final pendingProject = NotificationService.pendingProjectId;
     if (pendingProject != null) {
       NotificationService.pendingProjectId = null;
-      return const MainNavigationScreen(initialTab: 3);
+      return const MainNavigationScreen(initialTab: 1);
     }
     return const MainNavigationScreen();
   }

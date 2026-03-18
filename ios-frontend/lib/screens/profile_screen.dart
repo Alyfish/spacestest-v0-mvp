@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../constants/api_constants.dart';
+import '../services/api_service.dart';
 import '../services/supabase_service.dart';
 import '../theme.dart';
 import '../providers/subscription_provider.dart';
@@ -232,6 +233,101 @@ class ProfileScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _handleDeleteAccount(BuildContext context) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Delete Account',
+          style: AppTheme.dmSans(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: Colors.red,
+          ),
+        ),
+        content: Text(
+          'This will permanently delete your account, all your redesigns, and associated data. This action cannot be undone.',
+          style: AppTheme.dmSans(fontSize: 15, color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              'Cancel',
+              style: AppTheme.dmSans(
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              'Delete Account',
+              style: AppTheme.dmSans(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Colors.red,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true || !context.mounted) return;
+
+    final token = SupabaseService.accessToken;
+    if (token == null) return;
+
+    try {
+      await ApiService.deleteAccount(token);
+
+      if (!context.mounted) return;
+
+      final subscriptionProvider = Provider.of<SubscriptionProvider>(
+        context,
+        listen: false,
+      );
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      await subscriptionProvider.onUserLoggedOut();
+      await userProvider.signOut();
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const SplashScreen()),
+        (route) => false,
+      );
+    } catch (e) {
+      AppLogger.error('Account deletion failed', e);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete account. Please try again.'),
+            backgroundColor: AppTheme.errorColor,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleUpgradeToPro(BuildContext context) async {
+    final subscriptionProvider = Provider.of<SubscriptionProvider>(
+      context,
+      listen: false,
+    );
+    await subscriptionProvider.showPaywall(
+      source: 'profile_upgrade_button',
+      context: context,
+    );
+  }
+
   Future<void> _handleManageSubscription(BuildContext context) async {
     final subscriptionProvider = Provider.of<SubscriptionProvider>(
       context,
@@ -400,6 +496,16 @@ class ProfileScreen extends StatelessWidget {
             isDestructive: true,
             onTap: () => _handleLogout(context),
           ),
+
+          Divider(height: 1, color: AppTheme.dividerColor, indent: 56),
+
+          // Delete Account
+          _buildMenuItem(
+            icon: Icons.delete_forever_rounded,
+            title: 'Delete Account',
+            isDestructive: true,
+            onTap: () => _handleDeleteAccount(context),
+          ),
         ],
       ),
     );
@@ -422,6 +528,12 @@ class ProfileScreen extends StatelessWidget {
             ),
             Divider(height: 1, color: AppTheme.dividerColor, indent: 56),
           ],
+          _buildMenuItem(
+            icon: Icons.workspace_premium_rounded,
+            title: 'Upgrade to Pro',
+            onTap: () => _handleUpgradeToPro(context),
+          ),
+          Divider(height: 1, color: AppTheme.dividerColor, indent: 56),
           _buildMenuItem(
             icon: Icons.credit_card_outlined,
             title: 'Manage Subscription',

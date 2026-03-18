@@ -3,10 +3,9 @@ import '../theme.dart';
 
 /// Reusable bottom navigation with center quick-action CTA.
 /// - Home (index 0)
-/// - Discover (index 1)
-/// - Plus CTA (index 2)
-/// - Saved (index 3)
-/// - Profile (index 4)
+/// - Plus CTA (center)
+/// - Saved (index 1)
+/// - Profile (index 2)
 class AppBottomNavBar extends StatelessWidget {
   final int selectedIndex;
   final Function(int) onItemTapped;
@@ -57,20 +56,11 @@ class AppBottomNavBar extends StatelessWidget {
                       label: 'Home',
                     ),
                   ),
-                  Expanded(
-                    child: _buildNavItem(
-                      context: context,
-                      index: 1,
-                      icon: Icons.explore_outlined,
-                      selectedIcon: Icons.explore,
-                      label: 'Discover',
-                    ),
-                  ),
                   const Expanded(child: SizedBox()),
                   Expanded(
                     child: _buildNavItem(
                       context: context,
-                      index: 3,
+                      index: 1,
                       icon: Icons.bookmark_outline,
                       selectedIcon: Icons.bookmark,
                       label: 'Saved',
@@ -79,7 +69,7 @@ class AppBottomNavBar extends StatelessWidget {
                   Expanded(
                     child: _buildNavItem(
                       context: context,
-                      index: 4,
+                      index: 2,
                       icon: Icons.person_outline,
                       selectedIcon: Icons.person,
                       label: 'Profile',

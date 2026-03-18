@@ -719,6 +719,44 @@ async def get_usage(user: AuthenticatedUser = Depends(get_current_user)):
     return _get_usage_v2(user.id)
 
 
+@app.delete("/auth/delete-account")
+async def delete_account(user: AuthenticatedUser = Depends(get_current_user)):
+    """Delete user account and all associated data (Apple Guideline 5.1.1v)."""
+    user_id = user.id
+    logger.info(f"Account deletion requested for user {user_id}")
+
+    try:
+        # 1. Delete all user projects (images + DB rows)
+        projects_dict = data_manager.get_all_projects(user_id=user_id)
+        for project_id in projects_dict:
+            try:
+                data_manager.delete_project(project_id, user_id=user_id)
+            except Exception as e:
+                logger.warning(f"Failed to delete project {project_id} during account deletion: {e}")
+
+        # 2. Delete credit records and auth user via Supabase
+        if is_supabase_configured():
+            sb = get_supabase_client()
+            try:
+                sb.table("credit_transactions").delete().eq("user_id", user_id).execute()
+            except Exception as e:
+                logger.warning(f"Failed to delete credit_transactions for {user_id}: {e}")
+            try:
+                sb.table("user_credits").delete().eq("user_id", user_id).execute()
+            except Exception as e:
+                logger.warning(f"Failed to delete user_credits for {user_id}: {e}")
+
+            # 3. Delete the auth user (requires service role key)
+            sb.auth.admin.delete_user(user_id)
+
+        logger.info(f"Account deleted successfully for user {user_id}")
+        return {"status": "success", "message": "Account deleted successfully"}
+
+    except Exception as e:
+        logger.error(f"Account deletion failed for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Account deletion failed. Please contact support at spaces.ai.biz@gmail.com")
+
+
 @app.post("/projects", response_model=ProjectCreateResponse)
 async def create_project(user: AuthenticatedUser = Depends(get_current_user)):
     """Create a new project. No credit debit here — credits are charged at job start

@@ -56,36 +56,6 @@ class _DescribeChangesScreenState extends State<DescribeChangesScreen> {
   }
 
   void _handleNavTap(int index) {
-    if (index == 2) return;
-    if (index == 1) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.lock_outline, color: Colors.white, size: 18),
-              const SizedBox(width: 12),
-              Text(
-                'Coming soon',
-                style: AppTheme.dmSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: AppTheme.textSecondary,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          margin: const EdgeInsets.all(16),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
       (route) => false,

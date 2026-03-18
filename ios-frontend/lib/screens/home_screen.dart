@@ -262,48 +262,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              const SizedBox(height: 32),
+              const SizedBox(height: 36),
 
-              // Marketplace section
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'Marketplace.',
-                  style: AppTheme.dmSans(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.textPrimary,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Marketplace grid - 2 items only for no-scroll layout
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _buildMarketplaceCard(
-                        imagePath: 'assets/images/extras/poster.jpg',
-                        title: 'Art Poster',
-                        description: 'Wall decor',
-                        price: '\$29.99',
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildMarketplaceCard(
-                        imagePath: 'assets/images/extras/vase.png',
-                        title: 'Ceramic Vase',
-                        description: 'Home accent',
-                        price: '\$45.00',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              // How it works section
+              _buildHowItWorksSection(),
 
               const SizedBox(height: 120), // Bottom padding for nav bar
             ],
@@ -381,132 +343,97 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildMarketplaceCard({
-    required String imagePath,
-    required String title,
-    required String description,
-    required String price,
-  }) {
-    return SizedBox(
-      height: 220,
-      child: Stack(
+  Widget _buildHowItWorksSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Main card content
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.dividerColor, width: 1),
+          Text(
+            'How it works.',
+            style: AppTheme.dmSans(
+              fontSize: 26,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
             ),
+          ),
+          const SizedBox(height: 16),
+          _buildStepCard(
+            stepNumber: '1',
+            title: 'Snap your space',
+            subtitle: 'Take a photo or upload an image of any room you want to redesign.',
+            icon: Icons.camera_alt_outlined,
+          ),
+          const SizedBox(height: 12),
+          _buildStepCard(
+            stepNumber: '2',
+            title: 'Pick your style',
+            subtitle: 'Choose a design style, colors, and products that inspire you.',
+            icon: Icons.palette_outlined,
+          ),
+          const SizedBox(height: 12),
+          _buildStepCard(
+            stepNumber: '3',
+            title: 'See the magic',
+            subtitle: 'Get a stunning AI-generated redesign of your room in seconds.',
+            icon: Icons.auto_awesome_outlined,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepCard({
+    required String stepNumber,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.dividerColor, width: 1),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              icon,
+              color: AppTheme.primaryColor,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Image section
-                Expanded(
-                  flex: 3,
-                  child: Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: AppTheme.scaffoldBackground,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(15),
-                      ),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(15),
-                      ),
-                      child: Image.asset(imagePath, fit: BoxFit.cover),
-                    ),
+                Text(
+                  title,
+                  style: AppTheme.dmSans(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
                   ),
                 ),
-                // Text section
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: AppTheme.dmSans(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.textPrimary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        description,
-                        style: AppTheme.dmSans(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w400,
-                          color: AppTheme.textSecondary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        price,
-                        style: AppTheme.dmSans(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.primaryColor,
-                        ),
-                      ),
-                    ],
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: AppTheme.dmSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                    color: AppTheme.textSecondary,
                   ),
                 ),
               ],
-            ),
-          ),
-          // Coming soon overlay
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.7),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.08),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.lock_outline,
-                        size: 14,
-                        color: AppTheme.textSecondary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Coming soon',
-                        style: AppTheme.dmSans(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: AppTheme.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             ),
           ),
         ],

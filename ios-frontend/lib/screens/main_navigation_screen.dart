@@ -11,9 +11,8 @@ import 'saved_screen.dart';
 import 'profile_screen.dart';
 import 'create_flow_screen.dart';
 
-/// Main navigation with 4 tabs + center CTA.
+/// Main navigation with 3 tabs + center CTA.
 /// - Home
-/// - Discover (coming soon)
 /// - Saved
 /// - Profile
 class MainNavigationScreen extends StatefulWidget {
@@ -29,36 +28,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   bool _isCreatingProject = false;
 
   void _onItemTapped(int index) {
-    if (index == 2) return; // Center CTA is handled separately.
-
-    if (index == 1) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.lock_outline, color: Colors.white, size: 18),
-              const SizedBox(width: 12),
-              Text(
-                'Discover is coming soon',
-                style: AppTheme.dmSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: AppTheme.textSecondary,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          margin: const EdgeInsets.all(16),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
     setState(() {
       _selectedIndex = index;
     });
@@ -230,9 +199,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     switch (_selectedIndex) {
       case 0:
         return const HomeScreen();
-      case 3:
+      case 1:
         return const SavedScreen();
-      case 4:
+      case 2:
         return const ProfileScreen();
       default:
         return const HomeScreen();

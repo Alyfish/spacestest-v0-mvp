@@ -15,7 +15,6 @@ import 'upload_inspiration_screen.dart';
 import 'confirm_selection_screen.dart';
 import 'confirm_inspiration_screen.dart';
 import 'analyzing_screen.dart';
-import 'discover_screen.dart';
 import 'saved_screen.dart';
 import 'profile_screen.dart';
 
@@ -180,10 +179,6 @@ class _DemoNavigatorScreenState extends State<DemoNavigatorScreen> {
 
             // Tab Navigation Screens
             _buildSectionTitle('Tab Navigation Screens'),
-            _buildScreenTile(
-              'Discover',
-              () => _navigateTo(context, const DiscoverScreen()),
-            ),
             _buildScreenTile(
               'Saved',
               () => _navigateTo(context, const SavedScreen()),
