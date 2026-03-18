@@ -1417,6 +1417,7 @@ Technical Requirement: Preserve the exact input image aspect ratio."""
 
         # User custom request
         user_request = custom_prompt if custom_prompt else ""
+        has_markers = bool(marker_locations and marker_descriptions)
 
         # Build the design direction block (same pattern as iterative prompt)
         design_direction_parts = []
@@ -1426,81 +1427,139 @@ Technical Requirement: Preserve the exact input image aspect ratio."""
             design_direction_parts.append(f"**DESIGN STYLE**\n{style_direction}")
         design_direction_block = "\n\n".join(design_direction_parts) if design_direction_parts else f"Style: {style_name}"
 
-        # THE COMPLETE REVAMP / INTEGRATION PROMPT
-        prompt = f"""### ROLE & OBJECTIVE
-You are an Elite Interior Design Visualizer and Architectural Photographer.
-Your task is to digitally stage the PROVIDED ROOM PHOTO by EDITING IT (not re-generating a new camera view).
-Goal: a hyper-realistic "After" photo that looks like the user bought new furniture and took another photo from the same spot.
+        # Branch design intelligence and execution plan based on markers
+        if has_markers:
+            design_intelligence = f"""### 2) DESIGN INTELLIGENCE (Apply {style_name}) — COMPLETE REVAMP
+You are designing a COMPLETE transformation, not a minor touch-up.
 
-### PRIORITY ORDER (HARD RULES)
-If any instructions conflict, follow this order:
-1) CAMERA/GEOMETRY LOCK
-2) LIGHTING/EXPOSURE/WHITE BALANCE LOCK
-3) MARKERS + USER REQUEST (what to replace)
-4) PRODUCT REFERENCE MATCHING
-5) STYLE + STYLING ADDITIONS
-
-### 1) THE "IMMUTABLE WORLD" (STRICT CONSTRAINTS)
-You are a decorator, not a builder. You are EDITING the original photograph — NOT creating a new room.
-
-**CAMERA & FRAMING LOCK (ABSOLUTE)**
-- Do NOT change camera position, angle, focal length, field of view, crop, rotation, or perspective.
-- Do NOT "recompose" the scene.
-- The output must align with the original photo's background edges (wall corners, baseboards, outlets) with no drift.
-- Maintain the exact lens focal length, camera angle, horizon line, and field of view of the original photo.
-- The vanishing points and perspective lines must align precisely with the original.
-FAIL CONDITION: If framing/perspective changes, the output is INVALID.
-
-**STRUCTURAL LOCKDOWN (ABSOLUTE — NO EXCEPTIONS)**
-The following elements are LOCKED and must appear IDENTICAL to the original photo:
-- Wall positions, angles, colors, and textures
-- Ceiling height and features
-- Window frames, sizes, positions, and COUNT — do NOT add or remove windows
-- Door locations, sizes, and frames — do NOT add or remove doors
-- Flooring material, pattern, and boundaries
-- Electrical outlets, switches, baseboards, moldings, and trim
-- Room dimensions and geometry — the room must be the SAME SIZE
-CRITICAL: Do NOT invent, add, or hallucinate any structural element not visible in the original photo. If the original has 1 window, the output has 1 window. If a wall is blank, it stays blank unless a marker explicitly says to add wall decor.
-
-**LIGHTING**
-- Do NOT change time of day, shadow direction/hardness, exposure, or white balance.
-- Any flash/harsh shadows/noise in the original must remain consistent.
-
-**BACKGROUND OBJECTS**
-- Do NOT remove background clutter (cords, bottles, random items) unless a marker explicitly says to remove.
-
-### 2) DESIGN INTELLIGENCE (Apply {style_name})
-You are designing, not just pasting.
-
-**Cohesion (FULL REVAMP)**
-- Replace key furniture and decor as needed to achieve a complete revamp, while keeping the room shell identical.
-- Automatically generate cohesive supporting pieces (e.g., nightstands, lamps, rug, pillows, throw, wall art) that match the style and palette.
+**MANDATORY CHANGE SCOPE**
+- Replace ALL items indicated by markers PLUS 2-3 additional surrounding items for cohesive revamp.
+- MINIMUM 5 distinct visible changes are REQUIRED. This is a COMPLETE REVAMP.
+- Automatically generate cohesive supporting pieces (nightstands, lamps, rug, pillows, throw, wall art) that match the style and palette.
 
 **Styling (Make it feel real)**
-- Bedding must look heavy, soft, and lived-in (wrinkles, weight, layers).
+- Textiles must look heavy, soft, and lived-in (wrinkles, weight, layers).
 - Add subtle "real-life" props (e.g., 1 book + 1 small object) ONLY where physically plausible.
 
 **Palette discipline**
-- Strictly adhere to the Target Palette. Use it primarily in textiles + accents; keep large surfaces calm and {style_name}.
+- Strictly adhere to the Target Palette. Use it in textiles + accents; keep large surfaces calm and {style_name}."""
 
-### 3) EXECUTION PLAN (Step-by-Step)
-**Step A: Anchor replacements (Markers + User Selections)**
-- Replace the items indicated by markers.
-- If product reference images exist, match their silhouette, materials, and color very closely.
+            execution_plan = f"""### 3) EXECUTION PLAN (Step-by-Step)
+**Step A: Marker replacements**
+- Replace ALL items indicated by markers.
+- If product reference images exist, match their silhouette, materials, and color closely.
 
-**Step B: Full revamp fill-in (AI design)**
-- Add only what's needed to create a complete, cohesive {style_name} room:
-  - rug if appropriate
-  - coordinated lamps
-  - pillows/throw layering
-  - minimal wall decor if walls are bare
-Keep it uncluttered.
+**Step B: COMPLETE REVAMP expansion (MANDATORY)**
+In addition to marked items, you MUST also:
+- Replace 2-3 additional furniture/decor items surrounding the marked areas
+- Add a coordinated rug if the floor is bare
+- Add or replace lamps to match the {style_name} style
+- Add coordinated pillows, throws, and textile layers
+- Add minimal wall decor if walls near furniture are bare
+The room must look COMPLETELY redesigned, not just spot-edited.
 
 **Step C: Reality pass (Render physics)**
 - Occlusion: objects must block background correctly.
 - Contact shadows: strong, realistic ambient occlusion at the floor/wall.
 - Cast shadows: match original direction and hardness.
-- Sensor match: match grain/noise and focus blur so new items do not look pasted.
+- Sensor match: match grain/noise and focus blur so new items do not look pasted."""
+
+            extra_negative = """- Do NOT return the original photo with minimal changes — this is a COMPLETE REVAMP.
+- Do NOT leave the majority of furniture unchanged — most movable items should be different.
+- Do NOT ignore the color palette — every new item must use colors from the provided palette."""
+
+        else:
+            design_intelligence = f"""### 2) DESIGN INTELLIGENCE (Apply {style_name}) — AUTONOMOUS COMPLETE REVAMP
+You are designing a COMPLETE transformation. No specific markers were placed, so YOU must identify and replace furniture.
+
+**AUTONOMOUS ROOM SCAN (MANDATORY)**
+1. SCAN the entire room and identify ALL movable furniture and decor.
+2. REPLACE every major furniture piece: primary seating (sofa/bed/desk chair), tables, storage, lamps.
+3. REPLACE all visible decor: pillows, throws, rugs, wall art, decorative objects.
+4. Keep ONLY the room shell (walls, floor, ceiling, windows, doors) and built-in fixtures.
+
+**MINIMUM CHANGE REQUIREMENTS (HARD RULE)**
+- MINIMUM 5 distinct visible changes are REQUIRED. This is a COMPLETE REVAMP, not a touch-up.
+- Every piece of movable furniture must be replaced with a {style_name} alternative.
+- The result must be IMMEDIATELY recognizable as a DIFFERENT room design.
+- SELF-CHECK: If your output could be mistaken for the original photo, it has FAILED.
+
+**Styling (Make it feel real)**
+- Textiles must look heavy, soft, and lived-in (wrinkles, weight, layers).
+- Add subtle "real-life" props (e.g., 1 book + 1 small object) ONLY where physically plausible.
+
+**Palette discipline**
+- Strictly adhere to the Target Palette across ALL new items. Use it in textiles + accents; keep large surfaces calm and {style_name}."""
+
+            execution_plan = f"""### 3) EXECUTION PLAN (Step-by-Step)
+**Step A: FULL FURNITURE REPLACEMENT (MANDATORY — AI-Driven)**
+No markers were placed. You MUST proactively redesign this room:
+1. Identify and REPLACE the PRIMARY furniture piece (bed/sofa/desk/dining table) with a {style_name} alternative.
+2. REPLACE ALL secondary furniture (nightstands, side tables, chairs, shelving, lamps).
+3. REMOVE existing decor and ADD new coordinated decor: rug, throw pillows, blankets, wall art, plants.
+4. Every visible surface should have at least one style-appropriate item.
+
+**Step B: Design cohesion pass**
+- Verify ALL new items work together as a cohesive {style_name} design.
+- Color palette must be visible across multiple items (not just one accent piece).
+- Materials and textures must match the design style direction.
+- Changes must be DISTRIBUTED across the room (not clustered in one area).
+
+**Step C: Reality pass (Render physics)**
+- Occlusion: objects must block background correctly.
+- Contact shadows: strong, realistic ambient occlusion at the floor/wall.
+- Cast shadows: match original direction and hardness.
+- Sensor match: match grain/noise and focus blur so new items do not look pasted."""
+
+            extra_negative = """- Do NOT return the original photo with minimal or no changes — this is a COMPLETE REVAMP.
+- Do NOT leave the majority of furniture unchanged — ALL movable furniture must be replaced.
+- Do NOT make only 1-2 tiny changes. MINIMUM 5 visible, distributed changes are required.
+- Do NOT ignore the color palette — every new item must use colors from the provided palette.
+- Do NOT ignore the style direction — all new items must match the specified design style."""
+
+        # THE COMPLETE REVAMP / INTEGRATION PROMPT
+        prompt = f"""### ROLE & OBJECTIVE
+You are an Elite Interior Design Visualizer performing a COMPLETE ROOM REVAMP.
+Your task is to digitally re-stage the PROVIDED ROOM PHOTO by EDITING IT — replacing ALL furniture and decor while keeping the room shell identical.
+Goal: a hyper-realistic "After" photo that looks like the user completely redecorated and took another photo from the same spot. The before and after should be DRAMATICALLY different.
+
+### PRIORITY ORDER (HARD RULES)
+If any instructions conflict, follow this order:
+1) CAMERA/GEOMETRY LOCK
+2) LIGHTING/EXPOSURE/WHITE BALANCE LOCK
+3) COMPLETE REVAMP DESIGN (replace ALL furniture)
+4) PRODUCT REFERENCE MATCHING
+5) COLOR PALETTE + STYLE ENFORCEMENT
+
+### 1) THE "IMMUTABLE WORLD" (Room Shell Only)
+You are a decorator, not a builder. You are EDITING the original photograph — NOT creating a new room.
+
+**CAMERA & FRAMING LOCK (ABSOLUTE)**
+- Do NOT change camera position, angle, focal length, field of view, crop, rotation, or perspective.
+- The output must align with the original photo's background edges (wall corners, baseboards, outlets) with no drift.
+- The vanishing points and perspective lines must align precisely with the original.
+FAIL CONDITION: If framing/perspective changes, the output is INVALID.
+
+**STRUCTURAL LOCKDOWN (Room shell is LOCKED)**
+These elements must appear IDENTICAL to the original photo:
+- Wall positions, angles, colors, and textures
+- Ceiling height and features
+- Window frames, sizes, positions, and COUNT
+- Door locations, sizes, and frames
+- Flooring material, pattern, and boundaries
+- Electrical outlets, switches, baseboards, moldings, and trim
+- Room dimensions and geometry
+
+**LIGHTING**
+- Preserve time of day, shadow direction/hardness, exposure, and white balance.
+
+**EVERYTHING ELSE IS FAIR GAME FOR REPLACEMENT**
+- ALL furniture, ALL decor, ALL textiles, ALL accessories — replace them.
+- Clutter and random items on surfaces — replace with styled alternatives.
+
+{design_intelligence}
+
+{execution_plan}
 
 ### COLOR & STYLE DESIGN DIRECTION
 Weave these colors and style cues into EVERY change you make. Every item you add or replace must be consistent with this direction.
@@ -1509,31 +1568,30 @@ Weave these colors and style cues into EVERY change you make. Every item you add
 ### 4) INPUT DATA CONTEXT
 - Space Type: {space_type}
 - Specific Changes (Markers):
-{marker_descriptions}
+{marker_descriptions if marker_descriptions else "None — AUTONOMOUSLY replace ALL furniture and decor in the room."}
 - Product References: {titles_str}
-- User Request: {user_request}
+- User Request: {user_request if user_request else "Complete revamp — replace all furniture with the specified style and color palette."}
 
-### SPATIAL VERIFICATION (Self-Check Before Output)
-Before finalizing, verify against the original photo:
-- Does the room appear the same physical size?
-- Are all walls in the same positions and at the same angles?
-- Is the window count and door count identical to the original?
-- Do vanishing points and perspective lines match?
-- Would a person of average height fit the same way in both images?
+### REVAMP VERIFICATION (Self-Check Before Output — MANDATORY)
+Before finalizing, verify:
+- Have you replaced AT LEAST 5 distinct items? If not, go back and replace more.
+- Is every new item consistent with the color palette and design style?
+- Would a viewer IMMEDIATELY see this is a different room design? If not, make more changes.
+- Are changes distributed across the room (not just one corner)?
+- Does the room shell (walls, floor, ceiling, windows) match the original exactly?
+- Do vanishing points and perspective lines match the original?
 
 ### OUTPUT REQUIREMENT
 - Preserve the exact input image aspect ratio.
-- Must look like a mundane, realistic phone photo of the SAME ROOM, same camera, same lighting.
+- Must look like a realistic phone photo of the SAME ROOM with COMPLETELY DIFFERENT furniture.
 - Preserve original ISO grain + color cast across inserted items.
 
 ### NEGATIVE INSTRUCTIONS (ANTI-FAIL)
-- Do NOT move the bed to a "better" spot.
 - Do NOT change camera angle, crop, or widen the room.
-- Do NOT clean the room or remove clutter unless told.
 - Do NOT produce studio lighting or showroom perfection.
 - Do NOT add walls, windows, doors, arches, columns, or any architectural element not in the original.
 - Do NOT change room dimensions or make the room appear larger or smaller.
-- Do NOT assume or infer structural features — only what is VISIBLE in the photo exists."""
+{extra_negative}"""
 
         return prompt
 
