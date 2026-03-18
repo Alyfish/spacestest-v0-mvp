@@ -2939,9 +2939,17 @@ async def auto_detect(
         }
 
     try:
+        # Resolve "active" to actual storage type for a stable cache key
+        resolved_type = image_type
+        if hasattr(data_manager, "_resolve_generated_storage_type"):
+            try:
+                resolved_type = data_manager._resolve_generated_storage_type(project_id, image_type)
+            except (ValueError, Exception):
+                resolved_type = image_type
+
         image_url = ""
         if hasattr(data_manager, "_get_image_url"):
-            image_url = data_manager._get_image_url(project_id, image_type) or ""
+            image_url = data_manager._get_image_url(project_id, resolved_type) or ""
         image_id = _image_id_from_url(image_url)
         sf_key = f"auto_detect:{project_id}:{image_type}:{image_id}"
 
