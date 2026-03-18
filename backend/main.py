@@ -3672,17 +3672,20 @@ async def subscribe_job_ready_notification(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(
-            f"Failed to register notify-when-ready subscription: {e}",
+        logger.warning(
+            f"Failed to register notify-when-ready subscription (best-effort): {e}",
             extra={
                 "project_id": project_id,
                 "job_id": job_id,
                 "user_id": user.id,
             },
         )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to register notification request",
+        # Notification is best-effort — don't fail the request
+        return NotifyWhenReadyResponse(
+            project_id=project_id,
+            job_id=job_id,
+            status="registered",
+            message="We will notify you when your design is ready.",
         )
 
     return NotifyWhenReadyResponse(

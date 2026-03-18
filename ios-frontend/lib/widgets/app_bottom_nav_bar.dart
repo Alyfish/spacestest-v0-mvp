@@ -3,7 +3,7 @@ import '../theme.dart';
 
 /// Refined bottom navigation with center floating CTA.
 ///
-/// Layout: [Home] [Saved]  (+)  [Profile]
+/// Layout: [Home] [Saved]  (+)  [Settings]
 ///
 /// The CTA button floats above the bar as the primary action.
 /// Nav items are distributed with the CTA as the visual anchor.
@@ -29,7 +29,7 @@ class AppBottomNavBar extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 20,
             offset: const Offset(0, -4),
           ),
@@ -69,7 +69,7 @@ class AppBottomNavBar extends StatelessWidget {
                   ),
                   // Center gap for FAB
                   const SizedBox(width: 72),
-                  // Right side: Profile
+                  // Right side: Settings
                   Expanded(
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -77,9 +77,9 @@ class AppBottomNavBar extends StatelessWidget {
                         _buildNavItem(
                           context: context,
                           index: 2,
-                          icon: Icons.person_outline_rounded,
-                          selectedIcon: Icons.person_rounded,
-                          label: 'Profile',
+                          icon: Icons.settings_outlined,
+                          selectedIcon: Icons.settings_rounded,
+                          label: 'Settings',
                         ),
                       ],
                     ),

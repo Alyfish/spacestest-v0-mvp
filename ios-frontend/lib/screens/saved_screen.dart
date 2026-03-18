@@ -299,7 +299,7 @@ class _SavedScreenState extends State<SavedScreen> {
                   children: [
                     Icon(
                       Icons.home_outlined,
-                      size: 48,
+                      size: 56,
                       color: AppTheme.textTertiary,
                     ),
                     const SizedBox(height: 12),
