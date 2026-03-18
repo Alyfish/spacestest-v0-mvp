@@ -295,7 +295,7 @@ class _CreateFlowScreenState extends State<CreateFlowScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Notifications are disabled. Enable them in settings to get alerts.',
+              'Unable to set up notifications right now. Please try again later.',
             ),
           ),
         );

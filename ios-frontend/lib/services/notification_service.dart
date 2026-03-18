@@ -98,6 +98,23 @@ class NotificationService {
         return null;
       }
 
+      // On iOS, the APNs token may not be available immediately after
+      // the user grants permission. Wait for it before requesting the
+      // FCM token, which depends on APNs.
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        String? apnsToken = await _messaging.getAPNSToken();
+        int retries = 0;
+        while (apnsToken == null && retries < 10) {
+          await Future.delayed(const Duration(milliseconds: 500));
+          apnsToken = await _messaging.getAPNSToken();
+          retries++;
+        }
+        if (apnsToken == null) {
+          AppLogger.warning('APNs token not available after $retries retries');
+          return null;
+        }
+      }
+
       final token = await _messaging.getToken();
       if (token == null || token.trim().isEmpty) {
         AppLogger.warning('Failed to fetch FCM token');
