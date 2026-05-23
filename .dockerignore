@@ -1,0 +1,9 @@
+.dart_tool/
+.idea/
+.metadata
+.git/
+build/
+coverage/
+ios/Pods/
+macos/Pods/
+node_modules/
